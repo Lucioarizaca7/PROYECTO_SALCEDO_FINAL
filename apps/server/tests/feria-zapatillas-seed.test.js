@@ -1,0 +1,86 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+
+import { calculateLiquidation, getComerciantes, getPuestos, initializeDatabase } from '../src/db.js';
+import { buildFeriaZapatillasSeedPlan, seedFeriaZapatillas } from '../src/feriaZapatillasSeed.js';
+
+const workbook = [
+  {
+    sheet: 'BLOQUE A-I',
+    data: [
+      [null, 'BLOQUE A-I', new Date('2026-09-08T00:00:00Z'), new Date('2026-09-08T00:00:00Z')],
+      [1, 'Yorica Choque Cutipa', 'P', 'F'],
+      [2, 'Nidia Layme Atencio', 'N/S', null]
+    ]
+  },
+  {
+    sheet: 'BLOQUE ROPA',
+    data: [
+      ['N°', 'BLOQUE ROPA', new Date('2026-09-15T00:00:00Z'), new Date('2026-09-16T00:00:00Z')],
+      [1, 'Yorica Choque Cutipa', 'P', 'P'],
+      [2, '', null, null]
+    ]
+  }
+];
+
+test('seeder crea comerciantes temporales, puestos por bloque y conserva marcas sin duplicar al reejecutar', async () => {
+  const db = await initializeDatabase();
+  const plan = buildFeriaZapatillasSeedPlan(workbook, db);
+
+  assert.equal(plan.totals.blocksProcessed, 2);
+  assert.equal(plan.totals.uniqueMerchants, 2);
+  assert.equal(plan.totals.validPosts, 3);
+  assert.equal(plan.totals.attendanceCells, 5);
+  assert.equal(plan.totals.skippedRows, 1);
+
+  const first = seedFeriaZapatillas(db, plan, 'FERIA ZAPATILLAS 2026.xlsx');
+  assert.equal(first.createdMerchants, 2);
+  assert.equal(first.assignedPosts, 3);
+  assert.equal(first.createdPosts, 3);
+  assert.equal(first.savedAttendanceMarks, 5);
+
+  const importedMerchant = getComerciantes(db, { search: 'Yorica Choque', includeInactive: true, limit: 20 })[0];
+  const importedPosts = getPuestos(db).filter((post) => post.comerciante_id === importedMerchant.id);
+  assert.match(importedMerchant.dni_ruc, /^TEMP_DNIZAP_[A-F0-9]{12}$/);
+  assert.equal(importedMerchant.estado, 'pendiente');
+  assert.equal(importedMerchant.estado_empadronamiento, 'PENDIENTE_REGULARIZACION');
+  assert.equal(importedPosts.length, 2);
+  assert.ok(importedPosts.every((post) => post.metros_cuadrados === null));
+  assert.ok(importedPosts.some((post) => post.codigo === 'ZAP-A-I-01'));
+  assert.ok(importedPosts.some((post) => post.codigo === 'ZAP-ROPA-01'));
+  assert.equal(calculateLiquidation(db, importedMerchant.id, '2026-09').no_devengo, true);
+  assert.equal(calculateLiquidation(db, importedMerchant.id, '2026-09').motivo, 'pendiente_regularizacion_sin_metraje');
+
+  const rate = db.exec("SELECT monto_variable, unidad_medida FROM tarifas t JOIN rubros r ON r.id = t.rubro_id WHERE LOWER(r.nombre) = 'zapatillas' AND t.unidad_medida = 'metro_cuadrado' AND t.monto_variable = 2");
+  assert.equal(rate[0].values.length, 1);
+  assert.equal(db.exec('SELECT COUNT(*) FROM asistencias_feriales')[0].values[0][0], 5);
+  const blockPost = importedPosts.find((post) => post.codigo === 'ZAP-A-I-01');
+  assert.equal(db.exec('SELECT COUNT(*) FROM asistencias_feriales WHERE puesto_id = ? AND fecha = ?', [blockPost.id, '2026-09-08'])[0].values[0][0], 2);
+
+  const secondPlan = buildFeriaZapatillasSeedPlan(workbook, db);
+  const second = seedFeriaZapatillas(db, secondPlan, 'FERIA ZAPATILLAS 2026.xlsx');
+  assert.equal(second.createdMerchants, 0);
+  assert.equal(second.createdPosts, 0);
+  assert.equal(db.exec("SELECT COUNT(*) FROM comerciantes WHERE dni_ruc LIKE 'TEMP_DNIZAP_%'")[0].values[0][0], 2);
+  assert.equal(db.exec('SELECT COUNT(*) FROM puestos WHERE codigo_puesto LIKE \'ZAP-%\'')[0].values[0][0], 3);
+  assert.equal(db.exec('SELECT COUNT(*) FROM asistencias_feriales')[0].values[0][0], 5);
+  assert.equal(db.exec("SELECT COUNT(*) FROM auditoria WHERE accion = 'SEED_FERIA_ZAPATILLAS'")[0].values[0][0], 2);
+});
+
+test('seeder omite y reporta correlativos repetidos en el mismo bloque', async () => {
+  const db = await initializeDatabase();
+  const repeatedWorkbook = [{
+    sheet: 'BLOQUE A-I',
+    data: [
+      [null, 'BLOQUE A-I'],
+      [1, 'Titular Uno'],
+      [1, 'Titular Dos']
+    ]
+  }];
+  const plan = buildFeriaZapatillasSeedPlan(repeatedWorkbook, db);
+
+  assert.equal(plan.totals.validPosts, 1);
+  assert.equal(plan.totals.uniqueMerchants, 1);
+  assert.equal(plan.totals.duplicatePostCodes, 1);
+  assert.equal(plan.duplicatePostCodes[0].code, 'ZAP-A-I-01');
+});

@@ -1,0 +1,16 @@
+FROM node:18-slim
+
+# Crear directorio de trabajo
+WORKDIR /app
+
+# Copiar archivos de package
+COPY package*.json ./
+
+# Instalar solo HyperFrames (asumiendo que ya está en package.json)
+RUN npm install --only=production
+
+# Copiar el archivo de composición
+COPY index_motion_graphics.html .
+
+# Comando para renderizar
+CMD ["npx", "hyperframes", "render", "--composition", "index_motion_graphics.html"]
