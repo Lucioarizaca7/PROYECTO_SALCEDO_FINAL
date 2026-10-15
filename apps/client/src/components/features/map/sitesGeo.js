@@ -91,7 +91,7 @@ export function filterSites(sites, { category = 'todos', paymentStatus = 'todos'
 }
 
 /** Ejemplo: `count` puestos contiguos a lo largo de una avenida (para demos y pruebas). */
-export function buildAvenueSample(count = 12, origin = { lat: -15.8997, lng: -70.5881 }) {
+export function buildAvenueSample(count = 12, origin = { lat: -15.8740, lng: -69.9966 }) {
   const estados = ['al-dia', 'deuda', 'no-devengo'];
   const categorias = ['permanente', 'ferial', 'eventual'];
   const stepLng = 6 / (METERS_PER_DEGREE_LAT * Math.cos((origin.lat * Math.PI) / 180));

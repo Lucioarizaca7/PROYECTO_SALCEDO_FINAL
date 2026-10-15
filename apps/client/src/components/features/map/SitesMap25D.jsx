@@ -6,6 +6,8 @@ import { accountStatusText, buildSiteFeatures, siteFromFeature } from './sitesGe
 const SOURCE_ID = 'puestos';
 const LAYER_ID = 'puestos-3d';
 const DOT_LAYER_ID = 'puestos-puntos';
+const BASE_SOURCE_ID = 'salcedo-base';
+const BASE_URL = '/data/salcedo-base.geojson';
 const MAPBOX_TOKEN = import.meta.env.VITE_MAPBOX_TOKEN;
 
 // Sin token de Mapbox el mapa sigue funcionando con teselas raster de OpenStreetMap.
@@ -70,8 +72,30 @@ export default function SitesMap25D({ sites, selectedSite, baseLayer, drawing, d
   const data = useMemo(() => buildSiteFeatures(sites), [signature]); // eslint-disable-line react-hooks/exhaustive-deps
   dataRef.current = data;
 
+  // Plano municipal (DWG convertido): solo se agrega si el GeoJSON generado existe.
+  const installBasePlan = (map) => {
+    fetch(BASE_URL, { method: 'HEAD' })
+      .then((res) => {
+        const type = res.headers.get('content-type') || '';
+        if (!res.ok || type.includes('text/html') || !map.getStyle() || map.getSource(BASE_SOURCE_ID)) return;
+        map.addSource(BASE_SOURCE_ID, { type: 'geojson', data: BASE_URL });
+        const before = map.getLayer(DOT_LAYER_ID) ? DOT_LAYER_ID : undefined;
+        const isLote = ['==', ['get', 'capa'], 'Lote_Comercial'];
+        map.addLayer({ id: 'base-manzanas', type: 'fill', source: BASE_SOURCE_ID,
+          filter: ['all', ['==', ['geometry-type'], 'Polygon'], ['!=', ['get', 'capa'], 'Lote_Comercial']],
+          paint: { 'fill-color': '#e7ecf3', 'fill-opacity': 0.85, 'fill-outline-color': '#8c9bb0' } }, before);
+        map.addLayer({ id: 'base-lotes', type: 'line', source: BASE_SOURCE_ID, minzoom: 16.5,
+          filter: isLote, paint: { 'line-color': '#9aa8bb', 'line-width': 0.6 } }, before);
+        map.addLayer({ id: 'base-vias', type: 'line', source: BASE_SOURCE_ID,
+          filter: ['==', ['geometry-type'], 'LineString'],
+          paint: { 'line-color': '#6b7a90', 'line-width': ['interpolate', ['linear'], ['zoom'], 14, 0.5, 19, 2.5] } }, before);
+      })
+      .catch(() => {});
+  };
+
   const installLayers = (map) => {
     if (!map.getSource(SOURCE_ID)) map.addSource(SOURCE_ID, { type: 'geojson', data: dataRef.current });
+    installBasePlan(map);
     if (!map.getLayer(DOT_LAYER_ID)) {
       // Marcadores planos visibles de lejos; los bloques 3D toman el relevo al acercar.
       map.addLayer({
@@ -116,7 +140,7 @@ export default function SitesMap25D({ sites, selectedSite, baseLayer, drawing, d
     const map = new mapboxgl.Map({
       container: containerRef.current,
       style: styleFor(baseLayer),
-      center: first ? [first.longitud, first.latitud] : [-70.5881, -15.8997],
+      center: first ? [first.longitud, first.latitud] : [-69.9966, -15.8740],
       zoom: 17.5,
       pitch: 55,
       bearing: -20,

@@ -6,7 +6,7 @@ import { filterSites } from './sitesGeo';
 
 const SitesMap25D = lazy(() => import('./SitesMap25D'));
 
-const salcedoCenter = [-15.8997, -70.5881];
+const salcedoCenter = [-15.8740, -69.9966]; // centro del plano municipal (DWG)
 
 function MapViewport({ selectedSite }) {
   const map = useMap();
