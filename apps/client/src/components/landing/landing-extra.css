@@ -63,3 +63,7 @@
   .lx-service-grid { grid-template-columns: 1fr; }
   .lx-footer { width: calc(100% + 36px); margin-left: -18px; margin-right: -18px; padding-left: 18px; padding-right: 18px; }
 }
+
+.lx-tariff-grid > *, .lx-transparency > *, .lx-form > *, .lx-form label { min-width: 0; }
+.lx-form select, .lx-form input[type='range'] { max-width: 100%; box-sizing: border-box; }
+.lx-segment button { white-space: normal; }
