@@ -61,6 +61,8 @@ export function SitesMap({ sites = [], onCollect, onCreate, onUpdate, onDelete }
   const [isLocating, setIsLocating] = useState(false);
   const [viewMode, setViewMode] = useState('3d');
   const [query, setQuery] = useState('');
+  const [draftError, setDraftError] = useState('');
+  const [savingDraft, setSavingDraft] = useState(false);
 
   const normalizedSites = useMemo(() => sites.map((site, index) => {
     const categoriaMapa = categoryLabel(site);
@@ -87,21 +89,30 @@ export function SitesMap({ sites = [], onCollect, onCreate, onUpdate, onDelete }
     }, () => setIsLocating(false), { enableHighAccuracy: true, timeout: 8000 });
   };
 
-  const submitDraft = (event) => {
+  const submitDraft = async (event) => {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
-    onCreate?.({
-      codigoPuesto: form.get('codigoPuesto'),
-      zona_id: form.get('zona_id'),
-      comerciante_id: form.get('comerciante_id'),
-      direccion: form.get('direccion'),
-      metros_cuadrados: form.get('metros_cuadrados'),
-      tipo_comerciante: form.get('categoria'),
-      latitud: draftLocation.lat,
-      longitud: draftLocation.lng
-    });
-    setDraftLocation(null);
-    setDrawing(false);
+    setDraftError('');
+    setSavingDraft(true);
+    try {
+      await onCreate?.({
+        codigoPuesto: form.get('codigoPuesto'),
+        zona_id: form.get('zona_id'),
+        comerciante_id: form.get('comerciante_id'),
+        direccion: form.get('direccion'),
+        metros_cuadrados: form.get('metros_cuadrados'),
+        tipo_comerciante: form.get('categoria'),
+        latitud: draftLocation.lat,
+        longitud: draftLocation.lng
+      });
+      setDraftLocation(null);
+      setDrawing(false);
+    } catch (error) {
+      // El formulario queda abierto para reintentar sin perder lo escrito.
+      setDraftError(error.message || 'No se pudo guardar el puesto');
+    } finally {
+      setSavingDraft(false);
+    }
   };
 
   return (
@@ -200,8 +211,9 @@ export function SitesMap({ sites = [], onCollect, onCreate, onUpdate, onDelete }
             <input name="comerciante_id" required defaultValue="1" placeholder="ID de comerciante" />
             <select name="categoria" defaultValue="permanente"><option value="permanente">Permanente</option><option value="ferial">Ferial</option><option value="eventual">Eventual</option></select>
             <input name="metros_cuadrados" required defaultValue="1" type="number" min="0.1" step="0.1" placeholder="m2" />
-            <button type="submit" className="primary-button">Guardar puesto</button>
+            <button type="submit" className="primary-button" disabled={savingDraft}>{savingDraft ? 'Guardando…' : 'Guardar puesto'}</button>
           </div>
+          {draftError && <p className="form-error" role="alert">{draftError}</p>}
         </form>
       )}
     </div>
