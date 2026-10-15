@@ -8,6 +8,8 @@ import { MerchantDirectory } from './features/merchants/MerchantDirectory';
 import { QrScanner } from './features/payments/QrScanner';
 import { SitesMap } from './components/features/map/SitesMap';
 import { SyncStatusBadge } from './components/ui/SyncStatusBadge';
+import { TariffCalculator } from './components/landing/TariffCalculator';
+import { TransparencySection, LandingFooter } from './components/landing/TransparencySection';
 import { useNetworkStatus } from './hooks/useNetworkStatus';
 
 const configuredApiBase = import.meta.env.VITE_API_URL || 'http://localhost:3003/api/v1';
@@ -1845,7 +1847,9 @@ function App() {
       { id: 'inicio', label: 'Inicio' },
       { id: 'beneficios', label: 'Capacidades' },
       { id: 'impacto', label: 'Impacto fiscal' },
-      { id: 'modulos', label: 'Módulos' }
+      { id: 'modulos', label: 'Módulos' },
+      { id: 'tarifas', label: 'Tarificador' },
+      { id: 'transparencia', label: 'Transparencia' }
     ];
 
     return (
@@ -1931,6 +1935,15 @@ function App() {
             <div className="module-item">Portal del comerciante</div>
           </div>
           <button type="button" className="primary-button landing-final-action" onClick={() => setShowLogin(true)}>Ingresar al sistema <span>→</span></button>
+        </ScrollSnapSection>
+
+        <ScrollSnapSection id="tarifas" className="landing-tariff-section">
+          <TariffCalculator onRegister={() => setShowLogin(true)} />
+        </ScrollSnapSection>
+
+        <ScrollSnapSection id="transparencia" className="landing-transparency-section">
+          <TransparencySection onOpenPortal={() => setShowPortal(true)} />
+          <LandingFooter onOpenLogin={() => setShowLogin(true)} onOpenPortal={() => setShowPortal(true)} />
         </ScrollSnapSection>
       </ScrollSnapContainer>
     );
