@@ -4,6 +4,8 @@ export function ScrollSnapContainer({ sections, children }) {
   const [activeSection, setActiveSection] = useState(sections[0]?.id || '');
 
   useEffect(() => {
+    if (typeof IntersectionObserver === 'undefined') return undefined;
+
     const observer = new IntersectionObserver((entries) => {
       const visible = entries
         .filter((entry) => entry.isIntersecting)

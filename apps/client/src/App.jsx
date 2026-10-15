@@ -10,26 +10,21 @@ import { SitesMap } from './components/features/map/SitesMap';
 import { SyncStatusBadge } from './components/ui/SyncStatusBadge';
 import { useNetworkStatus } from './hooks/useNetworkStatus';
 
-// Nuevos imports para React Query y nuestro servicio de API
-import { useInitialAppData } from './hooks/useApiQueries';
-import { apiService } from './services/apiService';
-
-// La URL de la API ahora se maneja a través del servicio centralizado
-// const apiBase = 'http://localhost:4000/api'; // Mantenido como comentario por referencia
+const configuredApiBase = import.meta.env.VITE_API_URL || 'http://localhost:3003/api/v1';
+const apiBase = `${configuredApiBase.replace(/\/+$/, '').replace(/\/api(?:\/v1)?$/, '')}/api/v1`;
+const formatPEN = (value) => new Intl.NumberFormat('es-PE', { style: 'currency', currency: 'PEN', minimumFractionDigits: 2 }).format(Number(value) || 0);
 
 const navItems = [
   { key: 'dashboard', label: 'Dashboard' },
-  { key: 'comerciantes', label: 'Comerciantes' },
+  { key: 'comerciantes', label: 'Comerciantes', roles: ['super_admin', 'auditor'] },
   { key: 'sitios', label: 'Sitios de venta' },
-  { key: 'pagos', label: 'Pagos y cobros' },
-  { key: 'cobradores', label: 'Cobradores' },
-  { key: 'zonas', label: 'Zonas y calles' },
-  { key: 'mapa', label: 'Mapa de sitios' },
+  { key: 'pagos', label: 'Pagos y cobros', roles: ['super_admin', 'cobrador'] },
+  { key: 'zonas', label: 'Zonas y calles', roles: ['super_admin', 'auditor'] },
+  { key: 'mapa', label: 'Mapa de sitios', roles: ['super_admin', 'cobrador'] },
   { key: 'reportes', label: 'Reportes' },
   { key: 'auditoria', label: 'Auditoría' },
-  { key: 'ia', label: 'Centro de inteligencia' },
-  { key: 'usuarios', label: 'Usuarios y roles' },
-  { key: 'tarifas', label: 'Tarifas' }
+  { key: 'ia', label: 'Analítica de recaudación' },
+  { key: 'tarifas', label: 'Tarifas', roles: ['super_admin'] }
 ];
 
 // Memoization cache for buildExpressSuggestion to avoid recalculations
@@ -66,15 +61,6 @@ function hashHistory(history) {
   const last = history[history.length - 1] || {};
   return `${history.length}_${first.comercianteId || first.comercianteId || '0'}_${last.comercianteId || last.comercianteId || '0'}`;
 }
-
-const demoCredentials = [
-  { email: 'admin@sisrec.demo', password: 'sisrec2026', role: 'super_admin', nombre: 'Andrea Medina' },
-  { email: 'admin@salcedo.gob.pe', password: 'admin123', role: 'super_admin', nombre: 'Administrador' },
-  { email: 'cobrador@salcedo.gob.pe', password: 'cobro123', role: 'cobrador', nombre: 'Carlos Huanca' },
-  { email: 'auditor@salcedo.gob.pe', password: 'audit123', role: 'auditor', nombre: 'María Salas' },
-  { email: 'comerciante@salcedo.gob.pe', password: 'comercio123', role: 'comerciante', nombre: 'Comerciante Demo' }
-];
-
 const getStoredToken = () => localStorage.getItem('sisrec-token');
 
 const getAuthHeaders = (extraHeaders = {}) => {
@@ -257,7 +243,17 @@ function normalizeLocalMerchant(item) {
   };
 }
 
+async function savePadronSnapshot(merchantList = []) {
 function buildExpressSuggestion(merchant, balance, history = []) {
+  // Create cache key from inputs
+  const merchantId = merchant?.id || 'unknown';
+  const balanceAmount = balance?.saldo || 0;
+  const historyHash = hashHistory(history);
+  
+  // Check cache first
+  const cached = getSuggestionFromCache(merchantId, balanceAmount, historyHash);
+  if (cached) return cached;
+
   const recent = [...(Array.isArray(history) ? history : [])]
     .filter((item) => Number(item.comerciante_id ?? item.comercianteId ?? 0) === Number(merchant?.id ?? 0) || item.comerciante === merchant?.nombre)
     .sort((a, b) => new Date(b.fecha_cobro || b.fecha || 0) - new Date(a.fecha_cobro || a.fecha || 0));
@@ -265,12 +261,14 @@ function buildExpressSuggestion(merchant, balance, history = []) {
   const latest = recent[0] || null;
   const baseAmount = Number(balance?.saldo ?? 0);
   if (!latest && !recent.length) {
-    return {
+    const result = {
       suggestedAmount: baseAmount > 0 ? Number(baseAmount.toFixed(2)) : 0,
       preferredMethod: 'efectivo',
       lastLabel: 'Sin historial previo: el sistema no tiene cobros anteriores para este comerciante.',
       lastPayment: null
     };
+    setSuggestionInCache(merchantId, balanceAmount, historyHash, result);
+    return result;
   }
 
   let streakAmount = 1;
@@ -313,14 +311,17 @@ function buildExpressSuggestion(merchant, balance, history = []) {
     ? `Último cobro: S/ ${Number(latest.monto || 0).toFixed(2)} con ${methodLabel.toUpperCase()} (${diffDays === 0 ? 'hoy' : diffDays === 1 ? 'ayer' : `hace ${diffDays} días`})`
     : 'Sin historial previo: el sistema no tiene cobros anteriores para este comerciante.';
 
-  return {
+  const result = {
     suggestedAmount: finalSuggestedAmount,
     preferredMethod: methodLabel || 'efectivo',
     lastLabel,
     lastPayment: latest
   };
+  
+  // Cache the result for future use
+  setSuggestionInCache(merchantId, balanceAmount, historyHash, result);
+  return result;
 }
-async function savePadronSnapshot(merchantList = []) {
   if (!merchantList.length || !('indexedDB' in window)) return;
 
   const db = await openOfflineDatabase();
@@ -421,8 +422,8 @@ async function syncPendingMapMutations() {
   for (const mutation of pending) {
     const { operation, payload } = mutation;
     const endpoint = operation === 'create'
-      ? `${apiBase}/v1/puestos-mapa`
-      : `${apiBase}/v1/puestos-mapa/${payload.id}`;
+      ? `${apiBase}/puestos-mapa`
+      : `${apiBase}/puestos-mapa/${payload.id}`;
     const response = await fetch(endpoint, {
       method: operation === 'create' ? 'POST' : operation === 'update' ? 'PUT' : 'DELETE',
       headers: getAuthHeaders({ 'Content-Type': 'application/json' }),
@@ -479,7 +480,7 @@ async function syncPendingOfflinePayments() {
       const pendings = (request.result || []).filter((item) => item.sincronizado === 0);
       try {
         for (const cobro of pendings) {
-          const response = await fetch(`${apiBase}/v1/cobros/sincronizar`, {
+          const response = await fetch(`${apiBase}/cobros/sincronizar`, {
             method: 'POST',
             headers: getAuthHeaders({
               'Content-Type': 'application/json',
@@ -521,71 +522,34 @@ async function syncPendingOfflinePayments() {
   });
 }
 
-const merchants = [
-  ['CM-001', 'María Quispe', 'Venta de alimentos', 'S-025', 'Zona Centro', 'Activo', '24 ago 2026'],
-  ['CM-002', 'Diego Mamani', 'Artesanía', 'S-031', 'Zona Norte', 'Activo', '23 ago 2026'],
-  ['CM-003', 'Rosa Condori', 'Venta de ropa', 'S-045', 'Zona Sur', 'Activo', '22 ago 2026'],
-  ['CM-004', 'Luis Apaza', 'Productos agrícolas', 'S-058', 'Zona Centro', 'Activo', '21 ago 2026'],
-  ['CM-005', 'Ana Choque', 'Venta de alimentos', 'S-073', 'Zona Norte', 'Pendiente', '18 ago 2026']
-];
-
-const sites = [
-  ['S-025', 'Jr. Lima', 'Centro', 'María Quispe', 'S/ 5.00', 'Pagado'],
-  ['S-031', 'Jr. Arequipa', 'Norte', 'Diego Mamani', 'S/ 5.00', 'Pendiente'],
-  ['S-045', 'Jr. Puno', 'Sur', 'Rosa Condori', 'S/ 8.00', 'Pagado'],
-  ['S-058', 'Av. Floral', 'Centro', 'Luis Apaza', 'S/ 5.00', 'Disponible'],
-  ['S-073', 'Jr. Tacna', 'Norte', 'Ana Choque', 'S/ 5.00', 'Moroso']
-];
-
-const payments = [
-  ['#PG-0300', '24 ago, 10:42', 'María Quispe', 'S-025', 'Carlos Huanca', 'Ocupación diaria', 'S/ 5.00', 'Yape', 'Confirmado'],
-  ['#PG-0299', '24 ago, 10:15', 'Rosa Condori', 'S-045', 'Luis Ccama', 'Ocupación diaria', 'S/ 8.00', 'Efectivo', 'Confirmado'],
-  ['#PG-0298', '23 ago, 16:20', 'Diego Mamani', 'S-031', 'Carlos Huanca', 'Ocupación diaria', 'S/ 5.00', 'Yape', 'Pendiente'],
-  ['#PG-0297', '23 ago, 14:08', 'Luis Apaza', 'S-058', 'Pedro Quispe', 'Ocupación diaria', 'S/ 5.00', 'Efectivo', 'Confirmado']
-];
-
-const inspectors = [
-  ['Carlos Huanca', 'Zona Centro', '92%', '6 pagos pendientes'],
-  ['Luis Ccama', 'Zona Norte', '88%', '4 pagos pendientes'],
-  ['Pedro Quispe', 'Zona Sur', '90%', '5 pagos pendientes'],
-  ['Elena Mamani', 'Zona Este', '94%', '2 pagos pendientes']
-];
-
-const zones = [
-  ['Zona Centro', '125 sitios', 'Activo'],
-  ['Zona Norte', '85 sitios', 'Activo'],
-  ['Zona Sur', '73 sitios', 'Revisión'],
-  ['Zona Este', '42 sitios', 'Activo']
-];
-
-const tariffs = [
-  ['Ocupación de sitio de venta', 'S/ 5.00 · Diaria', 'Activo'],
-  ['Comercio temporal', 'S/ 8.00 · Diaria', 'Activo'],
-  ['Feria dominical', 'S/ 12.00 · Semanal', 'Revisión'],
-  ['Uso de espacio público', 'S/ 15.00 · Mensual', 'Activo']
-];
-
-const auditTrail = [
-  ['Andrea Medina registró comerciante', 'Hace 8 min'],
-  ['Carlos Huanca registró pago', 'Hace 24 min'],
-  ['Andrea Medina modificó tarifa', 'Hace 1 h'],
-  ['Luis Ccama inició jornada', 'Hace 2 h']
-];
-
-const users = [
-  ['Andrea Medina', 'Super Admin'],
-  ['Carlos Huanca', 'Cobrador'],
-  ['Luis Ccama', 'Cobrador'],
-  ['María Salas', 'Consultor']
-];
+const merchants = [];
+const sites = [];
+const payments = [];
+const inspectors = [];
+const zones = [];
+const tariffs = [];
+const auditTrail = [];
+const users = [];
 
 function App() {
   const isOnline = useNetworkStatus();
   const [user, setUser] = useState(() => {
-    const savedUser = localStorage.getItem('sisrec-user');
-    return savedUser ? JSON.parse(savedUser) : null;
+    try {
+      const savedUser = localStorage.getItem('sisrec-user');
+      const parsedUser = savedUser ? JSON.parse(savedUser) : null;
+      return parsedUser && typeof parsedUser === 'object' ? parsedUser : null;
+    } catch (storageError) {
+      try {
+        localStorage.removeItem('sisrec-user');
+        localStorage.removeItem('sisrec-token');
+      } catch {
+        // The landing page should still render when browser storage is disabled.
+      }
+      return null;
+    }
   });
-  const [pendingSyncCount, setPendingSyncCount] = useState(2);
+  const [pendingSyncCount, setPendingSyncCount] = useState(0);
+  const [apiConnected, setApiConnected] = useState(false);
   const [showLogin, setShowLogin] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [currentPage, setCurrentPage] = useState('dashboard');
@@ -593,15 +557,16 @@ function App() {
   const [error, setError] = useState('');
   const [printStatus, setPrintStatus] = useState({ isPrinting: false, error: null });
   const [loginForm, setLoginForm] = useState({
-    email: 'admin@sisrec.demo',
-    password: 'sisrec2026'
+    email: '',
+    password: ''
   });
   const [dashboardStats, setDashboardStats] = useState({
-    recaudacion: 'S/ 1,248.50',
-    pagos: 186,
-    sitios: '78 / 100',
-    pendientes: 12,
-    morosidad: '12.4%'
+    recaudacion: 'S/ 0.00',
+    pagos: 0,
+    sitios: '0',
+    pendientes: 0,
+    morosidad: '0%',
+    comerciantes: 0
   });
   const [operational, setOperational] = useState({ porZona: [], porRubro: [], porCobrador: [] });
   const [comerciantes, setComerciantes] = useState([]);
@@ -622,9 +587,7 @@ function App() {
   const [zoneMessage, setZoneMessage] = useState('');
   const [predictiveData, setPredictiveData] = useState({ totalProyectado: 0, promedioDiario: 0, porZona: [], porRubro: [] });
   const [riskData, setRiskData] = useState({ summary: { total: 0, bajo: 0, medio: 0, alto: 0, critico: 0 }, records: [] });
-  // Nota: El estado 'loading' general se mantiene para compatibilidad con el splash screen inicial
-  // Los estados de loading específicos ahora son manejados por React Query
-  const [initialLoading, setInitialLoading] = useState(true);
+  const [loading, setLoading] = useState(true);
   const [showMerchantForm, setShowMerchantForm] = useState(false);
   const [merchantMessage, setMerchantMessage] = useState('');
   const [padronFile, setPadronFile] = useState(null);
@@ -657,44 +620,64 @@ function App() {
   const [showQrScanner, setShowQrScanner] = useState(false);
   const [receipt, setReceipt] = useState(null);
 
+  // Process the offline print queue while the app is open.
   useEffect(() => {
     const handleFocus = async () => {
       try {
         const offlineQueue = await import('./utils/offlinePrintQueue');
         const queue = offlineQueue.getOfflinePrintQueue();
-        const hasJobs = await queue.hasPendingJobs();
+        if (!(await queue.hasPendingJobs())) return;
 
-        if (hasJobs) {
-          const { getBluetoothPrinter } = await import('./utils/bluetoothPrint');
-          const printer = getBluetoothPrinter();
-          const isInitialized = await printer.initialize();
-
-          if (isInitialized) {
-            await queue.processQueue(async (receipt) => {
-              await printer.printReceipt(receipt);
-            });
-          }
+        const { getBluetoothPrinter } = await import('./utils/bluetoothPrint');
+        const printer = getBluetoothPrinter();
+        if (await printer.initialize()) {
+          await queue.processQueue((queuedReceipt) => printer.printReceipt(queuedReceipt));
         }
       } catch (error) {
         console.error('Error processing offline print queue:', error);
       }
     };
-
     const handleVisibilityChange = () => {
-      if (!document.hidden) {
-        handleFocus();
-      }
+      if (!document.hidden) handleFocus();
     };
 
     document.addEventListener('visibilitychange', handleVisibilityChange);
     const intervalId = setInterval(handleFocus, 30000);
-
     handleFocus();
-
     return () => {
       document.removeEventListener('visibilitychange', handleVisibilityChange);
       clearInterval(intervalId);
     };
+  }, []);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    const loadPublicDashboard = async () => {
+      try {
+        const [dashboardResponse, postsResponse] = await Promise.all([
+          fetch(`${apiBase}/dashboard`, { signal: controller.signal }),
+          fetch(`${apiBase}/puestos`, { signal: controller.signal })
+        ]);
+        if (!dashboardResponse.ok || !postsResponse.ok) throw new Error('API no disponible');
+        const dashboard = await dashboardResponse.json();
+        const posts = await postsResponse.json();
+        setDashboardStats((current) => ({
+          ...current,
+          recaudacion: formatPEN(dashboard.stats?.recaudacion ?? 0),
+          pagos: dashboard.stats?.pagos ?? 0,
+          sitios: String(posts.total ?? (posts.data || []).length),
+          pendientes: dashboard.stats?.deudaPendiente ?? 0,
+          morosidad: `${dashboard.stats?.morosidad ?? 0}%`,
+          comerciantes: dashboard.stats?.totalComerciantes ?? 0
+        }));
+        setOperational(dashboard.operational || { porZona: [], porRubro: [], porCobrador: [] });
+        setApiConnected(true);
+      } catch (error) {
+        if (!controller.signal.aborted) setApiConnected(false);
+      }
+    };
+    loadPublicDashboard();
+    return () => controller.abort();
   }, []);
 
   const saveMerchantPreferences = async (merchantId, payload) => {
@@ -707,183 +690,94 @@ function App() {
       });
       const data = await response.json();
       if (!response.ok) throw new Error(data.message || 'No se pudo guardar la preferencia');
+      const preferences = Array.isArray(data.data)
+        ? Object.fromEntries(data.data.map((item) => [item.clave, item.valor]))
+        : (data.data || {});
+      const lastDate = preferences.ultimo_cobro_fecha;
+      const lastAmount = Number(preferences.ultimo_monto || 0);
+      const lastMethod = String(preferences.ultimo_metodo_pago || 'efectivo');
       setExpressSuggestion({
-        suggestedAmount: Number(data.data.monto_sugerido || 0),
-        preferredMethod: String(data.data.metodo_pago_preferido || 'efectivo'),
-        lastLabel: data.data.ultimo_cobro_fecha ? `Último cobro: S/ ${Number(data.data.ultimo_monto || 0).toFixed(2)} con ${String(data.data.ultimo_metodo_pago || 'efectivo').toUpperCase()} (${new Date(data.data.ultimo_cobro_fecha).toLocaleDateString('es-PE', { day: 'numeric', month: 'short' })})` : 'Sin historial previo',
-        lastPayment: { monto: Number(data.data.ultimo_monto || 0), metodo_pago: data.data.ultimo_metodo_pago || 'efectivo', fecha_cobro: data.data.ultimo_cobro_fecha }
+        suggestedAmount: Number(preferences.monto_sugerido || lastAmount),
+        preferredMethod: String(preferences.metodo_pago_preferido || lastMethod),
+        lastLabel: lastDate ? `Último cobro: ${formatPEN(lastAmount)} con ${lastMethod.toUpperCase()} (${new Date(lastDate).toLocaleDateString('es-PE', { day: 'numeric', month: 'short' })})` : 'Sin historial previo',
+        lastPayment: { monto: lastAmount, metodo_pago: lastMethod, fecha_cobro: lastDate }
       });
-      return data.data;
+      return preferences;
     } catch (error) {
       console.warn('No se pudo guardar preferencias del comerciante.', error);
       return null;
     }
   };
 
-  // Reemplazamos el fetchData manual con el hook de React Query que maneja todas las consultas iniciales
-  const { data: initialData, isLoading: initialDataLoading, isError: initialDataError } = useInitialAppData(user);
-
-  // Procesamos los resultados de las consultas cuando están disponibles
-  useEffect(() => {
-    // Solo procesamos cuando hay datos y no estamos en estado de error o loading inicial
-    if (initialDataLoading || !initialData || initialDataError) {
-      // Mantener el splash screen o mostrar estado de loading según corresponda
-      setInitialLoading(true);
-      return;
-    }
-
+  const fetchData = async () => {
     try {
-      // Desestructuramos los resultados en el mismo orden que useInitialAppData los retorna
-      const [
-        dashboardResult,
-        comerciantesResult,
-        tarifasResult,
-        catalogosResult,
-        cobrosResult,
-        puertosResult,
-        prediccionResult,
-        riesgoResult,
-        zonasResult
-      ] = initialData;
+      const period = new Date().toISOString().slice(0, 7);
+      const request = async (path) => {
+        const response = await fetch(path, { headers: getAuthHeaders() });
+        const body = await response.json();
+        if (!response.ok) throw new Error(body.message || `Error ${response.status}`);
+        return body;
+      };
+      const canReadAudit = ['super_admin', 'auditor'].includes(user?.rol);
+      const [dashboard, comerciantes, tarifas, catalogos, cobros, puestos, report, audit, forecast, risk] = await Promise.all([
+        request(`${apiBase}/dashboard?periodo=${encodeURIComponent(period)}`),
+        request(`${apiBase}/comerciantes?limit=100&includeInactive=true`),
+        request(`${apiBase}/tarifas`),
+        request(`${apiBase}/catalogos`),
+        request(`${apiBase}/cobros`),
+        request(`${apiBase}/puestos`),
+        request(`${apiBase}/reportes?periodo=${encodeURIComponent(period)}`),
+        canReadAudit ? request(`${apiBase}/auditoria`) : Promise.resolve({ data: [] }),
+        request(`${apiBase}/analitica/prediccion?periodo=${encodeURIComponent(period)}&horizonte_dias=90`),
+        request(`${apiBase}/analitica/riesgo?limit=5`)
+      ]);
 
-      // Procesamos cada resultado con manejo de errores individualizado
+      setApiConnected(true);
       setDashboardStats({
-        recaudacion: `S/ ${(dashboardResult.data?.stats?.recaudacion ?? dashboardResult.data?.stats?.totalRecaudado ?? 0).toLocaleString()}`,
-        pagos: dashboardResult.data?.stats?.pagos ?? dashboardResult.data?.stats?.totalCobros ?? 0,
-        sitios: `${Math.min(dashboardResult.data?.stats?.totalComerciantes ?? 0, 100)} / 100`,
-        pendientes: dashboardResult.data?.stats?.deudaPendiente ?? 0,
-        morosidad: `${dashboardResult.data?.stats?.morosidad ?? 0}%`
+        recaudacion: formatPEN(dashboard.stats?.recaudacion ?? dashboard.stats?.totalRecaudado ?? 0),
+        pagos: dashboard.stats?.pagos ?? dashboard.stats?.totalCobros ?? 0,
+        sitios: String(puestos.total ?? (puestos.data || []).length),
+        pendientes: dashboard.stats?.deudaPendiente ?? 0,
+        morosidad: `${dashboard.stats?.morosidad ?? 0}%`,
+        comerciantes: dashboard.stats?.totalComerciantes ?? 0
       });
+      setOperational(dashboard.operational || { porZona: [], porRubro: [], porCobrador: [] });
 
-      setOperational(dashboardResult.data?.operational || { porZona: [], porRubro: [], porCobrador: [] });
-
-      // Procesar comerciantes
-      if (Array.isArray(comerciantesResult.data)) {
-        const processedComerciantes = comerciantesResult.data.map((item) => [
-          item.id,
-          item.nombre,
-          item.rubro,
-          item.dni_ruc,
-          item.zona,
-          item.estado,
-          new Date(item.fecha_registro).toLocaleDateString('es-PE'),
-          item.tipo_comerciante || item.categoria
-        ]);
-        setComerciantes(processedComerciantes);
-        // Guardar en IndexedDB para modo offline
-        savePadronSnapshot(comerciantesResult.data).catch(console.error);
-      } else {
-        setComerciantes(merchants); // Fallback a datos estáticos
-      }
-
-      // Procesar tarifas
-      if (Array.isArray(tarifasResult.data)) {
-        const processedTarifas = tarifasResult.data.map((item) => [
-          item.rubro,
-          `S/ ${item.monto} · ${item.tipo}`,
-          item.estado === 1 ? 'Activo' : 'Inactivo'
-        ]);
-        setTarifas(processedTarifas);
-        setTariffRecords(tarifasResult.data);
-      } else {
-        setTarifas(tarifas); // Fallback
-        setTariffRecords([]);
-      }
-
-      // Procesar cobros
-      setCobros(Array.isArray(cobrosResult.data) ? cobrosResult.data : []);
-
-      // Procesar puestos
-      setMapPuestos(Array.isArray(puertosResult.data) ? puertosResult.data : []);
-      saveMapSnapshot(Array.isArray(puertosResult.data) ? puertosResult.data : []).catch(console.error);
-
-      // Procesar reportes
-      setReportRows(Array.isArray(puestosResult.data) ? puestosResult.data : []); // Nota: Originalmente usaba puestos aquí, manteniendo compatibilidad
-
-      // Procesar auditoría
-      setAuditRecords(Array.isArray(auditResult.data) ? auditResult.data : []);
-
-      // Procesar catalogos
+      setComerciantes((comerciantes.data || []).map((item) => [item.id, item.nombre, item.rubro, item.dni_ruc, item.zona, item.estado, new Date(item.fecha_registro).toLocaleDateString('es-PE'), item.tipo_comerciante || item.categoria]))
+      setTarifas((tarifas.data || []).map((item) => [item.rubro, `S/ ${Number(item.monto_fijo || 0).toFixed(2)} · ${item.tipo_tarifa}`, item.estado === 1 ? 'Activo' : 'Inactivo']))
+      setTariffRecords(tarifas.data || []);
+      setCobros(cobros.data || []);
+      setMapPuestos(puestos.data || []);
+      setReportRows(report.data || []);
+      setAuditRecords(audit.data || []);
       setCatalogos({
-        rubros: Array.isArray(catalogosResult.data?.rubros) ? catalogosResult.data?.rubros : [],
-        zonas: Array.isArray(catalogosResult.data?.zonas) ? catalogosResult.data?.zonas : []
+        rubros: catalogos.rubros || [],
+        zonas: catalogos.zonas || []
       });
-      setZoneRecords(Array.isArray(catalogosResult.data?.zonas) ? catalogosResult.data?.zonas : []);
+      setPredictiveData(forecast.data || { totalProyectado: 0, promedioDiario: 0, porZona: [], porRubro: [] });
+      setRiskData(risk.data || { summary: { total: 0, bajo: 0, medio: 0, alto: 0, critico: 0 }, records: [] });
 
-      // Procesar datos predictivos
-      setPredictiveData(prediccionResult.data || { totalProyectado: 0, promedioDiario: 0, porZona: [], porRubro: [] });
-
-      // Procesar datos de riesgo
-      setRiskData(riesgoResult.data || { summary: { total: 0, bajo: 0, medio: 0, alto: 0, critico: 0 }, records: [] });
-
-      // Indicamos que la carga inicial está completa
-      setInitialLoading(false);
-
-    } catch (error) {
-      console.error('Error procesando datos iniciales de la API:', error);
-      // En caso de error, mantenemos los datos estáticos como fallback
-      setComerciantes(merchants);
-      setTarifas(tarifas);
+      if (Array.isArray(comerciantes.data)) {
+        await savePadronSnapshot(comerciantes.data);
+      }
+      await saveMapSnapshot(puestos.data || []);
+    } catch (err) {
+      setApiConnected(false);
+      console.error('No se pudo cargar la información del servidor SISREC.', err);
+      setComerciantes([]);
+      setTarifas([]);
       setTariffRecords([]);
       setCobros([]);
-      setMapPuestos([]);
+      setMapPuestos(await readMapSnapshot().catch(() => []));
       setReportRows([]);
       setAuditRecords([]);
       setOperational({ porZona: [], porRubro: [], porCobrador: [] });
-      setCatalogos({ rubros: [{ id: 1, nombre: 'comida' }, { id: 2, nombre: 'ropa' }, { id: 3, nombre: 'zapatillas' }, { id: 4, nombre: 'otros' }], zonas: [{ id: 1, nombre: 'Mercado Central' }, { id: 2, nombre: 'Parque Principal' }, { id: 3, nombre: 'Zona Norte' }] });
-      setPredictiveData({ totalProyectado: 0, promedioDiario: 0, porZona: [], porRubro: [] });
-      setRiskData({ summary: { total: 0, bajo: 0, medio: 0, alto: 0, critico: 0 }, records: [] });
-      setInitialLoading(false); // Aún así marcamos como completo para no bloquear la UI
-    }
-  }, [initialData, initialDataLoading, initialDataError]);
-
-  // Mantenemos el refreshZoneCatalog por si se usa en otros lugares
-  const refreshZoneCatalog = async () => {
-    try {
-      const response = await apiService.getZonas(); // Usamos el servicio en lugar de fetch directo
-      const data = await response;
-
-      if (!data || !Array.isArray(data.data)) {
-        throw new Error('Formato de respuesta inesperado');
-      }
-
-      const zonas = data.data;
-      const calles = Array.isArray(data.calles) ? data.calles : [];
-
-      setZoneRecords(zonas);
-      setCalleRecords(calles);
-
-      if (!calleForm.zona_id && zonas[0]?.id) {
-        setCalleForm((current) => ({ ...current, zona_id: String(zonas[0].id) }));
-      }
-    } catch (error) {
-      console.warn('No se pudo recargar la zona/calle:', error);
-      // Mantener valores anteriores o usar fallbacks
+      setCatalogos({ rubros: [], zonas: [] });
+      setApiConnected(false);
+    } finally {
+      setLoading(false);
     }
   };
-
-  // Actualizamos el effect que maneja el login para usar los nuevos patterns
-  useEffect(() => {
-    if (user) {
-      localStorage.setItem('sisrec-user', JSON.stringify(user));
-      localStorage.setItem('sisrec-token', user.token || getStoredToken() || '');
-      // No necesitamos llamar fetchData manualmente ahora - React Query lo hace automáticamente
-      const syncAllPending = () => {
-        syncPendingOfflinePayments().catch(() => undefined);
-        syncPendingMapMutations().then(() => {
-          // React Query invalidará y refetchará automáticamente cuando sea necesario
-        }).catch(() => undefined);
-      };
-      syncAllPending();
-      window.addEventListener('online', syncAllPending);
-      return () => window.removeEventListener('online', syncAllPending);
-    } else {
-      localStorage.removeItem('sisrec-user');
-      localStorage.removeItem('sisrec-token');
-      // Nota: No establecemos initialLoading en false aquí porque
-      // el componente se mostrará en estado de login
-    }
-  }, [user]);
 
   const refreshZoneCatalog = async () => {
     try {
@@ -924,31 +818,32 @@ function App() {
   }, [user]);
 
   useEffect(() => {
-    setPendingSyncCount(isOnline ? 0 : 3);
-  }, [isOnline]);
-
-  useEffect(() => {
-    const metricsUpdate = {
-      day: 22,
-      description: 'Optimizado flujo de impresión y compartido',
-      timestamp: new Date().toISOString(),
-      improvements: [
-        'Indicador visual de impresión ("Imprimiendo...")',
-        'Manejo de errores amigable con opción de reintentar',
-        'Integración con cola de impresión offline',
-        'Uso de Web Share API para WhatsApp con fallback'
-      ]
-    };
-
-    try {
-      const existingMetrics = localStorage.getItem('sisrec-metrics') || '[]';
-      const metricsArray = JSON.parse(existingMetrics);
-      metricsArray.push(metricsUpdate);
-      localStorage.setItem('sisrec-metrics', JSON.stringify(metricsArray));
-    } catch (e) {
-      console.warn('Could not store metrics:', e);
+    let cancelled = false;
+    if (isOnline) {
+      setPendingSyncCount(0);
+      return undefined;
     }
-  }, []);
+    const loadQueueCount = async () => {
+      try {
+        const db = await openOfflineDatabase();
+        const count = (storeName, isPending = () => true) => new Promise((resolve, reject) => {
+          const tx = db.transaction(storeName, 'readonly');
+          const request = tx.objectStore(storeName).getAll();
+          request.onsuccess = () => resolve((request.result || []).filter(isPending).length);
+          request.onerror = () => reject(request.error);
+        });
+        const [paymentsCount, mapCount] = await Promise.all([
+          count('cobros', (item) => item.sincronizado === 0),
+          count('mapa_pendientes')
+        ]);
+        if (!cancelled) setPendingSyncCount(paymentsCount + mapCount);
+      } catch {
+        if (!cancelled) setPendingSyncCount(0);
+      }
+    };
+    loadQueueCount();
+    return () => { cancelled = true; };
+  }, [isOnline]);
 
   const handleLogin = async (event) => {
     event.preventDefault();
@@ -1091,7 +986,7 @@ function App() {
     try {
       const response = await fetch(`${apiBase}/tarifas${editingTariffId ? `/${editingTariffId}` : ''}`, {
         method: editingTariffId ? 'PUT' : 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: getAuthHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify(tariffForm)
       });
       const data = await response.json();
@@ -1197,18 +1092,26 @@ function App() {
       return;
     }
 
-    let response = await fetch(`${apiBase}/comerciantes?search=${encodeURIComponent(query)}&limit=10`, { headers: getAuthHeaders() });
-    let data = await response.json();
-    let merchant = data.data?.[0];
+    let merchant = null;
+    const merchantCodeMatch = query.match(/^CM-(\d+)$/i);
+    if (merchantCodeMatch) {
+      const merchantResponse = await fetch(`${apiBase}/comerciantes/${Number(merchantCodeMatch[1])}`, { headers: getAuthHeaders() });
+      const merchantData = await merchantResponse.json();
+      if (merchantResponse.ok) merchant = merchantData.data;
+    }
+    if (!merchant) {
+      const response = await fetch(`${apiBase}/comerciantes?search=${encodeURIComponent(query)}&limit=10`, { headers: getAuthHeaders() });
+      const data = await response.json();
+      merchant = data.data?.[0] || null;
+    }
     if (!merchant) {
       const puestosResponse = await fetch(`${apiBase}/puestos`, { headers: getAuthHeaders() });
       const puestosData = await puestosResponse.json();
       const puesto = puestosData.data?.find((item) => String(item.codigo || item.codigo_puesto || '').trim().toLowerCase() === query.toLowerCase());
       if (puesto) {
-        const merchantCode = `CM-${String(puesto.comerciante_id).padStart(3, '0')}`;
-        response = await fetch(`${apiBase}/comerciantes?search=${encodeURIComponent(merchantCode)}&limit=1`, { headers: getAuthHeaders() });
-        data = await response.json();
-        merchant = data.data?.[0];
+        const merchantResponse = await fetch(`${apiBase}/comerciantes/${puesto.comerciante_id}`, { headers: getAuthHeaders() });
+        const merchantData = await merchantResponse.json();
+        if (merchantResponse.ok) merchant = merchantData.data;
       }
     }
     if (!merchant) return setPaymentMessage('No se encontró un comerciante con ese dato.');
@@ -1277,7 +1180,7 @@ function App() {
         total_cobros: (cobros.filter((item) => Number(item.comerciante_id ?? item.comercianteId ?? 0) === Number(paymentForm.comercianteId)).length || 0) + 1
       });
 
-      setPaymentMessage(`${data.message}. Comprobante ${data.data.comprobante}. Saldo restante: S/ ${data.data.saldo_restante.toFixed(2)}`);
+      setPaymentMessage(`${data.message}. Comprobante ${data.data.comprobante}. Saldo restante: S/ ${Number(data.data.saldo_restante || 0).toFixed(2)}`);
       const hashIdempotencia = await createReceiptHash({
         cobradorId: user?.id || 2,
         comercianteId: paymentForm.comercianteId,
@@ -1310,7 +1213,7 @@ function App() {
       return;
     }
 
-    const response = await fetch(`${apiBase}/v1/puestos-mapa`, {
+    const response = await fetch(`${apiBase}/puestos-mapa`, {
       method: 'POST',
       headers: getAuthHeaders({ 'Content-Type': 'application/json' }),
       body: JSON.stringify(payload)
@@ -1329,7 +1232,7 @@ function App() {
       return;
     }
 
-    const response = await fetch(`${apiBase}/v1/puestos-mapa/${id}`, {
+    const response = await fetch(`${apiBase}/puestos-mapa/${id}`, {
       method: 'PUT',
       headers: getAuthHeaders({ 'Content-Type': 'application/json' }),
       body: JSON.stringify(payload)
@@ -1349,7 +1252,7 @@ function App() {
       return;
     }
 
-    const response = await fetch(`${apiBase}/v1/puestos-mapa/${site.id}`, {
+    const response = await fetch(`${apiBase}/puestos-mapa/${site.id}`, {
       method: 'DELETE',
       headers: getAuthHeaders()
     });
@@ -1477,35 +1380,33 @@ function App() {
           <section className="page">
             <div className="page-heading">
               <div>
-                <div className="eyebrow">24 DE AGOSTO, 2026 · RESUMEN OPERATIVO</div>
-                <h1>Buenos días, Andrea</h1>
+                <div className="eyebrow">RESUMEN OPERATIVO | {new Date().toLocaleDateString('es-PE', { dateStyle: 'long' })}</div>
+                <h1>Bienvenido, {user?.nombre?.split(' ')[0] || 'equipo'}</h1>
                 <p>Este es el estado de la recaudación en Salcedo.</p>
               </div>
-              <span className="date-chip">◷ Hoy, 24 ago 2026</span>
+              <span className="date-chip">{new Date().toLocaleDateString('es-PE', { weekday: 'long', day: 'numeric', month: 'short' })}</span>
             </div>
 
             <div className="stats-grid">
-              <KpiCard label="Recaudación del día" value={dashboardStats.recaudacion} change="↑ 12.8% vs. ayer" trend="up" icon="↗" accent="green" />
-              <KpiCard label="Pagos realizados" value={dashboardStats.pagos} change="↑ 8.4% vs. ayer" trend="up" icon="✓" accent="blue" />
-              <KpiCard label="Sitios ocupados" value={dashboardStats.sitios} change="78% de ocupación total" trend="up" icon="▦" accent="amber" />
-              <KpiCard label="Pagos pendientes" value={dashboardStats.pendientes} change="↑ 3 desde ayer" trend="down" icon="!" accent="red" />
+              <KpiCard label="Recaudacion del periodo" value={dashboardStats.recaudacion} change="Acumulado del mes" icon="R" accent="green" />
+              <KpiCard label="Pagos registrados" value={dashboardStats.pagos} change="Operaciones confirmadas" icon="P" accent="blue" />
+              <KpiCard label="Puestos registrados" value={dashboardStats.sitios} change={`${dashboardStats.comerciantes} comerciantes activos`} icon="S" accent="amber" />
+              <KpiCard label="Deuda pendiente" value={formatPEN(dashboardStats.pendientes)} change={`Morosidad ${dashboardStats.morosidad}`} icon="!" accent="red" />
             </div>
 
             <div className="dashboard-grid">
               <div className="panel">
                 <div className="panel-heading">
                   <div>
-                    <div className="panel-title">Recaudación semanal</div>
-                    <div className="panel-subtitle">Comparativa de los últimos 7 días</div>
+                    <div className="panel-title">Recaudacion por rubro</div>
+                    <div className="panel-subtitle">Importes acumulados en el periodo actual</div>
                   </div>
                   <select className="select-small"><option>Esta semana</option></select>
                 </div>
-                <div className="chart-box">
-                  <div className="bar-group">
-                    {[60, 90, 70, 100, 85, 120, 92].map((height, index) => (
-                      <div className="bar-item" key={index} style={{ height: `${height}%` }}></div>
-                    ))}
-                  </div>
+                <div className="activity-list">
+                    {operational.porRubro.length ? operational.porRubro.map((row) => (
+                      <div className="metric-line" key={row.rubro}><span>{row.rubro}</span><strong>{formatPEN(row.recaudado)}</strong></div>
+                    )) : <div className="empty-state">Sin recaudacion registrada en este periodo.</div>}
                 </div>
               </div>
 
@@ -1517,11 +1418,9 @@ function App() {
                   </div>
                   <button type="button" className="view-all" onClick={() => setCurrentPage('mapa')}>Ver mapa →</button>
                 </div>
-                <div className="map-mini">
-                  <span className="map-dot green"></span>
-                  <span className="map-dot blue"></span>
-                  <span className="map-dot amber"></span>
-                  <span className="map-dot red"></span>
+                <div className="activity-list dashboard-site-stats">
+                    <div className="metric-line"><span>Puestos registrados</span><strong>{mapPuestos.length}</strong></div>
+                    <div className="metric-line"><span>Ocupados</span><strong>{mapPuestos.filter((site) => site.estado !== 'disponible').length}</strong></div>
                 </div>
               </div>
             </div>
@@ -1536,15 +1435,13 @@ function App() {
                   <button type="button" className="view-all" onClick={() => setCurrentPage('auditoria')}>Ver todo →</button>
                 </div>
                 <div className="activity-list">
-                  {auditTrail.map(([text, time]) => (
-                    <div className="activity-item" key={text}>
+                  {auditRecords.slice(0, 5).map((item) => (
+                    <div className="activity-item" key={item.id}>
                       <span className="activity-bullet"></span>
-                      <div>
-                        <strong>{text}</strong>
-                        <small>{time}</small>
-                      </div>
+                      <div><strong>{item.accion} ? {item.entidad}</strong><small>{item.usuario || `Usuario ${item.usuario_id}`} ? {new Date(item.fecha).toLocaleString('es-PE')}</small></div>
                     </div>
                   ))}
+                  {!auditRecords.length && <div className="empty-state">Todavia no hay actividad de auditoria para mostrar.</div>}
                 </div>
               </div>
 
@@ -1554,12 +1451,13 @@ function App() {
                     <div className="panel-title">Alertas importantes</div>
                     <div className="panel-subtitle">Requieren atención del equipo</div>
                   </div>
-                  <span className="status pending">4 activas</span>
+                  <span className="status pending">{riskData.records?.length || 0} alertas</span>
                 </div>
                 <div className="alerts-list">
-                  {['Morosidad en Zona Norte', 'Cobros sin confirmar', 'Tarifa de feria pendiente', 'Comerciante con deuda vencida'].map((item) => (
-                    <div className="alert-item" key={item}>{item}</div>
+                  {(riskData.records || []).slice(0, 4).map((item) => (
+                    <div className="alert-item" key={item.comerciante_id}>{item.nombre} ? Riesgo {item.nivel}: {item.motivo_principal}</div>
                   ))}
+                  {!riskData.records?.length && <div className="empty-state">No hay alertas de morosidad calculadas.</div>}
                 </div>
               </div>
             </div>
@@ -1617,16 +1515,17 @@ function App() {
                   </tr>
                 </thead>
                 <tbody>
-                  {(sites || []).map(([code, address, zone, owner, fee, status]) => (
-                    <tr key={code}>
-                      <td>{code}</td>
-                      <td>{address}</td>
-                      <td>{zone}</td>
-                      <td>{owner}</td>
-                      <td>{fee}</td>
-                      <td><span className={`status ${status === 'Pendiente' || status === 'Moroso' ? 'pending' : status === 'Disponible' ? 'neutral' : 'paid'}`}>{status}</span></td>
+                  {mapPuestos.map((site) => (
+                    <tr key={site.id}>
+                      <td>{site.codigo || `P-${site.id}`}</td>
+                      <td>{site.direccion || 'Sin dirección registrada'}</td>
+                      <td>{site.zona || 'Sin zona'}</td>
+                      <td>{site.comerciante || 'Sin asignar'}</td>
+                      <td>{formatPEN(site.saldo_pendiente)}</td>
+                      <td><span className={`status ${site.estado === 'disponible' ? 'neutral' : site.saldo_pendiente > 0 ? 'pending' : 'paid'}`}>{site.estado || 'sin estado'}</span></td>
                     </tr>
                   ))}
+                  {!mapPuestos.length && <tr><td colSpan="6">No hay puestos registrados todavía.</td></tr>}
                 </tbody>
               </table>
             </div>
@@ -1665,7 +1564,7 @@ function App() {
                   </div>
                 )}
                 <div className="step-label">02 · Revisar deuda</div>
-                {paymentBalance ? <div className="debt-breakdown"><div><span>Tarifa</span><strong>S/ {paymentBalance.tarifa.monto_fijo}</strong></div><div><span>Periodo</span><strong>{paymentBalance.periodo}</strong></div><div><span>Pagado</span><strong>S/ {paymentBalance.monto_pagado.toFixed(2)}</strong></div><div className="debt-total"><span>Saldo pendiente</span><strong>S/ {paymentBalance.saldo.toFixed(2)}</strong></div></div> : <div className="empty-state">Busca un comerciante para mostrar su liquidación.</div>}
+                {paymentBalance ? <div className="debt-breakdown"><div><span>Tarifa</span><strong>S/ {(paymentBalance.tarifa?.monto_fijo ?? 0)}</strong></div><div><span>Periodo</span><strong>{paymentBalance.periodo}</strong></div><div><span>Pagado</span><strong>S/ {Number(paymentBalance.monto_pagado || 0).toFixed(2)}</strong></div><div className="debt-total"><span>Saldo pendiente</span><strong>S/ {paymentBalance.saldo.toFixed(2)}</strong></div></div> : <div className="empty-state">Busca un comerciante para mostrar su liquidación.</div>}
                 <div className="step-label">03 · Confirmar cobro</div>
                 <div className="payment-fields"><input required min="0.01" max={paymentBalance?.saldo || undefined} step="0.01" type="number" placeholder="Monto a cobrar" value={paymentForm.monto} onChange={(event) => setPaymentForm({ ...paymentForm, monto: event.target.value })} /><select value={paymentForm.metodo_pago} onChange={(event) => setPaymentForm({ ...paymentForm, metodo_pago: event.target.value })}><option value="efectivo">Efectivo</option><option value="yape">Yape</option><option value="plin">Plin</option><option value="pos">POS</option></select></div>
                 {paymentForm.metodo_pago !== 'efectivo' && <input required placeholder="Código de operación digital" value={paymentForm.codigo_operacion} onChange={(event) => setPaymentForm({ ...paymentForm, codigo_operacion: event.target.value })} />}
@@ -1718,7 +1617,7 @@ function App() {
       case 'reportes':
         return (
           <section className="page">
-            <div className="page-heading"><div><div className="eyebrow">ANÁLISIS / EXPORTACIÓN</div><h1>Reportes personalizados</h1><p>Consulta cobros por periodo, zona, rubro o cobrador.</p></div><div className="report-actions"><button className="secondary-button" type="button" onClick={() => window.print()}>Imprimir / PDF</button><a className="primary-button" href={`${apiBase}/reportes/cobros?formato=csv`} download="reporte-cobros.csv">Exportar Excel</a></div></div>
+            <div className="page-heading"><div><div className="eyebrow">ANÁLISIS / EXPORTACIÓN</div><h1>Reportes personalizados</h1><p>Consulta cobros por periodo, zona, rubro o cobrador.</p></div><div className="report-actions"><button className="secondary-button" type="button" onClick={() => window.print()}>Imprimir / PDF</button><a className="primary-button" href={`${apiBase}/reportes?formato=csv`} download="reporte-cobros.csv">Exportar CSV</a></div></div>
             <div className="report-kpis"><div className="stat-card"><span>Total cobrado</span><strong>S/ {reportRows.reduce((total, item) => total + Number(item.monto || 0), 0).toFixed(2)}</strong></div><div className="stat-card"><span>Operaciones</span><strong>{reportRows.length}</strong></div><div className="stat-card"><span>Zonas cubiertas</span><strong>{new Set(reportRows.map((item) => item.zona)).size}</strong></div></div>
             <div className="table-card"><table><thead><tr><th>Fecha</th><th>Comerciante</th><th>Rubro</th><th>Zona</th><th>Cobrador</th><th>Monto</th><th>Método</th><th>Comprobante</th></tr></thead><tbody>{reportRows.map((item) => <tr key={item.id}><td>{item.fecha}</td><td>{item.comerciante}</td><td>{item.rubro}</td><td>{item.zona}</td><td>{item.cobrador}</td><td>S/ {Number(item.monto).toFixed(2)}</td><td>{item.metodo_pago}</td><td>{item.comprobante}</td></tr>)}</tbody></table></div>
           </section>
@@ -1983,8 +1882,8 @@ function App() {
           <div className="hero-panel">
             <div className="panel-card highlight-card">
               <div className="stat-top"><span>Recaudación total</span><span className="stat-icon green">↗</span></div>
-              <div className="stat-value">S/ 248.4K</div>
-              <div className="stat-change"><span className="up">↑ 18.5%</span> este trimestre</div>
+              <div className="stat-value">{dashboardStats.recaudacion}</div>
+              <div className="stat-change">Acumulado del periodo actual</div>
             </div>
           </div>
           </div>
@@ -2015,9 +1914,9 @@ function App() {
         <ScrollSnapSection id="impacto" className="landing-section landing-impact-section">
           <div className="section-intro"><div className="eyebrow">LECTURA EJECUTIVA</div><h2>El pulso fiscal, en una sola pantalla.</h2><p>Indicadores para tomar decisiones con trazabilidad y contexto territorial.</p></div>
           <div className="landing-kpi-grid">
-            <KpiCard label="Recaudación acumulada" value="S/ 248.4K" change="↑ 18.5% este trimestre" icon="↗" accent="green" />
-            <KpiCard label="Operaciones verificadas" value="1,248" change="↑ 12.8% vs. periodo anterior" icon="✓" accent="blue" />
-            <KpiCard label="Morosidad controlada" value="12.4%" change="↓ 2.1 puntos" trend="down" icon="!" accent="amber" />
+            <KpiCard label="Recaudacion del periodo" value={dashboardStats.recaudacion} change="Acumulado del mes" icon="R" accent="green" />
+            <KpiCard label="Pagos registrados" value={dashboardStats.pagos} change="Operaciones confirmadas" icon="P" accent="blue" />
+            <KpiCard label="Morosidad" value={dashboardStats.morosidad} change="Indicador calculado por SISREC" icon="!" accent="amber" />
           </div>
         </ScrollSnapSection>
 
@@ -2049,7 +1948,7 @@ function App() {
         </div>
 
         <nav className="sidebar-nav">
-          {navItems.map((item) => (
+          {navItems.filter((item) => !item.roles || item.roles.includes(user?.rol)).map((item) => (
             <button
               key={item.key}
               className={`nav-item ${currentPage === item.key ? 'active' : ''}`}
@@ -2075,7 +1974,7 @@ function App() {
           </div>
 
           <div className="topbar-right">
-            <SyncStatusBadge isOnline={isOnline} pendingSyncCount={pendingSyncCount} />
+            <SyncStatusBadge isOnline={isOnline} apiConnected={apiConnected} pendingSyncCount={pendingSyncCount} />
             <div className="search-box">
               <span>⌕</span>
               <input type="text" placeholder="Buscar registro" />
@@ -2084,7 +1983,7 @@ function App() {
             <div className="user-badge">
               <span>{user?.nombre?.split(' ')[0] || 'A'}</span>
               <div>
-                <strong>{user?.nombre || 'Andrea'}</strong>
+                <strong>{user?.nombre || 'Usuario'}</strong>
                 <small>{user?.rol || 'Super Admin'}</small>
               </div>
             </div>

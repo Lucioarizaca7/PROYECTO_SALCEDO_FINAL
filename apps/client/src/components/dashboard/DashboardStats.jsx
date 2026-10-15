@@ -1,5 +1,5 @@
 import { useModuleData } from '../ui/loading/ModuleLoader';
-import { apiService } from '../services/apiService';
+import { apiService } from '../../services/apiService';
 
 /**
  * Componente optimizado para mostrar estadísticas del dashboard
@@ -53,7 +53,7 @@ export function DashboardStats() {
   }
 
   // Si llegamos aquí, tenemos los datos
-  const stats = data?.data?.stats || {};
+  const stats = data?.stats || {};
 
   return (
     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">

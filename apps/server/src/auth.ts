@@ -57,7 +57,7 @@ export function requireAuth(req: Request, res: Response, next: NextFunction) {
   const authHeader = req.headers.authorization;
 
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
-    return res.status(401).json({ error: 'Acceso denegado. Token no proporcionado.' });
+    return res.status(401).json({ error: 'Acceso denegado. Token no proporcionado.', message: 'Acceso denegado. Token no proporcionado.' });
   }
 
   const token = authHeader.replace('Bearer ', '').trim();
@@ -70,14 +70,14 @@ export function requireAuth(req: Request, res: Response, next: NextFunction) {
     }
     return next();
   } catch (error) {
-    return res.status(401).json({ error: 'Token inválido o expirado.' });
+    return res.status(401).json({ error: 'Token inválido o expirado.', message: 'Token inválido o expirado.' });
   }
 }
 
 export function requireRoles(allowedRoles: string[]) {
   return (req: Request, res: Response, next: NextFunction) => {
     if (!req.user || !allowedRoles.includes(req.user.rol)) {
-      return res.status(403).json({ error: 'No tiene permisos para realizar esta acción.' });
+      return res.status(403).json({ error: 'No tiene permisos para realizar esta acción.', message: 'No tiene permisos para realizar esta acción.' });
     }
 
     return next();
