@@ -59,6 +59,7 @@ export default function SitesMap25D({ sites, selectedSite, baseLayer, drawing, d
   const handlersRef = useRef({});
   const dataRef = useRef({ type: 'FeatureCollection', features: [] });
   const readyRef = useRef(false);
+  const centeredRef = useRef(false);
 
   sitesRef.current = sites;
   handlersRef.current = { onSelect, onCollect, onInspect, onPickLocation, drawing };
@@ -81,6 +82,14 @@ export default function SitesMap25D({ sites, selectedSite, baseLayer, drawing, d
     }
   };
 
+  // Los puestos suelen llegar después de montar el mapa: se centra en ellos la primera vez.
+  const recenterOnce = (map) => {
+    const first = dataRef.current.features[0]?.properties;
+    if (centeredRef.current || !first) return;
+    centeredRef.current = true;
+    map.jumpTo({ center: [first.longitud, first.latitud] });
+  };
+
   // Inicialización única.
   useEffect(() => {
     if (MAPBOX_TOKEN) mapboxgl.accessToken = MAPBOX_TOKEN;
@@ -101,6 +110,7 @@ export default function SitesMap25D({ sites, selectedSite, baseLayer, drawing, d
     map.on('style.load', () => {
       installLayers(map);
       readyRef.current = true;
+      recenterOnce(map);
     });
 
     map.on('click', LAYER_ID, (event) => {
@@ -146,6 +156,7 @@ export default function SitesMap25D({ sites, selectedSite, baseLayer, drawing, d
     if (!map || !readyRef.current) return;
     map.getSource(SOURCE_ID)?.setData(dataRef.current);
     popupRef.current?.remove();
+    recenterOnce(map);
   }, [sites]);
 
   // Capa base: al cambiar de estilo hay que reinstalar la capa 3D.
