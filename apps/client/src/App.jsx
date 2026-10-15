@@ -12,7 +12,8 @@ import { TariffCalculator } from './components/landing/TariffCalculator';
 import { TransparencySection, LandingFooter } from './components/landing/TransparencySection';
 import { useNetworkStatus } from './hooks/useNetworkStatus';
 
-const configuredApiBase = import.meta.env.VITE_API_URL || 'http://localhost:3003/api/v1';
+// VITE_API_URL: origen del servidor sin /api (p. ej. https://sisrec.example.pe).
+const configuredApiBase = import.meta.env.VITE_API_URL || 'http://localhost:3003';
 const apiBase = `${configuredApiBase.replace(/\/+$/, '').replace(/\/api(?:\/v1)?$/, '')}/api/v1`;
 const formatPEN = (value) => new Intl.NumberFormat('es-PE', { style: 'currency', currency: 'PEN', minimumFractionDigits: 2 }).format(Number(value) || 0);
 
@@ -656,18 +657,15 @@ function App() {
     const controller = new AbortController();
     const loadPublicDashboard = async () => {
       try {
-        const [dashboardResponse, postsResponse] = await Promise.all([
-          fetch(`${apiBase}/dashboard`, { signal: controller.signal }),
-          fetch(`${apiBase}/puestos`, { signal: controller.signal })
-        ]);
-        if (!dashboardResponse.ok || !postsResponse.ok) throw new Error('API no disponible');
-        const dashboard = await dashboardResponse.json();
-        const posts = await postsResponse.json();
+        // Resumen público: solo cifras agregadas, sin datos personales.
+        const response = await fetch(`${apiBase}/publico/resumen`, { signal: controller.signal });
+        if (!response.ok) throw new Error('API no disponible');
+        const dashboard = await response.json();
         setDashboardStats((current) => ({
           ...current,
           recaudacion: formatPEN(dashboard.stats?.recaudacion ?? 0),
           pagos: dashboard.stats?.pagos ?? 0,
-          sitios: String(posts.total ?? (posts.data || []).length),
+          sitios: String(dashboard.stats?.sitios ?? 0),
           pendientes: dashboard.stats?.deudaPendiente ?? 0,
           morosidad: `${dashboard.stats?.morosidad ?? 0}%`,
           comerciantes: dashboard.stats?.totalComerciantes ?? 0
@@ -716,6 +714,9 @@ function App() {
       const period = new Date().toISOString().slice(0, 7);
       const request = async (path) => {
         const response = await fetch(path, { headers: getAuthHeaders() });
+        // Un módulo que el rol no puede ver queda vacío en vez de vaciar todo el panel.
+        if (response.status === 403) return { data: [], total: 0 };
+        if (response.status === 401) throw Object.assign(new Error('Tu sesión expiró. Ingresa de nuevo.'), { sessionExpired: true });
         const body = await response.json();
         if (!response.ok) throw new Error(body.message || `Error ${response.status}`);
         return body;
@@ -764,6 +765,12 @@ function App() {
       }
       await saveMapSnapshot(puestos.data || []);
     } catch (err) {
+      if (err.sessionExpired) {
+        setUser(null);
+        setShowLogin(true);
+        setError(err.message);
+        return;
+      }
       setApiConnected(false);
       console.error('No se pudo cargar la información del servidor SISREC.', err);
       setComerciantes([]);
@@ -1813,13 +1820,15 @@ function App() {
 
             <button className="primary-button login-submit" type="submit">Ingresar al sistema <span>→</span></button>
 
-            <div className="demo-note">
-              <span>✦</span>
-              <div>
-                <b>Acceso demo</b>
-                <small>admin@sisrec.demo · sisrec2026</small>
+            {import.meta.env.DEV && (
+              <div className="demo-note">
+                <span>✦</span>
+                <div>
+                  <b>Acceso demo (solo en desarrollo)</b>
+                  <small>admin@sisrec.demo · sisrec2026</small>
+                </div>
               </div>
-            </div>
+            )}
           </form>
 
           <button type="button" className="login-back" onClick={() => setShowLogin(false)}>← Volver a la página principal</button>
