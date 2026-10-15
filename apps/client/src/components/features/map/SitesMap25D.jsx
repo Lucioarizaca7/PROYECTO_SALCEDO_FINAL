@@ -9,6 +9,10 @@ const DOT_LAYER_ID = 'puestos-puntos';
 const BASE_SOURCE_ID = 'salcedo-base';
 const BASE_URL = '/data/salcedo-base.geojson';
 const MAPBOX_TOKEN = import.meta.env.VITE_MAPBOX_TOKEN;
+const DEFAULT_PITCH = 55;
+const DEFAULT_BEARING = -20;
+// Ultima posicion de la camara: al volver desde la vista 2D el mapa reaparece donde estaba, siempre con 55 grados.
+let lastView = null;
 
 // Sin token de Mapbox el mapa sigue funcionando con teselas raster de OpenStreetMap.
 const FALLBACK_STYLE = {
@@ -130,7 +134,8 @@ export default function SitesMap25D({ sites, selectedSite, baseLayer, drawing, d
     const first = dataRef.current.features[0]?.properties;
     if (centeredRef.current || !first) return;
     centeredRef.current = true;
-    map.jumpTo({ center: [first.longitud, first.latitud] });
+    if (!lastView) map.jumpTo({ center: [first.longitud, first.latitud], pitch: DEFAULT_PITCH, bearing: DEFAULT_BEARING });
+    else map.setPitch(DEFAULT_PITCH);
   };
 
   // Inicialización única.
@@ -140,10 +145,10 @@ export default function SitesMap25D({ sites, selectedSite, baseLayer, drawing, d
     const map = new mapboxgl.Map({
       container: containerRef.current,
       style: styleFor(baseLayer),
-      center: first ? [first.longitud, first.latitud] : [-69.9966, -15.8740],
-      zoom: 17.5,
-      pitch: 55,
-      bearing: -20,
+      center: lastView?.center ?? (first ? [first.longitud, first.latitud] : [-69.9966, -15.8740]),
+      zoom: lastView?.zoom ?? 17.5,
+      pitch: DEFAULT_PITCH,
+      bearing: lastView?.bearing ?? DEFAULT_BEARING,
       maxPitch: 60,
       antialias: false
     });
@@ -151,8 +156,14 @@ export default function SitesMap25D({ sites, selectedSite, baseLayer, drawing, d
     if (import.meta.env.DEV) window.__sisrecMap = map;
     map.addControl(new mapboxgl.NavigationControl({ visualizePitch: true, showCompass: true }), 'top-right');
 
+    map.on('moveend', () => {
+      const center = map.getCenter();
+      lastView = { center: [center.lng, center.lat], zoom: map.getZoom(), bearing: map.getBearing() };
+    });
+
     map.on('style.load', () => {
       installLayers(map);
+      if (map.getPitch() !== DEFAULT_PITCH) map.setPitch(DEFAULT_PITCH);
       readyRef.current = true;
       recenterOnce(map);
     });
@@ -227,7 +238,7 @@ export default function SitesMap25D({ sites, selectedSite, baseLayer, drawing, d
     if (!map || !selectedSite) return;
     const lat = Number(selectedSite.latitud);
     const lng = Number(selectedSite.longitud);
-    if (Number.isFinite(lat) && Number.isFinite(lng)) map.flyTo({ center: [lng, lat], zoom: 18, duration: 600 });
+    if (Number.isFinite(lat) && Number.isFinite(lng)) map.flyTo({ center: [lng, lat], zoom: 18, pitch: DEFAULT_PITCH, duration: 600 });
   }, [selectedSite]);
 
   // Pin del nuevo puesto.
