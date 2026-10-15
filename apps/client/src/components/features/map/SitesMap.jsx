@@ -1,7 +1,10 @@
-import { useEffect, useMemo, useState } from 'react';
+import { lazy, Suspense, useEffect, useMemo, useState } from 'react';
 import { MapContainer, Marker, Popup, TileLayer, useMap, useMapEvents } from 'react-leaflet';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
+import { filterSites } from './sitesGeo';
+
+const SitesMap25D = lazy(() => import('./SitesMap25D'));
 
 const salcedoCenter = [-15.8997, -70.5881];
 
@@ -56,6 +59,8 @@ export function SitesMap({ sites = [], onCollect, onCreate, onUpdate, onDelete }
   const [baseLayer, setBaseLayer] = useState('hybrid');
   const [draftLocation, setDraftLocation] = useState(null);
   const [isLocating, setIsLocating] = useState(false);
+  const [viewMode, setViewMode] = useState('3d');
+  const [query, setQuery] = useState('');
 
   const normalizedSites = useMemo(() => sites.map((site, index) => {
     const categoriaMapa = categoryLabel(site);
@@ -68,11 +73,10 @@ export function SitesMap({ sites = [], onCollect, onCreate, onUpdate, onDelete }
     };
   }), [sites]);
 
-  const filteredSites = normalizedSites.filter((site) => {
-    const matchesCategory = category === 'todos' || site.categoriaMapa === category;
-    const matchesPayment = paymentStatus === 'todos' || site.estadoPago === paymentStatus;
-    return matchesCategory && matchesPayment;
-  });
+  const filteredSites = useMemo(
+    () => filterSites(normalizedSites, { category, paymentStatus, query }),
+    [normalizedSites, category, paymentStatus, query]
+  );
 
   const locateUser = () => {
     if (!navigator.geolocation) return;
@@ -110,6 +114,11 @@ export function SitesMap({ sites = [], onCollect, onCreate, onUpdate, onDelete }
         <div className="map-filters" aria-label="Filtros del mapa">
           <button type="button" className={`secondary-button compact ${drawing ? 'map-tool-active' : ''}`} onClick={() => setDrawing((value) => !value)}>{drawing ? 'Cancelar pin' : 'Nuevo puesto'}</button>
           <button type="button" className="secondary-button compact" onClick={locateUser}>{isLocating ? 'Localizando...' : 'Mi ubicación'}</button>
+          <input type="search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Buscar titular o código" aria-label="Buscar puesto" />
+          <select value={viewMode} onChange={(event) => setViewMode(event.target.value)} aria-label="Modo de vista">
+            <option value="3d">Vista 2.5D</option>
+            <option value="2d">Vista 2D</option>
+          </select>
           <select value={baseLayer} onChange={(event) => setBaseLayer(event.target.value)} aria-label="Seleccionar capa base">
             <option value="streets">Mapa de calles</option>
             <option value="hybrid">Vista híbrida</option>
@@ -137,6 +146,20 @@ export function SitesMap({ sites = [], onCollect, onCreate, onUpdate, onDelete }
       </div>
 
       <div className="sites-map-canvas">
+        {viewMode === '3d' ? (
+          <Suspense fallback={<div className="map-loading">Cargando mapa 2.5D…</div>}>
+            <SitesMap25D
+              sites={filteredSites}
+              selectedSite={selectedSite}
+              baseLayer={baseLayer}
+              drawing={drawing}
+              draftLocation={draftLocation}
+              onSelect={setSelectedSite}
+              onCollect={onCollect}
+              onPickLocation={setDraftLocation}
+            />
+          </Suspense>
+        ) : (
         <MapContainer center={salcedoCenter} zoom={18} scrollWheelZoom className="leaflet-map">
           <TileLayer
             attribution={baseLayer === 'hybrid' ? '&copy; Google Maps' : '&copy; OpenStreetMap contributors'}
@@ -165,6 +188,7 @@ export function SitesMap({ sites = [], onCollect, onCreate, onUpdate, onDelete }
             </Marker>
           ))}
         </MapContainer>
+        )}
       </div>
       {draftLocation && (
         <form className="map-edit-form panel" onSubmit={submitDraft}>
