@@ -55,7 +55,7 @@ export function accountStatusText(props) {
 }
 
 /** FeatureCollection de polígonos extruibles; descarta puestos sin coordenadas válidas. */
-export function buildSiteFeatures(sites, { widthM = 6, depthM = 8, bearing = 0, height = 5 } = {}) {
+export function buildSiteFeatures(sites, { widthM = 4, depthM = 5, bearing = 0, height = 4 } = {}) {
   const features = [];
   for (const site of sites) {
     if (site.latitud === null || site.latitud === undefined || site.latitud === '') continue;
