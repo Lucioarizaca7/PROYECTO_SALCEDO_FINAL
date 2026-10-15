@@ -1,415 +1,214 @@
-import initSqlJs from 'sql.js';
 import { createHash } from 'node:crypto';
-import { createRequire } from 'node:module';
-import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
-import { dirname, resolve } from 'node:path';
+import { readFileSync, readdirSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import bcrypt from 'bcryptjs';
 
-const require = createRequire(import.meta.url);
-const databasePath = resolve(process.cwd(), 'data', process.env.SISREC_DB_NAME || (shouldResetDatabaseForTests() ? `sisrec-test-${process.pid}.sqlite` : 'sisrec.sqlite'));
+import { pool, withTransaction, closePool, testSchema } from './pg.js';
 
-const schema = `
-CREATE TABLE IF NOT EXISTS usuarios (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    nombre TEXT NOT NULL,
-    email TEXT UNIQUE NOT NULL,
-    password_hash TEXT NOT NULL,
-    rol TEXT NOT NULL CHECK (rol IN ('super_admin', 'cobrador', 'auditor', 'comerciante')),
-    estado INTEGER DEFAULT 1,
-    fecha_creacion TEXT DEFAULT CURRENT_TIMESTAMP
-);
+const migrationsDir = join(dirname(fileURLToPath(import.meta.url)), '..', 'migrations');
 
-CREATE TABLE IF NOT EXISTS zonas (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    nombre TEXT NOT NULL,
-    descripcion TEXT
-);
+const TS = (column) => `to_char(${column}, 'YYYY-MM-DD HH24:MI:SS')`;
+const DAY = (column) => `to_char(${column}, 'YYYY-MM-DD')`;
+const CODE = (column) => `'CM-' || lpad(${column}::text, 3, '0')`;
 
-CREATE TABLE IF NOT EXISTS calles (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    zona_id INTEGER NOT NULL,
-    nombre TEXT NOT NULL,
-    descripcion TEXT,
-    estado TEXT NOT NULL DEFAULT 'activo' CHECK (estado IN ('activo', 'inactivo')),
-    orden INTEGER DEFAULT 1,
-    fecha_creacion TEXT DEFAULT CURRENT_TIMESTAMP
-);
+const rows = async (db, text, params = []) => (await db.query(text, params)).rows;
+const first = async (db, text, params = []) => (await rows(db, text, params))[0] ?? null;
 
-CREATE TABLE IF NOT EXISTS rubros (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    nombre TEXT NOT NULL,
-    descripcion TEXT,
-    estado INTEGER DEFAULT 1
-);
+function toJson(value) {
+  if (value === null || value === undefined || value === '') return null;
+  if (typeof value !== 'string') return JSON.stringify(value);
+  try {
+    JSON.parse(value);
+    return value;
+  } catch {
+    return JSON.stringify({ raw: value });
+  }
+}
 
-CREATE TABLE IF NOT EXISTS comerciantes (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    dni_ruc TEXT UNIQUE NOT NULL,
-    nombre TEXT NOT NULL,
-    rubro_id INTEGER NOT NULL,
-    zona_id INTEGER NOT NULL,
-    categoria TEXT,
-    tipo_comerciante TEXT NOT NULL CHECK (tipo_comerciante IN ('eventual', 'permanente', 'ferial')),
-    estado TEXT NOT NULL DEFAULT 'activo',
-    estado_empadronamiento TEXT NOT NULL DEFAULT 'REGULARIZADO',
-    fecha_registro TEXT DEFAULT CURRENT_TIMESTAMP,
-    usuario_creador INTEGER
-);
+function clamp(value, min, max) {
+  return Math.min(Math.max(value, min), max);
+}
 
-CREATE TABLE IF NOT EXISTS puestos (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    comerciante_id INTEGER NOT NULL,
-    zona_id INTEGER NOT NULL,
-    direccion TEXT,
-    metros_cuadrados REAL,
-  estado TEXT NOT NULL DEFAULT 'ocupado',
-    codigo_puesto TEXT,
-  latitud REAL,
-  longitud REAL
-);
+// ---------------------------------------------------------------------------
+// Inicialización: migraciones versionadas + datos base
+// ---------------------------------------------------------------------------
 
-CREATE TABLE IF NOT EXISTS asistencias_feriales (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  puesto_id INTEGER NOT NULL,
-  fecha TEXT NOT NULL,
-  sesion TEXT NOT NULL DEFAULT '',
-  marca TEXT NOT NULL,
-  fuente TEXT NOT NULL,
-  fecha_registro TEXT DEFAULT CURRENT_TIMESTAMP,
-  UNIQUE (puesto_id, fecha, sesion)
-);
+async function runMigrations() {
+  if (testSchema) {
+    // Limpia esquemas de ejecuciones de prueba anteriores cuyo proceso ya terminó.
+    const stale = await rows(pool, `SELECT schema_name FROM information_schema.schemata WHERE schema_name LIKE 'sisrec\\_test\\_%'`);
+    for (const { schema_name: name } of stale) {
+      const pid = Number(name.replace('sisrec_test_', ''));
+      let alive = false;
+      try { process.kill(pid, 0); alive = true; } catch { alive = false; }
+      if (!alive && name !== testSchema) await pool.query(`DROP SCHEMA IF EXISTS ${name} CASCADE`);
+    }
+    await pool.query(`DROP SCHEMA IF EXISTS ${testSchema} CASCADE`);
+    await pool.query(`CREATE SCHEMA ${testSchema}`);
+  }
 
-CREATE TABLE IF NOT EXISTS tarifas (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    rubro_id INTEGER NOT NULL,
-    tipo_tarifa TEXT NOT NULL CHECK (tipo_tarifa IN ('fija', 'variable', 'mixta')),
-    monto_fijo REAL DEFAULT 0,
-    monto_variable REAL DEFAULT 0,
-    unidad_medida TEXT,
-    vigencia_inicio TEXT NOT NULL,
-    vigencia_fin TEXT,
-    estado INTEGER DEFAULT 1,
-    version INTEGER NOT NULL DEFAULT 1
-);
+  await pool.query('CREATE TABLE IF NOT EXISTS schema_migrations (name TEXT PRIMARY KEY, aplicada_en TIMESTAMPTZ NOT NULL DEFAULT now())');
+  const files = readdirSync(migrationsDir).filter((file) => file.endsWith('.sql')).sort();
+  const applied = new Set((await rows(pool, 'SELECT name FROM schema_migrations')).map((row) => row.name));
 
-CREATE TABLE IF NOT EXISTS deudas (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    comerciante_id INTEGER NOT NULL,
-    tarifa_id INTEGER NOT NULL,
-    periodo TEXT NOT NULL,
-    monto_total REAL NOT NULL,
-    monto_pagado REAL DEFAULT 0,
-    saldo REAL NOT NULL,
-    fecha_vencimiento TEXT,
-    estado TEXT NOT NULL DEFAULT 'pendiente'
-);
+  // Base creada antes del registro de migraciones (script migrate-sqlite-to-pg).
+  if (!applied.size) {
+    const legacy = await first(pool, `SELECT to_regclass(current_schema() || '.comerciantes') AS t`);
+    if (legacy?.t) {
+      await pool.query(`INSERT INTO schema_migrations(name) VALUES ('0001_esquema_sisrec.sql') ON CONFLICT DO NOTHING`);
+      applied.add('0001_esquema_sisrec.sql');
+    }
+  }
 
-CREATE TABLE IF NOT EXISTS comprobantes (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    numero_correlativo TEXT UNIQUE NOT NULL,
-    tipo TEXT NOT NULL CHECK (tipo IN ('boleta', 'recibo', 'pdf')),
-    archivo_url TEXT,
-    fecha_emision TEXT DEFAULT CURRENT_TIMESTAMP,
-    estado TEXT NOT NULL DEFAULT 'emitido'
-);
+  for (const file of files) {
+    if (applied.has(file)) continue;
+    await pool.query(readFileSync(join(migrationsDir, file), 'utf8'));
+    await pool.query('INSERT INTO schema_migrations(name) VALUES ($1)', [file]);
+  }
+}
 
-CREATE TABLE IF NOT EXISTS cobros (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    comerciante_id INTEGER NOT NULL,
-    tarifa_id INTEGER NOT NULL,
-    cobrador_id INTEGER NOT NULL,
-    comprobante_id INTEGER,
-    monto REAL NOT NULL,
-    concepto TEXT NOT NULL,
-    metodo_pago TEXT NOT NULL CHECK (metodo_pago IN ('efectivo', 'yape', 'plin', 'pos', 'manual')),
-    codigo_operacion TEXT,
-    hash_transaccion TEXT UNIQUE,
-    observaciones TEXT,
-    estado TEXT NOT NULL DEFAULT 'confirmado',
-    fecha_cobro TEXT DEFAULT CURRENT_TIMESTAMP
-);
+async function seedDefaults() {
+  const hasUsers = await first(pool, 'SELECT 1 AS ok FROM usuarios LIMIT 1');
+  if (hasUsers) return;
 
-CREATE TABLE IF NOT EXISTS comerciante_preferencias (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    comerciante_id INTEGER NOT NULL UNIQUE,
-    monto_sugerido REAL NOT NULL DEFAULT 0,
-    metodo_pago_preferido TEXT NOT NULL DEFAULT 'efectivo',
-    ultimo_monto REAL NOT NULL DEFAULT 0,
-    ultimo_metodo_pago TEXT,
-    ultimo_cobro_fecha TEXT,
-    total_cobros INTEGER NOT NULL DEFAULT 0,
-    fecha_actualizacion TEXT DEFAULT CURRENT_TIMESTAMP
-);
+  await withTransaction(async (client) => {
+    const roleRows = await rows(client, 'SELECT id, codigo FROM roles');
+    const roleId = Object.fromEntries(roleRows.map((row) => [row.codigo, row.id]));
+    const demoUsers = [
+      ['Administrador', 'admin@salcedo.gob.pe', 'admin123', 'super_admin'],
+      ['Cobrador Principal', 'cobrador@salcedo.gob.pe', 'cobro123', 'cobrador'],
+      ['Auditor Municipal', 'auditor@salcedo.gob.pe', 'audit123', 'auditor'],
+      ['Comerciante Demo', 'comerciante@salcedo.gob.pe', 'comercio123', 'comerciante']
+    ];
+    for (const [nombre, email, password, rol] of demoUsers) {
+      await client.query(
+        'INSERT INTO usuarios (nombre, email, password_hash, rol_id) VALUES ($1, $2, $3, $4)',
+        [nombre, email, bcrypt.hashSync(password, 10), roleId[rol]]
+      );
+    }
 
-CREATE TABLE IF NOT EXISTS auditoria (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    usuario_id INTEGER NOT NULL,
-    usuario_rol TEXT NOT NULL DEFAULT 'anonimo',
-    rol_usuario TEXT,
-    entidad TEXT NOT NULL,
-    accion TEXT NOT NULL,
-    detalle TEXT,
-    metodo_http TEXT,
-    ip_origen TEXT,
-    ruta_endpoint TEXT,
-    recurso_id TEXT,
-    payload_previo TEXT,
-    payload_nuevo TEXT,
-    fecha TEXT DEFAULT CURRENT_TIMESTAMP
-);
+    const rubros = [
+      ['comida', 'Comida y venta de alimentos'],
+      ['ropa', 'Venta de ropa y textiles'],
+      ['zapatillas', 'Calzado y zapatillas'],
+      ['otros', 'Otros rubros']
+    ];
+    for (const [nombre, descripcion] of rubros) {
+      await client.query('INSERT INTO rubros (nombre, descripcion) VALUES ($1, $2) ON CONFLICT (nombre) DO NOTHING', [nombre, descripcion]);
+    }
 
-CREATE TABLE IF NOT EXISTS prediccion_recaudacion (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    zona_id INTEGER NOT NULL,
-    rubro_id INTEGER NOT NULL,
-    periodo TEXT NOT NULL,
-    valor_predicho REAL NOT NULL,
-    valor_real REAL DEFAULT 0,
-    nivel_confianza REAL,
-    fecha_generacion TEXT DEFAULT CURRENT_TIMESTAMP
-);
+    const zonas = [
+      ['Mercado Central', 'Zona central del mercado'],
+      ['Parque Principal', 'Zona comercial del parque'],
+      ['Zona Norte', 'Sector norte del centro poblado']
+    ];
+    for (const [nombre, descripcion] of zonas) {
+      await client.query('INSERT INTO zonas (nombre, descripcion) VALUES ($1, $2) ON CONFLICT (nombre) DO NOTHING', [nombre, descripcion]);
+    }
 
-CREATE TABLE IF NOT EXISTS riesgo_morosidad (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    comerciante_id INTEGER NOT NULL,
-    score_riesgo REAL NOT NULL,
-    nivel_riesgo TEXT NOT NULL CHECK (nivel_riesgo IN ('bajo', 'medio', 'alto', 'critico')),
-    motivo_principal TEXT,
-    fecha_calculo TEXT DEFAULT CURRENT_TIMESTAMP,
-    estado_alerta TEXT NOT NULL DEFAULT 'activo'
-);
+    const zonaId = async (nombre) => (await first(client, 'SELECT id FROM zonas WHERE nombre = $1', [nombre])).id;
+    const rubroId = async (nombre) => (await first(client, 'SELECT id FROM rubros WHERE nombre = $1', [nombre])).id;
 
-CREATE TABLE IF NOT EXISTS alertas_morosidad (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    comerciante_id INTEGER NOT NULL,
-    riesgo_id INTEGER NOT NULL,
-    tipo_alerta TEXT NOT NULL,
-    mensaje TEXT NOT NULL,
-    enviado INTEGER DEFAULT 0,
-    fecha_envio TEXT
-);
+    const calles = [
+      ['Jr. Lima', 'Calle principal del mercado', 'Mercado Central'],
+      ['Av. Salcedo', 'Avenida central de la ciudad', 'Mercado Central'],
+      ['Pasaje los Sauces', 'Pasaje residencial', 'Parque Principal'],
+      ['Calle Comercio', 'Zona de locales comerciales', 'Parque Principal'],
+      ['Av. del Norte', 'Avenida de acceso al norte', 'Zona Norte'],
+      ['Jr. los Álamos', 'Calle residencial norte', 'Zona Norte']
+    ];
+    for (const [nombre, descripcion, zona] of calles) {
+      await client.query('INSERT INTO calles (nombre, descripcion, zona_id) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING', [nombre, descripcion, await zonaId(zona)]);
+    }
 
-CREATE TABLE IF NOT EXISTS sincronizacion_offline (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    entidad TEXT NOT NULL,
-    payload TEXT,
-    estado TEXT NOT NULL DEFAULT 'pendiente',
-    fecha_creacion TEXT DEFAULT CURRENT_TIMESTAMP,
-    fecha_envio TEXT
-);
+    const tarifas = [
+      ['comida', 18, 'diaria'],
+      ['ropa', 14, 'diaria'],
+      ['zapatillas', 40, 'semanal'],
+      ['otros', 90, 'mensual']
+    ];
+    for (const [rubro, monto, unidad] of tarifas) {
+      await client.query(
+        `INSERT INTO tarifas (rubro_id, tipo_tarifa, monto_fijo, monto_variable, unidad_medida, vigencia_inicio)
+         VALUES ($1, 'fija', $2, 0, $3, '2026-01-01')`,
+        [await rubroId(rubro), monto, unidad]
+      );
+    }
 
-  CREATE TABLE IF NOT EXISTS notificaciones (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    comerciante_id INTEGER NOT NULL,
-    tipo TEXT NOT NULL,
-    canal TEXT NOT NULL CHECK (canal IN ('whatsapp', 'sms', 'email')),
-    mensaje TEXT NOT NULL,
-    estado TEXT NOT NULL DEFAULT 'pendiente',
-    fecha_creacion TEXT DEFAULT CURRENT_TIMESTAMP,
-    fecha_envio TEXT
-  );
-`;
-
-function rowsToObjects(resultSet) {
-  if (!resultSet || !resultSet[0]) return [];
-
-  const columns = resultSet[0].columns;
-  return resultSet[0].values.map((row) => {
-    const item = {};
-    columns.forEach((column, index) => {
-      item[column] = row[index];
-    });
-    return item;
+    const admin = await first(client, `SELECT id FROM usuarios WHERE email = 'admin@salcedo.gob.pe'`);
+    const demo = await first(client, `
+      INSERT INTO comerciantes (dni_ruc, nombre, rubro_id, zona_id, categoria, tipo_comerciante, estado, usuario_creador_id)
+      VALUES ('20123456780', 'Comerciante Demo', $1, $2, 'permanente', 'permanente', 'activo', $3) RETURNING id`,
+    [await rubroId('comida'), await zonaId('Mercado Central'), admin.id]);
+    await client.query(
+      `INSERT INTO puestos (comerciante_id, zona_id, codigo_puesto, direccion, metros_cuadrados, estado, latitud, longitud)
+       VALUES ($1, $2, 'S-001', 'Mercado Central - Local 1', 12, 'ocupado', -15.8997, -70.5881)`,
+      [demo.id, await zonaId('Mercado Central')]
+    );
+    await client.query(
+      `INSERT INTO comerciante_preferencias (comerciante_id, clave, valor) VALUES ($1, 'notificaciones_activadas', 'true'), ($1, 'moneda_preferida', 'PEN')`,
+      [demo.id]
+    );
   });
 }
 
-function ensureColumn(db, tableName, columnName, definition) {
-  const info = db.exec(`PRAGMA table_info(${tableName})`);
-  const columns = info[0]?.values?.map((row) => row[1]) ?? [];
-  if (!columns.includes(columnName)) {
-    db.run(`ALTER TABLE ${tableName} ADD COLUMN ${columnName} ${definition}`);
-  }
-}
-
-function prepareDb(db) {
-  db.run(schema);
-  ensureColumn(db, 'cobros', 'codigo_operacion', 'TEXT');
-  ensureColumn(db, 'cobros', 'hash_transaccion', 'TEXT');
-  ensureColumn(db, 'cobros', 'observaciones', 'TEXT');
-  ensureColumn(db, 'deudas', 'fecha_vencimiento', 'TEXT');
-  ensureColumn(db, 'tarifas', 'version', 'INTEGER NOT NULL DEFAULT 1');
-  ensureColumn(db, 'comerciantes', 'estado_empadronamiento', "TEXT NOT NULL DEFAULT 'REGULARIZADO'");
-  ensureAttendanceSessionSchema(db);
-  ensureColumn(db, 'puestos', 'latitud', 'REAL');
-  ensureColumn(db, 'puestos', 'longitud', 'REAL');
-  ensureColumn(db, 'puestos', 'codigo_puesto', 'TEXT');
-  ensureColumn(db, 'auditoria', 'usuario_rol', 'TEXT NOT NULL DEFAULT "anonimo"');
-  ensureColumn(db, 'auditoria', 'rol_usuario', 'TEXT');
-  ensureColumn(db, 'auditoria', 'metodo_http', 'TEXT');
-  ensureColumn(db, 'auditoria', 'ip_origen', 'TEXT');
-  ensureColumn(db, 'auditoria', 'ruta_endpoint', 'TEXT');
-  ensureColumn(db, 'auditoria', 'recurso_id', 'TEXT');
-  ensureColumn(db, 'auditoria', 'payload_previo', 'TEXT');
-  ensureColumn(db, 'auditoria', 'payload_nuevo', 'TEXT');
-  initializeComerciantePreferencias(db);
-  db.run('CREATE UNIQUE INDEX IF NOT EXISTS idx_cobros_hash_transaccion ON cobros(hash_transaccion)');
-  db.run(`CREATE TRIGGER IF NOT EXISTS auditoria_block_update BEFORE UPDATE ON auditoria BEGIN SELECT RAISE(ABORT, 'No se permite modificar registros de auditoría'); END;`);
-  db.run(`CREATE TRIGGER IF NOT EXISTS auditoria_block_delete BEFORE DELETE ON auditoria BEGIN SELECT RAISE(ABORT, 'No se permite eliminar registros de auditoría'); END;`);
-
-  db.run(`
-    INSERT OR IGNORE INTO usuarios (id, nombre, email, password_hash, rol, estado)
-    VALUES
-      (1, 'Administrador', 'admin@salcedo.gob.pe', 'admin123', 'super_admin', 1),
-      (2, 'Cobrador Principal', 'cobrador@salcedo.gob.pe', 'cobro123', 'cobrador', 1),
-      (3, 'Auditor Municipal', 'auditor@salcedo.gob.pe', 'audit123', 'auditor', 1),
-      (4, 'Comerciante Demo', 'comerciante@salcedo.gob.pe', 'comercio123', 'comerciante', 1)
-  `);
-
-  // Crear índices para mejorar el rendimiento de consultas frecuentes
-  db.run('CREATE INDEX IF NOT EXISTS idx_cobros_fecha_cobro ON cobros(fecha_cobro)');
-  db.run('CREATE INDEX IF NOT EXISTS idx_deudas_estado ON deudas(estado)');
-  db.run('CREATE INDEX IF NOT EXISTS idx_comerciantes_estado ON comerciantes(estado)');
-  db.run('CREATE INDEX IF NOT EXISTS idx_cobros_comerciante_id ON cobros(comerciante_id)');
-  db.run('CREATE INDEX IF NOT EXISTS idx_cobros_cobrador_id ON cobros(cobrador_id)');
-
-  const defaultRubros = [
-    ['comida', 'Comida y venta de alimentos'],
-    ['ropa', 'Venta de ropa y textiles'],
-    ['zapatillas', 'Calzado y zapatillas'],
-    ['otros', 'Otros rubros']
-  ];
-
-  for (const [nombre, descripcion] of defaultRubros) {
-    db.run('INSERT INTO rubros (nombre, descripcion) SELECT ?, ? WHERE NOT EXISTS (SELECT 1 FROM rubros WHERE nombre = ?)', [nombre, descripcion, nombre]);
-  }
-
-  const defaultZonas = [
-    ['Mercado Central', 'Zona central del mercado'],
-    ['Parque Principal', 'Zona comercial del parque'],
-    ['Zona Norte', 'Sector norte del centro poblado']
-  ];
-
-  for (const [nombre, descripcion] of defaultZonas) {
-    db.run('INSERT INTO zonas (nombre, descripcion) SELECT ?, ? WHERE NOT EXISTS (SELECT 1 FROM zonas WHERE nombre = ?)', [nombre, descripcion, nombre]);
-  }
-
-  const defaultCalles = [
-    ['Mercado Central', 'Jr. Lima'],
-    ['Mercado Central', 'Jr. Puno'],
-    ['Parque Principal', 'Av. Floral'],
-    ['Zona Norte', 'Jr. Tacna']
-  ];
-
-  for (const [zonaNombre, nombre] of defaultCalles) {
-    const zonaId = Number(db.exec('SELECT id FROM zonas WHERE LOWER(nombre) = LOWER(?) ORDER BY id LIMIT 1', [zonaNombre])[0]?.values?.[0]?.[0] || 0);
-    if (!zonaId) continue;
-    db.run('INSERT INTO calles (zona_id, nombre, descripcion, estado, orden) SELECT ?, ?, ?, ?, ? WHERE NOT EXISTS (SELECT 1 FROM calles WHERE zona_id = ? AND LOWER(nombre) = LOWER(?))', [zonaId, nombre, `Calle principal de ${zonaNombre}`, 'activo', 1, zonaId, nombre]);
-  }
-
-  db.run(`
-    INSERT OR IGNORE INTO comerciantes (id, dni_ruc, nombre, rubro_id, zona_id, categoria, tipo_comerciante, estado, usuario_creador)
-    VALUES (1, '20123456780', 'Comerciante Demo', 1, 1, 'permanente', 'permanente', 'activo', 1)
-  `);
-
-  db.run(`
-    INSERT OR IGNORE INTO puestos (id, comerciante_id, zona_id, direccion, metros_cuadrados, estado)
-    VALUES (1, 1, 1, 'Mercado Central - Local 1', 12, 'ocupado')
-  `);
-  db.run(`UPDATE puestos SET latitud = COALESCE(latitud, -15.8997), longitud = COALESCE(longitud, -70.5881) WHERE id = 1`);
-
-  const defaultTarifas = [
-    [1, 'fija', 18, 0, 'diaria', '2026-01-01', null],
-    [2, 'fija', 14, 0, 'diaria', '2026-01-01', null],
-    [3, 'fija', 40, 0, 'semanal', '2026-01-01', null],
-    [4, 'fija', 90, 0, 'mensual', '2026-01-01', null]
-  ];
-
-  for (const [rubroId, tipoTarifa, montoFijo, montoVariable, unidadMedida, vigenciaInicio, vigenciaFin] of defaultTarifas) {
-    db.run(
-      `INSERT INTO tarifas (rubro_id, tipo_tarifa, monto_fijo, monto_variable, unidad_medida, vigencia_inicio, vigencia_fin)
-       SELECT ?, ?, ?, ?, ?, ?, ? WHERE NOT EXISTS
-       (SELECT 1 FROM tarifas WHERE rubro_id = ? AND tipo_tarifa = ? AND monto_fijo = ? AND unidad_medida = ? AND vigencia_inicio = ?)`,
-      [rubroId, tipoTarifa, montoFijo, montoVariable, unidadMedida, vigenciaInicio, vigenciaFin, rubroId, tipoTarifa, montoFijo, unidadMedida, vigenciaInicio]
-    );
-  }
-
-  db.run('DELETE FROM zonas WHERE id NOT IN (SELECT MIN(id) FROM zonas GROUP BY nombre) AND id NOT IN (SELECT zona_id FROM comerciantes UNION SELECT zona_id FROM puestos)');
-  db.run('DELETE FROM rubros WHERE id NOT IN (SELECT MIN(id) FROM rubros GROUP BY nombre) AND id NOT IN (SELECT rubro_id FROM comerciantes UNION SELECT rubro_id FROM tarifas)');
-  db.run('DELETE FROM tarifas WHERE id NOT IN (SELECT MIN(id) FROM tarifas GROUP BY rubro_id, tipo_tarifa, monto_fijo, monto_variable, unidad_medida, vigencia_inicio, COALESCE(vigencia_fin, "")) AND id NOT IN (SELECT tarifa_id FROM cobros UNION SELECT tarifa_id FROM deudas)');
-}
-
-function ensureAttendanceSessionSchema(db) {
-  const columns = db.exec('PRAGMA table_info(asistencias_feriales)')[0]?.values?.map((row) => row[1]) ?? [];
-  if (!columns.length || columns.includes('sesion')) return;
-
-  db.run('ALTER TABLE asistencias_feriales RENAME TO asistencias_feriales_legacy');
-  db.run(`CREATE TABLE asistencias_feriales (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    puesto_id INTEGER NOT NULL,
-    fecha TEXT NOT NULL,
-    sesion TEXT NOT NULL DEFAULT '',
-    marca TEXT NOT NULL,
-    fuente TEXT NOT NULL,
-    fecha_registro TEXT DEFAULT CURRENT_TIMESTAMP,
-    UNIQUE (puesto_id, fecha, sesion)
-  )`);
-  db.run(`INSERT INTO asistencias_feriales (id, puesto_id, fecha, sesion, marca, fuente, fecha_registro)
-    SELECT id, puesto_id, fecha, '', marca, fuente, fecha_registro FROM asistencias_feriales_legacy`);
-  db.run('DROP TABLE asistencias_feriales_legacy');
-}
-
-function shouldResetDatabaseForTests() {
-  return process.env.NODE_ENV === 'test'
-    || process.argv.includes('--test')
-    || process.argv.some((arg) => /(?:^|[\\/])tests?[\\/]|\.test\.[cm]?[jt]s$/.test(arg));
+// La pantalla de acceso del cliente anuncia admin@sisrec.demo; solo existe fuera de producción.
+async function ensureDemoAdmin() {
+  if (process.env.NODE_ENV === 'production') return;
+  await pool.query(`
+    INSERT INTO usuarios (nombre, email, password_hash, rol_id)
+    SELECT 'Administrador Demo', 'admin@sisrec.demo', $1, r.id FROM roles r WHERE r.codigo = 'super_admin'
+    ON CONFLICT (email) DO NOTHING`, [bcrypt.hashSync('sisrec2026', 10)]);
 }
 
 export async function initializeDatabase() {
-  const wasmPath = require.resolve('sql.js/dist/sql-wasm.wasm');
-  const SQL = await initSqlJs({
-    locateFile: (file) => {
-      if (file === 'sql-wasm.wasm') return wasmPath;
-      return file;
-    }
-  });
-
-  if (shouldResetDatabaseForTests() && existsSync(databasePath)) {
-    unlinkSync(databasePath);
-  }
-
-  const db = existsSync(databasePath)
-    ? new SQL.Database(new Uint8Array(readFileSync(databasePath)))
-    : new SQL.Database();
-  prepareDb(db);
-  persistDatabase(db);
-  return db;
+  await runMigrations();
+  await seedDefaults();
+  await ensureDemoAdmin();
+  return pool;
 }
 
-export function persistDatabase(db) {
-  mkdirSync(dirname(databasePath), { recursive: true });
-  writeFileSync(databasePath, Buffer.from(db.export()));
+// Con PostgreSQL cada mutación ya es durable; se conserva por compatibilidad.
+export async function persistDatabase() {
+  return undefined;
 }
 
-export function getDbStats(db) {
-  const usuarios = db.exec('SELECT COUNT(*) AS total FROM usuarios');
-  const zonas = db.exec('SELECT COUNT(*) AS total FROM zonas');
-  const rubros = db.exec('SELECT COUNT(*) AS total FROM rubros');
-  const comerciantes = db.exec('SELECT COUNT(*) AS total FROM comerciantes');
-  const tarifas = db.exec('SELECT COUNT(*) AS total FROM tarifas');
-  const cobros = db.exec('SELECT COUNT(*) AS total FROM cobros');
-  const auditoria = db.exec('SELECT COUNT(*) AS total FROM auditoria');
+export async function closeDatabase() {
+  await closePool();
+}
 
+export async function dropTestSchema() {
+  if (testSchema) await pool.query(`DROP SCHEMA IF EXISTS ${testSchema} CASCADE`);
+}
+
+export async function getDbStats(db) {
+  const row = await first(db, `
+    SELECT
+      (SELECT COUNT(*) FROM usuarios) AS usuarios,
+      (SELECT COUNT(*) FROM zonas) AS zonas,
+      (SELECT COUNT(*) FROM rubros) AS rubros,
+      (SELECT COUNT(*) FROM comerciantes) AS comerciantes,
+      (SELECT COUNT(*) FROM tarifas) AS tarifas,
+      (SELECT COUNT(*) FROM transacciones) AS cobros,
+      (SELECT COUNT(*) FROM auditoria_logs) AS auditoria
+  `);
   return {
-    totalUsuarios: Number(usuarios[0]?.values?.[0]?.[0] ?? 0),
-    totalZonas: Number(zonas[0]?.values?.[0]?.[0] ?? 0),
-    totalRubros: Number(rubros[0]?.values?.[0]?.[0] ?? 0),
-    totalComerciantes: Number(comerciantes[0]?.values?.[0]?.[0] ?? 0),
-    totalTarifas: Number(tarifas[0]?.values?.[0]?.[0] ?? 0),
-    totalCobros: Number(cobros[0]?.values?.[0]?.[0] ?? 0),
-    totalEventosAuditoria: Number(auditoria[0]?.values?.[0]?.[0] ?? 0)
+    totalUsuarios: Number(row.usuarios),
+    totalZonas: Number(row.zonas),
+    totalRubros: Number(row.rubros),
+    totalComerciantes: Number(row.comerciantes),
+    totalTarifas: Number(row.tarifas),
+    totalCobros: Number(row.cobros),
+    totalEventosAuditoria: Number(row.auditoria)
   };
 }
 
-export function recordAudit(db, {
+// ---------------------------------------------------------------------------
+// Auditoría (solo anexado, con cadena de hash)
+// ---------------------------------------------------------------------------
+
+export async function recordAudit(_db, {
   usuarioId = 1,
   usuarioRol = 'anonimo',
   rolUsuario = null,
@@ -423,117 +222,121 @@ export function recordAudit(db, {
   payloadPrevio = null,
   payloadNuevo = null
 }) {
-  const normalizedPrevio = payloadPrevio === null || payloadPrevio === undefined
-    ? null
-    : typeof payloadPrevio === 'string'
-      ? payloadPrevio
-      : JSON.stringify(payloadPrevio);
+  const ip = /^[0-9a-fA-F:.]+$/.test(String(ipOrigen || '')) ? String(ipOrigen) : null;
+  const rol = String(rolUsuario || usuarioRol || 'anonimo');
 
-  const normalizedNuevo = payloadNuevo === null || payloadNuevo === undefined
-    ? null
-    : typeof payloadNuevo === 'string'
-      ? payloadNuevo
-      : JSON.stringify(payloadNuevo);
+  await withTransaction(async (client) => {
+    await client.query('SELECT pg_advisory_xact_lock(7001)');
+    const last = await first(client, 'SELECT hash_actual FROM auditoria_logs ORDER BY id DESC LIMIT 1');
+    const hashPrev = last?.hash_actual ?? null;
+    const body = JSON.stringify([usuarioId, rol, entidad, accion, detalle, metodoHttp, rutaEndpoint, recursoId, toJson(payloadPrevio), toJson(payloadNuevo), Date.now()]);
+    const hashActual = createHash('sha256').update(`${hashPrev || ''}${body}`).digest('hex');
 
-  db.run(
-    `INSERT INTO auditoria (
-      usuario_id, usuario_rol, rol_usuario, entidad, accion, detalle, metodo_http, ip_origen, ruta_endpoint, recurso_id, payload_previo, payload_nuevo
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    [
-      Number(usuarioId),
-      String(usuarioRol || 'anonimo'),
-      rolUsuario ? String(rolUsuario) : (usuarioRol || 'anonimo'),
-      entidad,
-      accion,
-      detalle,
-      metodoHttp,
-      ipOrigen,
-      rutaEndpoint === undefined || rutaEndpoint === null ? null : String(rutaEndpoint),
-      recursoId === undefined || recursoId === null ? null : String(recursoId),
-      normalizedPrevio,
-      normalizedNuevo
-    ]
-  );
+    const user = await first(client, 'SELECT id FROM usuarios WHERE id = $1', [Number(usuarioId)]);
+    await client.query(
+      `INSERT INTO auditoria_logs
+         (usuario_id, rol, entidad, accion, detalle, metodo_http, ip_origen, ruta, recurso_id, payload_previo, payload_nuevo, hash_prev, hash_actual)
+       VALUES ($1,$2,$3,$4,$5,$6,$7::inet,$8,$9,$10::jsonb,$11::jsonb,$12,$13)`,
+      [
+        user ? Number(usuarioId) : null, rol, entidad, accion, detalle, metodoHttp, ip,
+        rutaEndpoint === null || rutaEndpoint === undefined ? null : String(rutaEndpoint),
+        recursoId === null || recursoId === undefined ? null : String(recursoId),
+        toJson(payloadPrevio), toJson(payloadNuevo), hashPrev, hashActual
+      ]
+    );
+  });
 }
 
-export function getAuditTrail(db, options = {}) {
+export async function getAuditTrail(db, options = {}) {
   const comercianteId = Number(options.comerciante_id || 0);
   const entidad = String(options.entidad || '').trim();
   const conditions = [];
-  const parameters = [];
+  const params = [];
   if (comercianteId) {
-    conditions.push("(a.entidad = 'comerciantes' AND a.detalle LIKE ?)");
-    parameters.push(`%${comercianteId}%`);
+    params.push(`%${comercianteId}%`);
+    conditions.push(`(a.entidad = 'comerciantes' AND a.detalle LIKE $${params.length})`);
   }
   if (entidad) {
-    conditions.push('a.entidad = ?');
-    parameters.push(entidad);
+    params.push(entidad);
+    conditions.push(`a.entidad = $${params.length}`);
   }
   const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
-  const result = db.exec(`
+  return rows(db, `
     SELECT a.id, a.usuario_id, u.nombre AS usuario, a.entidad, a.accion, a.detalle,
-           a.metodo_http, a.ip_origen, a.ruta_endpoint, a.usuario_rol, a.rol_usuario, a.fecha
-    FROM auditoria a LEFT JOIN usuarios u ON u.id = a.usuario_id
+           a.metodo_http, host(a.ip_origen) AS ip_origen, a.ruta AS ruta_endpoint,
+           a.rol AS usuario_rol, a.rol AS rol_usuario, ${TS('a.fecha')} AS fecha
+    FROM auditoria_logs a LEFT JOIN usuarios u ON u.id = a.usuario_id
     ${where} ORDER BY a.id DESC LIMIT 200
-  `, parameters);
-  return rowsToObjects(result);
+  `, params);
 }
 
-export function getOperationalDashboard(db, options = {}) {
+export async function verifyAuditChain(db) {
+  const all = await rows(db, 'SELECT id, hash_prev, hash_actual FROM auditoria_logs ORDER BY id');
+  let previous = null;
+  for (const entry of all) {
+    if ((entry.hash_prev ?? null) !== previous) return { valid: false, broken_at: entry.id };
+    previous = entry.hash_actual;
+  }
+  return { valid: true, total: all.length };
+}
+
+// ---------------------------------------------------------------------------
+// Dashboard, analítica y reportes
+// ---------------------------------------------------------------------------
+
+const PAYMENT_DAY = `to_char(co.fecha_cobro_cliente, 'YYYY-MM-DD HH24:MI:SS')`;
+
+export async function getOperationalDashboard(db, options = {}) {
   const period = String(options.periodo || new Date().toISOString().slice(0, 7));
-
-  // Optimización: obtener múltiples métricas en una sola consulta donde sea posible
-  const cobrosResult = db.exec(`SELECT COALESCE(SUM(monto), 0) AS total, COUNT(*) AS cantidad FROM cobros WHERE fecha_cobro LIKE ?`, [`${period}%`]);
-  const pendingResult = db.exec(`SELECT COALESCE(SUM(saldo), 0) AS saldo FROM deudas WHERE estado <> 'pagado'`);
-  const activosResult = db.exec("SELECT COUNT(*) FROM comerciantes WHERE estado = 'activo'");
-
-  // Optimización: pre-compilar el patrón de fecha para reutilizarlo
-  const periodPattern = `${period}%`;
-
-  const byZone = db.exec(`
+  const like = `${period}%`;
+  const totals = await first(db, `
+    SELECT COALESCE(SUM(co.monto), 0) AS total, COUNT(*) AS cantidad
+    FROM transacciones co WHERE co.estado = 'confirmado' AND ${PAYMENT_DAY} LIKE $1`, [like]);
+  const byZone = await rows(db, `
     SELECT z.nombre AS zona, COUNT(DISTINCT c.id) AS comerciantes, COALESCE(SUM(co.monto), 0) AS recaudado
-    FROM zonas z
-    LEFT JOIN comerciantes c ON c.zona_id = z.id
-    LEFT JOIN cobros co ON co.comerciante_id = c.id AND co.fecha_cobro LIKE ?
-    GROUP BY z.id
-    ORDER BY recaudado DESC
-  `, [periodPattern]);
-
-  const byCategory = db.exec(`
+    FROM zonas z LEFT JOIN comerciantes c ON c.zona_id = z.id
+    LEFT JOIN transacciones co ON co.comerciante_id = c.id AND co.estado = 'confirmado' AND ${PAYMENT_DAY} LIKE $1
+    GROUP BY z.id, z.nombre ORDER BY recaudado DESC`, [like]);
+  const byCategory = await rows(db, `
     SELECT r.nombre AS rubro, COALESCE(SUM(co.monto), 0) AS recaudado, COUNT(co.id) AS pagos
-    FROM rubros r
-    LEFT JOIN comerciantes c ON c.rubro_id = r.id
-    LEFT JOIN cobros co ON co.comerciante_id = c.id AND co.fecha_cobro LIKE ?
-    GROUP BY r.id
-    ORDER BY recaudado DESC
-  `, [periodPattern]);
-
-  const byCollector = db.exec(`
+    FROM rubros r LEFT JOIN comerciantes c ON c.rubro_id = r.id
+    LEFT JOIN transacciones co ON co.comerciante_id = c.id AND co.estado = 'confirmado' AND ${PAYMENT_DAY} LIKE $1
+    GROUP BY r.id, r.nombre ORDER BY recaudado DESC`, [like]);
+  const byCollector = await rows(db, `
     SELECT COALESCE(u.nombre, 'Sin asignar') AS cobrador, COALESCE(SUM(co.monto), 0) AS recaudado, COUNT(co.id) AS pagos
-    FROM cobros co
-    LEFT JOIN usuarios u ON u.id = co.cobrador_id
-    WHERE co.fecha_cobro LIKE ?
-    GROUP BY co.cobrador_id
-    ORDER BY recaudado DESC
-  `, [periodPattern]);
+    FROM transacciones co LEFT JOIN usuarios u ON u.id = co.cobrador_id
+    WHERE co.estado = 'confirmado' AND ${PAYMENT_DAY} LIKE $1
+    GROUP BY co.cobrador_id, u.nombre ORDER BY recaudado DESC`, [like]);
+  const active = await first(db, `SELECT COUNT(*) AS total FROM comerciantes WHERE estado = 'activo'`);
 
   return {
     periodo: period,
-    recaudacion: Number(cobrosResult[0]?.values?.[0]?.[0] ?? 0),
-    pagos: Number(cobrosResult[0]?.values?.[0]?.[1] ?? 0),
-    deudaPendiente: Number(pendingResult[0]?.values?.[0]?.[0] ?? 0),
-    comerciantesActivos: Number(activosResult[0]?.values?.[0]?.[0] ?? 0),
-    porZona: rowsToObjects(byZone),
-    porRubro: rowsToObjects(byCategory),
-    porCobrador: rowsToObjects(byCollector)
+    recaudacion: Number(totals.total),
+    pagos: Number(totals.cantidad),
+    deudaPendiente: await getPendingDebt(db, period),
+    comerciantesActivos: Number(active.total),
+    porZona: byZone,
+    porRubro: byCategory,
+    porCobrador: byCollector
   };
 }
 
-function clamp(value, min, max) {
-  return Math.min(Math.max(value, min), max);
+// La deuda se devenga por liquidación (tarifa vigente - cobros del periodo).
+export async function getPendingDebt(db, period = new Date().toISOString().slice(0, 7), maxMerchants = 300) {
+  const merchants = await rows(db, `SELECT id FROM comerciantes WHERE estado = 'activo' ORDER BY id LIMIT $1`, [maxMerchants]);
+  let total = 0;
+  for (const merchant of merchants) {
+    try {
+      const liquidation = await calculateLiquidation(db, merchant.id, period);
+      total += Number(liquidation.saldo || 0);
+    } catch {
+      // sin tarifa vigente: no devenga
+    }
+  }
+  return Number(total.toFixed(2));
 }
 
-export function generateForecastProjection(db, options = {}) {
+export async function generateForecastProjection(db, options = {}) {
   const period = String(options.period || new Date().toISOString().slice(0, 7));
   const horizonDays = Number(options.horizonteDias || options.horizonDays || 90);
   const [year, month] = period.split('-').map(Number);
@@ -550,88 +353,55 @@ export function generateForecastProjection(db, options = {}) {
   }
   monthSequence.reverse();
 
-  // Optimización: obtener todos los datos necesarios en menos consultas
   const zoneMap = new Map();
   const rubroMap = new Map();
 
-  // Pre-compilar patrones de fecha para reutilizar
-  const monthPatterns = monthSequence.map(m => `${m}%`);
-
-  // Obtener datos históricos de todas las zonas y rubros en una consulta por mes
-  for (let i = 0; i < monthSequence.length; i++) {
-    const monthValue = monthSequence[i];
-    const monthPattern = monthPatterns[i];
-
-    // Obtener recaudado por zona para este mes
-    const zoneResults = db.exec(`
+  for (const monthValue of monthSequence) {
+    const zoneRows = await rows(db, `
       SELECT c.zona_id, z.nombre AS zona, COALESCE(SUM(co.monto), 0) AS recaudado
       FROM comerciantes c
       JOIN zonas z ON z.id = c.zona_id
-      LEFT JOIN cobros co ON co.comerciante_id = c.id AND co.fecha_cobro LIKE ?
-      GROUP BY c.zona_id
-    `, [monthPattern]);
-
-    for (const row of rowsToObjects(zoneResults)) {
-      const current = zoneMap.get(Number(row.zona_id)) || {
-        zona_id: Number(row.zona_id),
-        zona: row.zona || 'Sin zona',
-        recaudado: 0
-      };
+      LEFT JOIN transacciones co ON co.comerciante_id = c.id AND co.estado = 'confirmado' AND ${PAYMENT_DAY} LIKE $1
+      GROUP BY c.zona_id, z.nombre`, [`${monthValue}%`]);
+    for (const row of zoneRows) {
+      const current = zoneMap.get(Number(row.zona_id)) || { zona_id: Number(row.zona_id), zona: row.zona || 'Sin zona', recaudado: 0 };
       current.recaudado += Number(row.recaudado || 0);
       zoneMap.set(Number(row.zona_id), current);
     }
 
-    // Obtener recaudado por rubro para este mes
-    const rubroResults = db.exec(`
+    const rubroRows = await rows(db, `
       SELECT c.rubro_id, r.nombre AS rubro, COALESCE(SUM(co.monto), 0) AS recaudado
       FROM comerciantes c
       JOIN rubros r ON r.id = c.rubro_id
-      LEFT JOIN cobros co ON co.comerciante_id = c.id AND co.fecha_cobro LIKE ?
-      GROUP BY c.rubro_id
-    `, [monthPattern]);
-
-    for (const row of rowsToObjects(rubroResults)) {
-      const current = rubroMap.get(Number(row.rubro_id)) || {
-        rubro_id: Number(row.rubro_id),
-        rubro: row.rubro || 'Sin rubro',
-        recaudado: 0
-      };
+      LEFT JOIN transacciones co ON co.comerciante_id = c.id AND co.estado = 'confirmado' AND ${PAYMENT_DAY} LIKE $1
+      GROUP BY c.rubro_id, r.nombre`, [`${monthValue}%`]);
+    for (const row of rubroRows) {
+      const current = rubroMap.get(Number(row.rubro_id)) || { rubro_id: Number(row.rubro_id), rubro: row.rubro || 'Sin rubro', recaudado: 0 };
       current.recaudado += Number(row.recaudado || 0);
       rubroMap.set(Number(row.rubro_id), current);
     }
   }
 
-  // Obtener datos de comerciantes y tarifas baseline (una sola consulta)
-  const merchantBaseline = db.exec(`
-    SELECT c.zona_id, c.rubro_id, COALESCE(AVG(t.monto_fijo), 18) AS tarifa_promedio, COUNT(c.id) AS total_comerciantes
+  const baseline = await rows(db, `
+    SELECT c.zona_id, c.rubro_id, COALESCE(AVG(t.monto_fijo), 18) AS tarifa_promedio, COUNT(DISTINCT c.id) AS total_comerciantes
     FROM comerciantes c
-    LEFT JOIN tarifas t ON t.rubro_id = c.rubro_id AND t.estado = 1
+    LEFT JOIN tarifas t ON t.rubro_id = c.rubro_id AND t.activo
     WHERE c.estado = 'activo'
-    GROUP BY c.zona_id, c.rubro_id
-  `);
+    GROUP BY c.zona_id, c.rubro_id`);
 
-  for (const row of rowsToObjects(merchantBaseline)) {
+  for (const row of baseline) {
     const zoneId = Number(row.zona_id || 0);
     const rubroId = Number(row.rubro_id || 0);
     const merchantCount = Number(row.total_comerciantes || 0);
     const tarifaPromedio = Number(row.tarifa_promedio || 0);
 
     if (zoneId) {
-      const current = zoneMap.get(zoneId) || {
-        zona_id: zoneId,
-        zona: 'Sin zona',
-        recaudado: 0
-      };
+      const current = zoneMap.get(zoneId) || { zona_id: zoneId, zona: 'Sin zona', recaudado: 0 };
       current.recaudado += merchantCount * tarifaPromedio;
       zoneMap.set(zoneId, current);
     }
-
     if (rubroId) {
-      const current = rubroMap.get(rubroId) || {
-        rubro_id: rubroId,
-        rubro: 'Sin rubro',
-        recaudado: 0
-      };
+      const current = rubroMap.get(rubroId) || { rubro_id: rubroId, rubro: 'Sin rubro', recaudado: 0 };
       current.recaudado += merchantCount * tarifaPromedio;
       rubroMap.set(rubroId, current);
     }
@@ -664,7 +434,7 @@ export function generateForecastProjection(db, options = {}) {
   const totalHistorico = porZona.reduce((sum, item) => sum + Number(item.recaudado || 0), 0);
   const totalProyectado = porZona.reduce((sum, item) => sum + Number(item.proyectado || 0), 0);
 
-  return {
+  const result = {
     periodo: period,
     horizonte_dias: horizonDays,
     totalHistorico: Number(totalHistorico.toFixed(2)),
@@ -673,30 +443,36 @@ export function generateForecastProjection(db, options = {}) {
     porZona: porZona.sort((a, b) => Number(b.proyectado || 0) - Number(a.proyectado || 0)),
     porRubro: porRubro.sort((a, b) => Number(b.proyectado || 0) - Number(a.proyectado || 0))
   };
+
+  await db.query(
+    `INSERT INTO modelos_ia_metricas (modelo, version, entidad_tipo, periodo, valor_predicho, valor_real, metricas)
+     VALUES ('proyeccion_ingresos', 'heuristico-v1', 'global', $1, $2, $3, $4::jsonb)`,
+    [period, result.totalProyectado, result.totalHistorico, JSON.stringify({ horizonte_dias: horizonDays, promedioDiario: result.promedioDiario })]
+  );
+
+  return result;
 }
 
-export function scoreMorosidadComerciante(db, comercianteId) {
-  const merchant = getComerciantes(db, { includeInactive: true, limit: 1000 }).find((item) => item.id === Number(comercianteId));
+export async function scoreMorosidadComerciante(db, comercianteId) {
+  const merchant = await findComerciante(db, comercianteId);
   if (!merchant) throw new Error('Comerciante no encontrado');
 
-  const deudaQuery = db.exec(`
-    SELECT COALESCE(SUM(saldo), 0) AS deuda, MAX(fecha_vencimiento) AS ultima_vencimiento
-    FROM deudas
-    WHERE comerciante_id = ? AND estado <> 'pagado'
-  `, [Number(comercianteId)]);
-  const deudaTotal = Number(deudaQuery[0]?.values?.[0]?.[0] ?? 0);
+  let deudaTotal = 0;
+  try {
+    deudaTotal = Number((await calculateLiquidation(db, merchant.id)).saldo || 0);
+  } catch {
+    deudaTotal = 0;
+  }
 
-  const pagoQuery = db.exec(`
-    SELECT COUNT(*) AS total_pagos, COALESCE(SUM(monto), 0) AS monto_pagado, MAX(fecha_cobro) AS ultima_fecha
-    FROM cobros
-    WHERE comerciante_id = ?
-  `, [Number(comercianteId)]);
+  const pagos = await first(db, `
+    SELECT COUNT(*) AS total_pagos, COALESCE(SUM(monto), 0) AS monto_pagado,
+           to_char(MAX(fecha_cobro_cliente), 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS ultima_fecha
+    FROM transacciones WHERE comerciante_id = $1 AND estado = 'confirmado'`, [merchant.id]);
 
-  const totalPagos = Number(pagoQuery[0]?.values?.[0]?.[0] ?? 0);
-  const montoPagado = Number(pagoQuery[0]?.values?.[0]?.[1] ?? 0);
-  const ultimaFecha = pagoQuery[0]?.values?.[0]?.[2] || null;
-  const ultimaFechaDate = ultimaFecha ? new Date(ultimaFecha) : null;
-  const diasSinPago = ultimaFechaDate ? Math.max(0, (Date.now() - ultimaFechaDate.getTime()) / 86400000) : 90;
+  const totalPagos = Number(pagos.total_pagos);
+  const montoPagado = Number(pagos.monto_pagado);
+  const ultimaFecha = pagos.ultima_fecha ? new Date(pagos.ultima_fecha) : null;
+  const diasSinPago = ultimaFecha ? Math.max(0, (Date.now() - ultimaFecha.getTime()) / 86400000) : 90;
   const deudaRatio = deudaTotal > 0 ? clamp(deudaTotal / Math.max(1, montoPagado + deudaTotal), 0, 1) : 0;
   const cumplimiento = totalPagos > 0 ? clamp(montoPagado / Math.max(1, deudaTotal + montoPagado), 0, 1) : 0.45;
   const recencyPenalty = clamp(diasSinPago / 90, 0, 1);
@@ -713,33 +489,16 @@ export function scoreMorosidadComerciante(db, comercianteId) {
   else if (diasSinPago > 45) motivo = 'No registra pagos recientes en la última ventana de cobranza';
   else if (merchant.estado === 'pendiente') motivo = 'El comerciante requiere seguimiento por estado de padrón';
 
-  const existing = db.exec('SELECT id FROM riesgo_morosidad WHERE comerciante_id = ? ORDER BY id DESC LIMIT 1', [merchant.id]);
   const now = new Date().toISOString();
-
-  if (existing[0]?.values?.length) {
-    db.run(
-      'UPDATE riesgo_morosidad SET score_riesgo = ?, nivel_riesgo = ?, motivo_principal = ?, fecha_calculo = ? WHERE comerciante_id = ?',
-      [score, nivel, motivo, now, merchant.id]
-    );
-  } else {
-    db.run(
-      'INSERT INTO riesgo_morosidad (comerciante_id, score_riesgo, nivel_riesgo, motivo_principal, fecha_calculo, estado_alerta) VALUES (?, ?, ?, ?, ?, "activo")',
-      [merchant.id, score, nivel, motivo, now]
-    );
-  }
-
-  const persistedRisk = db.exec('SELECT id FROM riesgo_morosidad WHERE comerciante_id = ? ORDER BY id DESC LIMIT 1', [merchant.id]);
-  const riesgoId = Number(persistedRisk[0]?.values?.[0]?.[0] ?? 0);
-
-  if (riesgoId && ['alto', 'critico'].includes(nivel)) {
-    const alert = db.exec('SELECT id FROM alertas_morosidad WHERE comerciante_id = ? AND riesgo_id = ? LIMIT 1', [merchant.id, riesgoId]);
-    if (!alert[0]?.values?.length) {
-      db.run(
-        'INSERT INTO alertas_morosidad (comerciante_id, riesgo_id, tipo_alerta, mensaje, enviado, fecha_envio) VALUES (?, ?, ?, ?, 0, CURRENT_TIMESTAMP)',
-        [merchant.id, riesgoId, 'morosidad', `Se detectó riesgo ${nivel} para ${merchant.nombre}. Prioridad de visita de cobranza.`]
-      );
-    }
-  }
+  await db.query(
+    `INSERT INTO modelos_ia_metricas (modelo, version, entidad_tipo, entidad_id, periodo, score, nivel, metricas)
+     VALUES ('riesgo_morosidad', 'heuristico-v1', 'comerciante', $1, $2, $3, $4, $5::jsonb)`,
+    [merchant.id, now.slice(0, 7), Number(score.toFixed(4)), nivel, JSON.stringify({
+      motivo_principal: motivo,
+      deuda_total: deudaTotal,
+      alerta: ['alto', 'critico'].includes(nivel)
+    })]
+  );
 
   return {
     comerciante_id: merchant.id,
@@ -752,17 +511,23 @@ export function scoreMorosidadComerciante(db, comercianteId) {
   };
 }
 
-export function getRiskDashboard(db, options = {}) {
+export async function getRiskDashboard(db, options = {}) {
   const limit = Math.min(Math.max(Number(options.limit || 5), 1), 20);
-  const currentRows = db.exec(`
-    SELECT rm.comerciante_id, c.nombre, c.dni_ruc, rm.score_riesgo, rm.nivel_riesgo, rm.motivo_principal, rm.fecha_calculo
-    FROM riesgo_morosidad rm
-    JOIN comerciantes c ON c.id = rm.comerciante_id
-    ORDER BY rm.score_riesgo DESC, rm.id DESC
-    LIMIT ?
-  `, [limit]);
+  const records = await rows(db, `
+    SELECT * FROM (
+      SELECT DISTINCT ON (m.entidad_id)
+             m.id, m.entidad_id AS comerciante_id, c.nombre, c.dni_ruc,
+             m.score AS score_riesgo, m.nivel AS nivel_riesgo,
+             m.metricas->>'motivo_principal' AS motivo_principal,
+             ${TS('m.generado_en')} AS fecha_calculo
+      FROM modelos_ia_metricas m
+      JOIN comerciantes c ON c.id = m.entidad_id
+      WHERE m.modelo = 'riesgo_morosidad' AND m.entidad_tipo = 'comerciante'
+      ORDER BY m.entidad_id, m.generado_en DESC, m.id DESC
+    ) latest
+    ORDER BY score_riesgo DESC, id DESC
+    LIMIT $1`, [limit]);
 
-  const records = rowsToObjects(currentRows);
   if (records.length) {
     return {
       summary: {
@@ -772,7 +537,7 @@ export function getRiskDashboard(db, options = {}) {
         alto: records.filter((item) => item.nivel_riesgo === 'alto').length,
         critico: records.filter((item) => item.nivel_riesgo === 'critico').length
       },
-      records: records.map((item) => ({
+      records: records.map(({ id, ...item }) => ({
         ...item,
         score_riesgo: Number(item.score_riesgo || 0),
         nivel_riesgo: String(item.nivel_riesgo || 'bajo')
@@ -780,8 +545,11 @@ export function getRiskDashboard(db, options = {}) {
     };
   }
 
-  const merchants = getComerciantes(db, { includeInactive: true, limit: 1000 });
-  const computed = merchants.slice(0, limit).map((merchant) => scoreMorosidadComerciante(db, merchant.id));
+  const merchants = await getComerciantes(db, { includeInactive: true, limit: 1000 });
+  const computed = [];
+  for (const merchant of merchants.slice(0, limit)) {
+    computed.push(await scoreMorosidadComerciante(db, merchant.id));
+  }
   return {
     summary: {
       total: computed.length,
@@ -794,423 +562,239 @@ export function getRiskDashboard(db, options = {}) {
   };
 }
 
-export function getReportRows(db, options = {}) {
+export async function getReportRows(db, options = {}) {
   const conditions = [];
-  const parameters = [];
+  const params = [];
   const period = String(options.periodo || '').trim();
-  if (period) { conditions.push('co.fecha_cobro LIKE ?'); parameters.push(`${period}%`); }
-  if (options.zona_id) { conditions.push('c.zona_id = ?'); parameters.push(Number(options.zona_id)); }
-  if (options.rubro_id) { conditions.push('c.rubro_id = ?'); parameters.push(Number(options.rubro_id)); }
-  if (options.cobrador_id) { conditions.push('co.cobrador_id = ?'); parameters.push(Number(options.cobrador_id)); }
+  if (period) { params.push(`${period}%`); conditions.push(`${PAYMENT_DAY} LIKE $${params.length}`); }
+  if (options.zona_id) { params.push(Number(options.zona_id)); conditions.push(`c.zona_id = $${params.length}`); }
+  if (options.rubro_id) { params.push(Number(options.rubro_id)); conditions.push(`c.rubro_id = $${params.length}`); }
+  if (options.cobrador_id) { params.push(Number(options.cobrador_id)); conditions.push(`co.cobrador_id = $${params.length}`); }
   const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
-  const result = db.exec(`
-    SELECT co.id, co.fecha_cobro AS fecha, 'CM-' || printf('%03d', c.id) AS comerciante_codigo,
+  return rows(db, `
+    SELECT co.id, ${PAYMENT_DAY} AS fecha, ${CODE('c.id')} AS comerciante_codigo,
       c.nombre AS comerciante, r.nombre AS rubro, z.nombre AS zona, u.nombre AS cobrador,
       co.monto, co.metodo_pago, co.estado, cp.numero_correlativo AS comprobante
-    FROM cobros co JOIN comerciantes c ON c.id = co.comerciante_id
+    FROM transacciones co JOIN comerciantes c ON c.id = co.comerciante_id
       JOIN rubros r ON r.id = c.rubro_id JOIN zonas z ON z.id = c.zona_id
       LEFT JOIN usuarios u ON u.id = co.cobrador_id LEFT JOIN comprobantes cp ON cp.id = co.comprobante_id
-    ${where} ORDER BY co.fecha_cobro DESC
-  `, parameters);
-  return rowsToObjects(result);
+    ${where} ORDER BY co.fecha_cobro_cliente DESC`, params);
 }
 
-export function buildReportCsv(db, options = {}) {
-  const data = getReportRows(db, options);
+export async function buildReportCsv(db, options = {}) {
+  const data = await getReportRows(db, options);
   const headers = ['fecha', 'comerciante_codigo', 'comerciante', 'rubro', 'zona', 'cobrador', 'monto', 'metodo_pago', 'estado', 'comprobante'];
   const escapeValue = (value) => {
     const normalized = value === null || value === undefined ? '' : String(value);
     return /[",\n]/.test(normalized) ? `"${normalized.replace(/"/g, '""')}"` : normalized;
   };
 
+  if (!data.length) return `${headers.join(',')}\n`;
   const lines = [headers.join(',')];
-  for (const row of data) {
-    lines.push(headers.map((header) => escapeValue(row[header])).join(','));
-  }
-
-  if (!data.length) {
-    return `${headers.join(',')}\n`;
-  }
-
+  for (const row of data) lines.push(headers.map((header) => escapeValue(row[header])).join(','));
   return lines.join('\n');
 }
 
-export function getRubros(db) {
-  const result = db.exec(`
-    SELECT id, nombre, descripcion
-    FROM rubros
-    WHERE estado = 1
-    ORDER BY nombre ASC
-  `);
+// ---------------------------------------------------------------------------
+// Catálogos: rubros, zonas, calles
+// ---------------------------------------------------------------------------
 
-  return rowsToObjects(result);
+export async function getRubros(db) {
+  return rows(db, 'SELECT id, nombre, descripcion FROM rubros WHERE activo ORDER BY nombre ASC');
 }
 
-export function getZonas(db) {
-  const result = db.exec(`
-    SELECT z.id, z.nombre, z.descripcion,
-           COUNT(c.id) AS calles_count
-    FROM zonas z
-    LEFT JOIN calles c ON c.zona_id = z.id
-    GROUP BY z.id, z.nombre, z.descripcion
-    ORDER BY z.nombre ASC
-  `);
-
-  return rowsToObjects(result);
+export async function getZonas(db) {
+  return rows(db, 'SELECT id, nombre, descripcion FROM zonas ORDER BY nombre ASC');
 }
 
-export function getCalles(db, options = {}) {
+export async function insertZona(db, payload) {
+  const nombre = String(payload.nombre || '').trim();
+  const descripcion = String(payload.descripcion || '').trim();
+  if (!nombre) throw new Error('El nombre de la zona es obligatorio');
+
+  const duplicate = await first(db, 'SELECT id FROM zonas WHERE lower(btrim(nombre)) = lower(btrim($1))', [nombre]);
+  if (duplicate) throw new Error('Ya existe una zona con ese nombre');
+
+  return first(db, 'INSERT INTO zonas (nombre, descripcion) VALUES ($1, $2) RETURNING id, nombre, descripcion', [nombre, descripcion]);
+}
+
+export async function updateZona(db, id, payload) {
+  const current = await first(db, 'SELECT id, nombre, descripcion FROM zonas WHERE id = $1', [Number(id)]);
+  if (!current) throw new Error('Zona no encontrada');
+
+  const nombre = payload.nombre === undefined ? current.nombre : String(payload.nombre).trim();
+  const descripcion = payload.descripcion === undefined ? current.descripcion : String(payload.descripcion).trim();
+  if (!nombre) throw new Error('El nombre de la zona es obligatorio');
+
+  const duplicate = await first(db, 'SELECT id FROM zonas WHERE lower(btrim(nombre)) = lower(btrim($1)) AND id <> $2', [nombre, Number(id)]);
+  if (duplicate) throw new Error('Ya existe una zona con ese nombre');
+
+  return first(db, 'UPDATE zonas SET nombre = $1, descripcion = $2 WHERE id = $3 RETURNING id, nombre, descripcion', [nombre, descripcion, Number(id)]);
+}
+
+export async function deleteZona(db, id) {
+  const zonaId = Number(id);
+  const existing = await first(db, 'SELECT id FROM zonas WHERE id = $1', [zonaId]);
+  if (!existing) throw new Error('Zona no encontrada');
+  try {
+    await db.query('DELETE FROM zonas WHERE id = $1', [zonaId]);
+  } catch (error) {
+    if (error.code === '23503') throw new Error('No se puede eliminar la zona: tiene comerciantes, puestos o tarifas asociados');
+    throw error;
+  }
+  return { id: zonaId, eliminado: true };
+}
+
+export async function getCalles(db, options = {}) {
   const zonaId = Number(options.zona_id || 0);
-  const search = String(options.search || '').trim();
-  const conditions = [];
-  const parameters = [];
-
-  if (zonaId) {
-    conditions.push('c.zona_id = ?');
-    parameters.push(zonaId);
-  }
-
-  if (search) {
-    conditions.push('(c.nombre LIKE ? OR c.descripcion LIKE ? OR z.nombre LIKE ?)');
-    parameters.push(`%${search}%`, `%${search}%`, `%${search}%`);
-  }
-
-  const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
-  const result = db.exec(`
-    SELECT c.id, c.zona_id, z.nombre AS zona, c.nombre, c.descripcion, c.estado, c.orden, c.fecha_creacion
-    FROM calles c
-    LEFT JOIN zonas z ON z.id = c.zona_id
-    ${where}
-    ORDER BY z.nombre ASC, c.orden ASC, c.nombre ASC
-  `, parameters);
-
-  return rowsToObjects(result);
+  return rows(db, `
+    SELECT c.id, c.nombre, c.descripcion, c.zona_id, z.nombre AS zona
+    FROM calles c JOIN zonas z ON z.id = c.zona_id
+    ${zonaId ? 'WHERE c.zona_id = $1' : ''}
+    ORDER BY c.nombre ASC`, zonaId ? [zonaId] : []);
 }
 
-export function insertZona(db, payload = {}) {
+async function findCalle(db, id) {
+  return first(db, `
+    SELECT c.id, c.nombre, c.descripcion, c.zona_id, z.nombre AS zona
+    FROM calles c JOIN zonas z ON z.id = c.zona_id WHERE c.id = $1`, [Number(id)]);
+}
+
+export async function insertCalle(db, payload) {
   const nombre = String(payload.nombre || '').trim();
-  if (!nombre) {
-    throw new Error('El nombre de la zona es obligatorio');
-  }
+  const descripcion = String(payload.descripcion || '').trim();
+  const zonaId = Number(payload.zona_id);
+  if (!nombre || !zonaId) throw new Error('Nombre y zona son obligatorios');
 
-  const existing = db.exec('SELECT id FROM zonas WHERE LOWER(TRIM(nombre)) = LOWER(TRIM(?)) LIMIT 1', [nombre]);
-  if (existing[0]?.values?.length) {
-    throw new Error(`La zona "${nombre}" ya existe`);
-  }
+  if (!(await first(db, 'SELECT id FROM zonas WHERE id = $1', [zonaId]))) throw new Error('La zona especificada no existe');
+  const duplicate = await first(db, 'SELECT id FROM calles WHERE lower(btrim(nombre)) = lower(btrim($1)) AND zona_id = $2', [nombre, zonaId]);
+  if (duplicate) throw new Error('Ya existe una calle con ese nombre en la zona especificada');
 
-  db.run('INSERT INTO zonas (nombre, descripcion) VALUES (?, ?)', [nombre, String(payload.descripcion || '').trim()]);
-
-  const inserted = db.exec('SELECT id, nombre, descripcion FROM zonas WHERE LOWER(TRIM(nombre)) = LOWER(TRIM(?)) ORDER BY id DESC LIMIT 1', [nombre]);
-  return rowsToObjects(inserted)[0];
+  const created = await first(db, 'INSERT INTO calles (nombre, descripcion, zona_id) VALUES ($1, $2, $3) RETURNING id', [nombre, descripcion, zonaId]);
+  return findCalle(db, created.id);
 }
 
-export function updateZona(db, id, payload = {}) {
-  const zoneId = Number(id || 0);
-  if (!zoneId) {
-    throw new Error('La zona no es válida');
-  }
+export async function updateCalle(db, id, payload) {
+  const current = await findCalle(db, id);
+  if (!current) throw new Error('Calle no encontrada');
 
-  const existing = db.exec('SELECT id, nombre, descripcion FROM zonas WHERE id = ?', [zoneId]);
-  if (!existing[0]?.values?.length) {
-    throw new Error('Zona no encontrada');
-  }
+  const nombre = payload.nombre === undefined ? current.nombre : String(payload.nombre).trim();
+  const descripcion = payload.descripcion === undefined ? current.descripcion : String(payload.descripcion).trim();
+  const zonaId = payload.zona_id === undefined ? current.zona_id : Number(payload.zona_id);
+  if (!nombre || !zonaId) throw new Error('Nombre y zona son obligatorios');
 
-  const nombre = String(payload.nombre !== undefined ? payload.nombre : existing[0].values[0][1] || '').trim();
-  const descripcion = String(payload.descripcion !== undefined ? payload.descripcion : existing[0].values[0][2] || '').trim();
+  if (!(await first(db, 'SELECT id FROM zonas WHERE id = $1', [zonaId]))) throw new Error('La zona especificada no existe');
+  const duplicate = await first(db, 'SELECT id FROM calles WHERE lower(btrim(nombre)) = lower(btrim($1)) AND zona_id = $2 AND id <> $3', [nombre, zonaId, Number(id)]);
+  if (duplicate) throw new Error('Ya existe una calle con ese nombre en la zona especificada');
 
-  if (!nombre) {
-    throw new Error('El nombre de la zona es obligatorio');
-  }
-
-  const duplicate = db.exec('SELECT id FROM zonas WHERE LOWER(TRIM(nombre)) = LOWER(TRIM(?)) AND id <> ? LIMIT 1', [nombre, zoneId]);
-  if (duplicate[0]?.values?.length) {
-    throw new Error(`La zona "${nombre}" ya existe`);
-  }
-
-  db.run('UPDATE zonas SET nombre = ?, descripcion = ? WHERE id = ?', [nombre, descripcion, zoneId]);
-  const updated = db.exec('SELECT id, nombre, descripcion FROM zonas WHERE id = ?', [zoneId]);
-  return rowsToObjects(updated)[0];
+  await db.query('UPDATE calles SET nombre = $1, descripcion = $2, zona_id = $3 WHERE id = $4', [nombre, descripcion, zonaId, Number(id)]);
+  return findCalle(db, id);
 }
 
-export function deleteZona(db, id) {
-  const zoneId = Number(id || 0);
-  if (!zoneId) {
-    throw new Error('La zona no es válida');
-  }
-
-  const inUse = db.exec('SELECT COUNT(*) AS total FROM comerciantes WHERE zona_id = ? UNION ALL SELECT COUNT(*) AS total FROM puestos WHERE zona_id = ?', [zoneId, zoneId]);
-  const totalInUse = Number(inUse[0]?.values?.[0]?.[0] ?? 0) + Number(inUse[1]?.values?.[0]?.[0] ?? 0);
-  if (totalInUse > 0) {
-    throw new Error('No se puede eliminar la zona porque tiene comerciantes o puestos asociados');
-  }
-
-  db.run('DELETE FROM calles WHERE zona_id = ?', [zoneId]);
-  db.run('DELETE FROM zonas WHERE id = ?', [zoneId]);
-  return { id: zoneId, deleted: true };
+export async function deleteCalle(db, id) {
+  const calleId = Number(id);
+  if (!(await first(db, 'SELECT id FROM calles WHERE id = $1', [calleId]))) throw new Error('Calle no encontrada');
+  await db.query('DELETE FROM calles WHERE id = $1', [calleId]);
+  return { id: calleId, eliminado: true };
 }
 
-export function insertCalle(db, payload = {}) {
-  const zonaId = Number(payload.zona_id || 0);
-  const nombre = String(payload.nombre || '').trim();
-  if (!zonaId) {
-    throw new Error('La zona es obligatoria');
-  }
+// ---------------------------------------------------------------------------
+// Preferencias del comerciante
+// ---------------------------------------------------------------------------
 
-  const zoneExists = db.exec('SELECT id FROM zonas WHERE id = ?', [zonaId]);
-  if (!zoneExists[0]?.values?.length) {
-    throw new Error('La zona seleccionada no existe');
-  }
-
-  if (!nombre) {
-    throw new Error('El nombre de la calle es obligatorio');
-  }
-
-  const duplicate = db.exec('SELECT id FROM calles WHERE zona_id = ? AND LOWER(TRIM(nombre)) = LOWER(TRIM(?)) LIMIT 1', [zonaId, nombre]);
-  if (duplicate[0]?.values?.length) {
-    throw new Error(`La calle "${nombre}" ya existe en esta zona`);
-  }
-
-  const orden = Number(payload.orden || 1);
-  const estado = ['activo', 'inactivo'].includes(String(payload.estado || 'activo')) ? String(payload.estado || 'activo') : 'activo';
-  db.run('INSERT INTO calles (zona_id, nombre, descripcion, estado, orden) VALUES (?, ?, ?, ?, ?)', [zonaId, nombre, String(payload.descripcion || '').trim(), estado, orden]);
-
-  const inserted = db.exec('SELECT id, zona_id, nombre, descripcion, estado, orden, fecha_creacion FROM calles WHERE zona_id = ? AND LOWER(TRIM(nombre)) = LOWER(TRIM(?)) ORDER BY id DESC LIMIT 1', [zonaId, nombre]);
-  return rowsToObjects(inserted)[0];
+export async function getComerciantePreferencias(db, comercianteId) {
+  return rows(db, 'SELECT id, clave, valor FROM comerciante_preferencias WHERE comerciante_id = $1 ORDER BY id', [Number(comercianteId)]);
 }
 
-export function updateCalle(db, id, payload = {}) {
-  const calleId = Number(id || 0);
-  if (!calleId) {
-    throw new Error('La calle no es válida');
-  }
-
-  const current = db.exec('SELECT id, zona_id, nombre, descripcion, estado, orden FROM calles WHERE id = ?', [calleId]);
-  if (!current[0]?.values?.length) {
-    throw new Error('Calle no encontrada');
-  }
-
-  const zonaId = Number(payload.zona_id ?? current[0].values[0][1]);
-  const nombre = String(payload.nombre !== undefined ? payload.nombre : current[0].values[0][2] || '').trim();
-  const descripcion = String(payload.descripcion !== undefined ? payload.descripcion : current[0].values[0][3] || '').trim();
-  const estadoValue = payload.estado !== undefined ? payload.estado : current[0].values[0][4] || 'activo';
-  const estado = ['activo', 'inactivo'].includes(String(estadoValue)) ? String(estadoValue) : 'activo';
-  const orden = Number(payload.orden !== undefined ? payload.orden : current[0].values[0][5] ?? 1);
-
-  if (!zonaId || !nombre) {
-    throw new Error('La zona y el nombre de la calle son obligatorios');
-  }
-
-  const duplicate = db.exec('SELECT id FROM calles WHERE zona_id = ? AND LOWER(TRIM(nombre)) = LOWER(TRIM(?)) AND id <> ? LIMIT 1', [zonaId, nombre, calleId]);
-  if (duplicate[0]?.values?.length) {
-    throw new Error(`La calle "${nombre}" ya existe en esta zona`);
-  }
-
-  db.run('UPDATE calles SET zona_id = ?, nombre = ?, descripcion = ?, estado = ?, orden = ? WHERE id = ?', [zonaId, nombre, descripcion, estado, orden, calleId]);
-  const updated = db.exec('SELECT c.id, c.zona_id, z.nombre AS zona, c.nombre, c.descripcion, c.estado, c.orden, c.fecha_creacion FROM calles c LEFT JOIN zonas z ON z.id = c.zona_id WHERE c.id = ?', [calleId]);
-  return rowsToObjects(updated)[0];
+export async function updateComerciantePreferencias(db, comercianteId, payload) {
+  await withTransaction(async (client) => {
+    await client.query('DELETE FROM comerciante_preferencias WHERE comerciante_id = $1', [Number(comercianteId)]);
+    for (const [clave, valor] of Object.entries(payload || {})) {
+      await client.query(
+        'INSERT INTO comerciante_preferencias (comerciante_id, clave, valor) VALUES ($1, $2, $3)',
+        [Number(comercianteId), String(clave), String(valor)]
+      );
+    }
+  });
+  return getComerciantePreferencias(db, comercianteId);
 }
 
-export function deleteCalle(db, id) {
-  const calleId = Number(id || 0);
-  if (!calleId) {
-    throw new Error('La calle no es válida');
-  }
+// ---------------------------------------------------------------------------
+// Comerciantes
+// ---------------------------------------------------------------------------
 
-  db.run('DELETE FROM calles WHERE id = ?', [calleId]);
-  return { id: calleId, deleted: true };
+const COMERCIANTE_COLUMNS = `
+  c.id, c.dni_ruc, c.nombre, COALESCE(c.categoria, c.tipo_comerciante) AS categoria, c.tipo_comerciante,
+  c.estado, c.estado_empadronamiento, ${TS('c.creado_en')} AS fecha_registro,
+  c.rubro_id, c.zona_id, r.nombre AS rubro, z.nombre AS zona,
+  ${CODE('c.id')} AS codigo, 'SISREC://comerciante/' || c.id AS qr_code`;
+
+async function findComerciante(db, id) {
+  return first(db, `
+    SELECT ${COMERCIANTE_COLUMNS}
+    FROM comerciantes c JOIN rubros r ON r.id = c.rubro_id JOIN zonas z ON z.id = c.zona_id
+    WHERE c.id = $1`, [Number(id)]);
 }
 
-export function getComerciantes(db, options = {}) {
+function comercianteFilter(options, params) {
   const search = String(options.search || '').trim();
   const rubroId = Number(options.rubro_id || 0);
   const zonaId = Number(options.zona_id || 0);
-  const includeInactive = options.includeInactive === true;
-  const page = Math.max(Number(options.page || 1), 1);
-  const limit = Math.min(Math.max(Number(options.limit || 10), 1), 100);
-  const offset = (page - 1) * limit;
   const conditions = [];
-  const parameters = [];
 
-  if (!includeInactive) conditions.push("c.estado <> 'inactivo'");
+  if (options.includeInactive !== true) conditions.push("c.estado <> 'inactivo'");
   if (search) {
-    conditions.push('(c.nombre LIKE ? OR c.dni_ruc LIKE ? OR CAST(c.id AS TEXT) LIKE ? OR (\'CM-\' || printf(\'%03d\', c.id)) LIKE ?)');
-    parameters.push(`%${search}%`, `%${search}%`, `%${search}%`, `%${search}%`);
+    params.push(`%${search}%`);
+    const n = `$${params.length}`;
+    conditions.push(`(c.nombre ILIKE ${n} OR c.dni_ruc ILIKE ${n} OR c.id::text LIKE ${n} OR (${CODE('c.id')}) ILIKE ${n})`);
   }
-  if (rubroId) {
-    conditions.push('c.rubro_id = ?');
-    parameters.push(rubroId);
-  }
-  if (zonaId) {
-    conditions.push('c.zona_id = ?');
-    parameters.push(zonaId);
-  }
+  if (rubroId) { params.push(rubroId); conditions.push(`c.rubro_id = $${params.length}`); }
+  if (zonaId) { params.push(zonaId); conditions.push(`c.zona_id = $${params.length}`); }
+  return conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
+}
 
-  const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
-  const result = db.exec(`
-    SELECT c.id, c.dni_ruc, c.nombre, c.categoria, c.tipo_comerciante, c.estado, c.estado_empadronamiento, c.fecha_registro,
-           c.rubro_id, c.zona_id, r.nombre AS rubro, z.nombre AS zona,
-          'CM-' || printf('%03d', c.id) AS codigo,
-          'SISREC://comerciante/' || c.id AS qr_code
-    FROM comerciantes c
-    JOIN rubros r ON r.id = c.rubro_id
-    JOIN zonas z ON z.id = c.zona_id
+export async function getComerciantes(db, options = {}) {
+  const page = Math.max(Number(options.page || 1), 1);
+  const limit = Math.min(Math.max(Number(options.limit || 10), 1), 1000);
+  const params = [];
+  const where = comercianteFilter(options, params);
+  params.push(limit, (page - 1) * limit);
+  return rows(db, `
+    SELECT ${COMERCIANTE_COLUMNS}
+    FROM comerciantes c JOIN rubros r ON r.id = c.rubro_id JOIN zonas z ON z.id = c.zona_id
     ${where}
     ORDER BY c.id DESC
-    LIMIT ? OFFSET ?
-  `, [...parameters, limit, offset]);
-
-  return rowsToObjects(result);
+    LIMIT $${params.length - 1} OFFSET $${params.length}`, params);
 }
 
-export function initializeComerciantePreferencias(db) {
-  db.run(`
-    CREATE TABLE IF NOT EXISTS comerciante_preferencias (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      comerciante_id INTEGER NOT NULL UNIQUE,
-      monto_sugerido REAL NOT NULL DEFAULT 0,
-      metodo_pago_preferido TEXT NOT NULL DEFAULT 'efectivo',
-      ultimo_monto REAL NOT NULL DEFAULT 0,
-      ultimo_metodo_pago TEXT,
-      ultimo_cobro_fecha TEXT,
-      total_cobros INTEGER NOT NULL DEFAULT 0,
-      fecha_actualizacion TEXT DEFAULT CURRENT_TIMESTAMP
-    )
-  `);
-  ensureColumn(db, 'comerciante_preferencias', 'monto_sugerido', 'REAL NOT NULL DEFAULT 0');
-  ensureColumn(db, 'comerciante_preferencias', 'metodo_pago_preferido', "TEXT NOT NULL DEFAULT 'efectivo'");
-  ensureColumn(db, 'comerciante_preferencias', 'ultimo_monto', 'REAL NOT NULL DEFAULT 0');
-  ensureColumn(db, 'comerciante_preferencias', 'ultimo_metodo_pago', 'TEXT');
-  ensureColumn(db, 'comerciante_preferencias', 'ultimo_cobro_fecha', 'TEXT');
-  ensureColumn(db, 'comerciante_preferencias', 'total_cobros', 'INTEGER NOT NULL DEFAULT 0');
-  ensureColumn(db, 'comerciante_preferencias', 'fecha_actualizacion', 'TEXT DEFAULT CURRENT_TIMESTAMP');
-  db.run('CREATE UNIQUE INDEX IF NOT EXISTS idx_comerciante_preferencias_comerciante_id ON comerciante_preferencias(comerciante_id)');
-  return true;
-}
-
-export function getComerciantePreferencias(db, comercianteId) {
-  const merchantId = Number(comercianteId || 0);
-  const defaults = {
-    id: null,
-    comerciante_id: merchantId,
-    monto_sugerido: 0,
-    metodo_pago_preferido: 'efectivo',
-    ultimo_monto: 0,
-    ultimo_metodo_pago: null,
-    ultimo_cobro_fecha: null,
-    total_cobros: 0,
-    fecha_actualizacion: null
-  };
-
-  if (!merchantId) return defaults;
-
-  const result = db.exec('SELECT * FROM comerciante_preferencias WHERE comerciante_id = ? ORDER BY id DESC LIMIT 1', [merchantId]);
-  const row = rowsToObjects(result)[0];
-  if (!row) return defaults;
-
-  return {
-    ...defaults,
-    ...row,
-    comerciante_id: Number(row.comerciante_id ?? merchantId),
-    monto_sugerido: Number(row.monto_sugerido ?? 0),
-    ultimo_monto: Number(row.ultimo_monto ?? 0),
-    total_cobros: Number(row.total_cobros ?? 0)
-  };
-}
-
-export function updateComerciantePreferencias(db, comercianteId, payload = {}) {
-  const merchantId = Number(comercianteId || 0);
-  if (!merchantId) {
-    throw new Error('Comerciante no válido');
-  }
-
-  const current = getComerciantePreferencias(db, merchantId);
-  const next = {
-    comerciante_id: merchantId,
-    monto_sugerido: Number(payload.monto_sugerido ?? current.monto_sugerido ?? 0),
-    metodo_pago_preferido: String(payload.metodo_pago_preferido ?? current.metodo_pago_preferido ?? 'efectivo').trim() || 'efectivo',
-    ultimo_monto: Number(payload.ultimo_monto ?? current.ultimo_monto ?? 0),
-    ultimo_metodo_pago: payload.ultimo_metodo_pago ?? current.ultimo_metodo_pago ?? null,
-    ultimo_cobro_fecha: payload.ultimo_cobro_fecha ?? current.ultimo_cobro_fecha ?? null,
-    total_cobros: Number(payload.total_cobros ?? current.total_cobros ?? 0),
-    fecha_actualizacion: payload.fecha_actualizacion ?? new Date().toISOString()
-  };
-
-  db.run(`
-    INSERT INTO comerciante_preferencias (
-      comerciante_id, monto_sugerido, metodo_pago_preferido, ultimo_monto, ultimo_metodo_pago, ultimo_cobro_fecha, total_cobros, fecha_actualizacion
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    ON CONFLICT(comerciante_id) DO UPDATE SET
-      monto_sugerido = excluded.monto_sugerido,
-      metodo_pago_preferido = excluded.metodo_pago_preferido,
-      ultimo_monto = excluded.ultimo_monto,
-      ultimo_metodo_pago = excluded.ultimo_metodo_pago,
-      ultimo_cobro_fecha = excluded.ultimo_cobro_fecha,
-      total_cobros = excluded.total_cobros,
-      fecha_actualizacion = excluded.fecha_actualizacion
-  `, [
-    next.comerciante_id,
-    next.monto_sugerido,
-    next.metodo_pago_preferido,
-    next.ultimo_monto,
-    next.ultimo_metodo_pago,
-    next.ultimo_cobro_fecha,
-    next.total_cobros,
-    next.fecha_actualizacion
-  ]);
-
-  return getComerciantePreferencias(db, merchantId);
-}
-
-export function countComerciantes(db, options = {}) {
-  const search = String(options.search || '').trim();
-  const rubroId = Number(options.rubro_id || 0);
-  const zonaId = Number(options.zona_id || 0);
-  const includeInactive = options.includeInactive === true;
-  const conditions = [];
-  const parameters = [];
-
-  if (!includeInactive) conditions.push("estado <> 'inactivo'");
-  if (search) {
-    conditions.push('(nombre LIKE ? OR dni_ruc LIKE ? OR CAST(id AS TEXT) LIKE ?)');
-    parameters.push(`%${search}%`, `%${search}%`, `%${search}%`);
-  }
-  if (rubroId) {
-    conditions.push('rubro_id = ?');
-    parameters.push(rubroId);
-  }
-  if (zonaId) {
-    conditions.push('zona_id = ?');
-    parameters.push(zonaId);
-  }
-
-  const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
-  const result = db.exec(`SELECT COUNT(*) AS total FROM comerciantes ${where}`, parameters);
-  return Number(result[0]?.values?.[0]?.[0] ?? 0);
+export async function countComerciantes(db, options = {}) {
+  const params = [];
+  const where = comercianteFilter(options, params);
+  const result = await first(db, `SELECT COUNT(*) AS total FROM comerciantes c ${where}`, params);
+  return Number(result.total);
 }
 
 export function validateDocument(value) {
   const document = String(value || '').trim();
   const isDni = /^\d{8}$/.test(document);
   const isRuc = /^(10|15|17|20)\d{9}$/.test(document);
-
   if (!isDni && !isRuc) {
     throw new Error('DNI debe tener 8 dígitos o RUC debe tener 11 dígitos válido');
   }
-
   return document;
 }
 
-function ensureUniqueActiveDocument(db, dniRuc, excludeId = null) {
-  const where = excludeId ? 'WHERE dni_ruc = ? AND id <> ? AND estado IN (?, ?)' : 'WHERE dni_ruc = ? AND estado IN (?, ?)';
-  const params = excludeId ? [dniRuc, Number(excludeId), 'activo', 'pendiente'] : [dniRuc, 'activo', 'pendiente'];
-  const result = db.exec(`SELECT id FROM comerciantes ${where}`, params);
-
-  if (result[0]?.values?.length) {
-    throw new Error('Ya existe un comerciante activo con ese DNI/RUC');
-  }
+async function ensureUniqueActiveDocument(db, dniRuc, excludeId = null) {
+  const result = excludeId
+    ? await first(db, `SELECT id FROM comerciantes WHERE dni_ruc = $1 AND id <> $2 AND estado IN ('activo', 'pendiente')`, [dniRuc, Number(excludeId)])
+    : await first(db, `SELECT id FROM comerciantes WHERE dni_ruc = $1 AND estado IN ('activo', 'pendiente')`, [dniRuc]);
+  if (result) throw new Error('Ya existe un comerciante activo con ese DNI/RUC');
 }
 
-export function insertComerciante(db, payload) {
+const TIPOS_COMERCIANTE = ['eventual', 'permanente', 'ferial'];
+const ESTADOS_COMERCIANTE = ['activo', 'inactivo', 'pendiente'];
+
+export async function insertComerciante(db, payload) {
   const dniRuc = validateDocument(payload.dni_ruc);
   const nombre = String(payload.nombre || '').trim();
   const rubroId = Number(payload.rubro_id);
@@ -1220,30 +804,32 @@ export function insertComerciante(db, payload) {
   const estado = String(payload.estado || 'activo').trim();
   const usuarioCreador = Number(payload.usuario_creador || 1);
 
-  if (!dniRuc || !nombre || !rubroId || !zonaId) {
-    throw new Error('DNI/RUC, nombre, rubro y zona son obligatorios');
+  if (!dniRuc || !nombre || !rubroId || !zonaId) throw new Error('DNI/RUC, nombre, rubro y zona son obligatorios');
+  if (!TIPOS_COMERCIANTE.includes(tipoComerciante) || !TIPOS_COMERCIANTE.includes(categoria)) throw new Error('Tipo de comerciante no válido');
+  if (!ESTADOS_COMERCIANTE.includes(estado)) throw new Error('Estado de comerciante no válido');
+
+  await ensureUniqueActiveDocument(db, dniRuc);
+
+  const creator = await first(db, 'SELECT id FROM usuarios WHERE id = $1', [usuarioCreador]);
+  const creatorId = creator ? usuarioCreador : null;
+
+  // La baja es lógica: si el documento pertenece a un comerciante dado de baja, se reactiva.
+  const dormant = await first(db, `SELECT id FROM comerciantes WHERE dni_ruc = $1 AND estado = 'inactivo'`, [dniRuc]);
+  let id;
+  if (dormant) {
+    await db.query(`
+      UPDATE comerciantes
+      SET nombre = $1, rubro_id = $2, zona_id = $3, categoria = $4, tipo_comerciante = $5, estado = $6,
+          usuario_creador_id = $7, fecha_baja = NULL
+      WHERE id = $8`, [nombre, rubroId, zonaId, categoria, tipoComerciante, estado, creatorId, dormant.id]);
+    id = dormant.id;
+  } else {
+    const created = await first(db, `
+      INSERT INTO comerciantes (dni_ruc, nombre, rubro_id, zona_id, categoria, tipo_comerciante, estado, usuario_creador_id)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id`,
+    [dniRuc, nombre, rubroId, zonaId, categoria, tipoComerciante, estado, creatorId]);
+    id = created.id;
   }
-
-  if (!['eventual', 'permanente', 'ferial'].includes(tipoComerciante) || !['eventual', 'permanente', 'ferial'].includes(categoria)) {
-    throw new Error('Tipo de comerciante no válido');
-  }
-
-  if (!['activo', 'inactivo', 'pendiente'].includes(estado)) {
-    throw new Error('Estado de comerciante no válido');
-  }
-
-  ensureUniqueActiveDocument(db, dniRuc);
-
-  db.run(
-    `
-      INSERT INTO comerciantes (dni_ruc, nombre, rubro_id, zona_id, categoria, tipo_comerciante, estado, usuario_creador)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    `,
-    [dniRuc, nombre, rubroId, zonaId, categoria, tipoComerciante, estado, usuarioCreador]
-  );
-
-  const lastIdResult = db.exec('SELECT last_insert_rowid() AS id');
-  const id = Number(lastIdResult[0]?.values?.[0]?.[0] ?? 0);
 
   return {
     id,
@@ -1258,64 +844,68 @@ export function insertComerciante(db, payload) {
   };
 }
 
-export function updateComerciante(db, id, payload) {
-  const current = getComerciantes(db, { includeInactive: true, limit: 1000 }).find((item) => item.id === Number(id));
+export async function updateComerciante(db, id, payload) {
+  const current = await findComerciante(db, id);
   if (!current) throw new Error('Comerciante no encontrado');
 
   const dniRuc = payload.dni_ruc === undefined ? current.dni_ruc : validateDocument(payload.dni_ruc);
   const nombre = payload.nombre === undefined ? current.nombre : String(payload.nombre).trim();
   const rubroId = payload.rubro_id === undefined ? current.rubro_id : Number(payload.rubro_id);
   const zonaId = payload.zona_id === undefined ? current.zona_id : Number(payload.zona_id);
-  const categoria = payload.categoria === undefined ? (payload.tipo_comerciante === undefined ? current.categoria : String(payload.tipo_comerciante).trim()) : String(payload.categoria).trim();
-  const tipoComerciante = payload.tipo_comerciante === undefined ? (payload.categoria === undefined ? current.tipo_comerciante : String(payload.categoria).trim()) : String(payload.tipo_comerciante).trim();
+  const categoria = payload.categoria === undefined
+    ? (payload.tipo_comerciante === undefined ? current.categoria : String(payload.tipo_comerciante).trim())
+    : String(payload.categoria).trim();
+  const tipoComerciante = payload.tipo_comerciante === undefined
+    ? (payload.categoria === undefined ? current.tipo_comerciante : String(payload.categoria).trim())
+    : String(payload.tipo_comerciante).trim();
   const estado = payload.estado === undefined ? current.estado : String(payload.estado).trim();
 
   if (!nombre || !rubroId || !zonaId) throw new Error('Nombre, rubro y zona son obligatorios');
-  if (!['eventual', 'permanente', 'ferial'].includes(tipoComerciante) || !['eventual', 'permanente', 'ferial'].includes(categoria)) throw new Error('Tipo de comerciante no válido');
-  if (!['activo', 'inactivo', 'pendiente'].includes(estado)) throw new Error('Estado de comerciante no válido');
+  if (!TIPOS_COMERCIANTE.includes(tipoComerciante) || !TIPOS_COMERCIANTE.includes(categoria)) throw new Error('Tipo de comerciante no válido');
+  if (!ESTADOS_COMERCIANTE.includes(estado)) throw new Error('Estado de comerciante no válido');
 
-  ensureUniqueActiveDocument(db, dniRuc, Number(id));
+  await ensureUniqueActiveDocument(db, dniRuc, Number(id));
 
-  db.run(`
+  await db.query(`
     UPDATE comerciantes
-    SET dni_ruc = ?, nombre = ?, rubro_id = ?, zona_id = ?, categoria = ?, tipo_comerciante = ?, estado = ?
-    WHERE id = ?
-  `, [dniRuc, nombre, rubroId, zonaId, categoria, tipoComerciante, estado, Number(id)]);
+    SET dni_ruc = $1, nombre = $2, rubro_id = $3, zona_id = $4, categoria = $5, tipo_comerciante = $6, estado = $7
+    WHERE id = $8`, [dniRuc, nombre, rubroId, zonaId, categoria, tipoComerciante, estado, Number(id)]);
 
-  return getComerciantes(db, { search: String(id), includeInactive: true, limit: 1000 }).find((item) => item.id === Number(id));
+  return findComerciante(db, id);
 }
 
-export function deactivateComerciante(db, id) {
-  const result = db.exec('SELECT id FROM comerciantes WHERE id = ?', [Number(id)]);
-  if (!result[0]?.values?.length) throw new Error('Comerciante no encontrado');
+// Baja lógica: se conserva el historial de cobros y notificaciones.
+export async function deactivateComerciante(db, id) {
   const merchantId = Number(id);
-  db.run('DELETE FROM alertas_morosidad WHERE comerciante_id = ?', [merchantId]);
-  db.run('DELETE FROM riesgo_morosidad WHERE comerciante_id = ?', [merchantId]);
-  db.run('DELETE FROM sincronizacion_offline WHERE entidad = ? AND payload LIKE ?', ['comerciantes', `%${merchantId}%`]);
-  db.run('DELETE FROM deudas WHERE comerciante_id = ?', [merchantId]);
-  db.run('DELETE FROM puestos WHERE comerciante_id = ?', [merchantId]);
-  db.run('DELETE FROM notificaciones WHERE comerciante_id = ?', [merchantId]);
-  db.run('DELETE FROM comerciantes WHERE id = ?', [merchantId]);
+  if (!(await first(db, 'SELECT id FROM comerciantes WHERE id = $1', [merchantId]))) throw new Error('Comerciante no encontrado');
+  await db.query(`UPDATE puestos SET estado = 'inactivo' WHERE comerciante_id = $1`, [merchantId]);
+  await db.query(`UPDATE comerciantes SET estado = 'inactivo', fecha_baja = now() WHERE id = $1`, [merchantId]);
   return { id: merchantId, eliminado: true };
 }
 
-export function getPuestos(db) {
-  const result = db.exec(`
-    SELECT p.id, 'S-' || printf('%03d', p.id) AS codigo, p.comerciante_id, c.nombre AS comerciante,
-           p.zona_id, z.nombre AS zona, p.direccion, p.metros_cuadrados, p.estado,
-           COALESCE(p.codigo_puesto, 'S-' || printf('%03d', p.id)) AS codigo,
-           p.latitud, p.longitud,
-           c.categoria, c.tipo_comerciante,
-           COALESCE((SELECT d.saldo FROM deudas d WHERE d.comerciante_id = c.id ORDER BY d.id DESC LIMIT 1), 0) AS saldo_pendiente
-    FROM puestos p
-    JOIN comerciantes c ON c.id = p.comerciante_id
-    JOIN zonas z ON z.id = p.zona_id
-    ORDER BY p.id DESC
-  `);
-  return rowsToObjects(result);
+// ---------------------------------------------------------------------------
+// Puestos
+// ---------------------------------------------------------------------------
+
+const PUESTO_SELECT = `
+  SELECT p.id, p.comerciante_id, c.nombre AS comerciante,
+         p.zona_id, z.nombre AS zona, p.direccion, p.metros_cuadrados, p.estado,
+         p.codigo_puesto AS codigo, p.latitud, p.longitud,
+         COALESCE(c.categoria, c.tipo_comerciante) AS categoria, c.tipo_comerciante,
+         0 AS saldo_pendiente
+  FROM puestos p
+  JOIN comerciantes c ON c.id = p.comerciante_id
+  JOIN zonas z ON z.id = p.zona_id`;
+
+export async function getPuestos(db) {
+  return rows(db, `${PUESTO_SELECT} ORDER BY p.id DESC`);
 }
 
-export function insertPuesto(db, payload) {
+async function findPuesto(db, id) {
+  return first(db, `${PUESTO_SELECT} WHERE p.id = $1`, [Number(id)]);
+}
+
+export async function insertPuesto(db, payload) {
   const comercianteId = Number(payload.comerciante_id);
   const zonaId = Number(payload.zona_id);
   const direccion = String(payload.direccion || '').trim();
@@ -1330,30 +920,33 @@ export function insertPuesto(db, payload) {
   }
   if (!['ocupado', 'disponible', 'reservado'].includes(estado)) throw new Error('Estado de puesto no válido');
 
-  const merchant = db.exec("SELECT id FROM comerciantes WHERE id = ? AND estado <> 'inactivo'", [comercianteId]);
-  if (!merchant[0]?.values?.length) throw new Error('El comerciante no existe o está inactivo');
+  const merchant = await first(db, `SELECT id FROM comerciantes WHERE id = $1 AND estado <> 'inactivo'`, [comercianteId]);
+  if (!merchant) throw new Error('El comerciante no existe o está inactivo');
 
-  const duplicate = db.exec(
-    `SELECT id FROM puestos WHERE zona_id = ? AND LOWER(TRIM(direccion)) = LOWER(TRIM(?)) AND comerciante_id <> ?`,
-    [zonaId, direccion, comercianteId]
-  );
+  const duplicate = await first(db, `
+    SELECT id FROM puestos
+    WHERE zona_id = $1 AND lower(btrim(direccion)) = lower(btrim($2)) AND comerciante_id <> $3 AND estado <> 'inactivo'`,
+  [zonaId, direccion, comercianteId]);
+  if (duplicate) throw new Error('El puesto físico ya está asignado a otro comerciante');
 
-  if (duplicate[0]?.values?.length) {
-    throw new Error('El puesto físico ya está asignado a otro comerciante');
+  const next = await first(db, `SELECT nextval(pg_get_serial_sequence('puestos', 'id')) AS id`);
+  const finalCode = codigo || `S-${String(next.id).padStart(3, '0')}`;
+  try {
+    await db.query(`
+      INSERT INTO puestos (id, comerciante_id, zona_id, direccion, metros_cuadrados, estado, codigo_puesto, latitud, longitud)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+    [next.id, comercianteId, zonaId, direccion, metros, estado, finalCode,
+      Number.isFinite(latitud) ? latitud : null, Number.isFinite(longitud) ? longitud : null]);
+  } catch (error) {
+    if (error.code === '23505') throw new Error(`El código de puesto ${finalCode} ya está asignado`);
+    throw error;
   }
-
-  db.run(`
-    INSERT INTO puestos (comerciante_id, zona_id, direccion, metros_cuadrados, estado, codigo_puesto, latitud, longitud)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-  `, [comercianteId, zonaId, direccion, metros, estado, codigo, Number.isFinite(latitud) ? latitud : null, Number.isFinite(longitud) ? longitud : null]);
-
-  const result = db.exec('SELECT last_insert_rowid() AS id');
-  return getPuestos(db).find((item) => item.id === Number(result[0]?.values?.[0]?.[0]));
+  return findPuesto(db, next.id);
 }
 
-export function updatePuesto(db, id, payload) {
+export async function updatePuesto(db, id, payload) {
   const puestoId = Number(id);
-  const current = getPuestos(db).find((item) => item.id === puestoId);
+  const current = await findPuesto(db, puestoId);
   if (!current) throw new Error('Puesto no encontrado');
 
   const zonaId = Number(payload.zona_id ?? current.zona_id);
@@ -1366,45 +959,46 @@ export function updatePuesto(db, id, payload) {
   if (!zonaId || !direccion || !Number.isFinite(metros) || metros <= 0) {
     throw new Error('Zona, dirección y metros cuadrados válidos son obligatorios');
   }
-  if (!['ocupado', 'disponible', 'reservado', 'inactivo'].includes(estado)) {
-    throw new Error('Estado de puesto no válido');
-  }
+  if (!['ocupado', 'disponible', 'reservado', 'inactivo'].includes(estado)) throw new Error('Estado de puesto no válido');
 
-  db.run(`
+  await db.query(`
     UPDATE puestos
-    SET zona_id = ?, direccion = ?, metros_cuadrados = ?, estado = ?, latitud = ?, longitud = ?
-    WHERE id = ?
-  `, [zonaId, direccion, metros, estado, Number.isFinite(latitud) ? latitud : null, Number.isFinite(longitud) ? longitud : null, puestoId]);
+    SET zona_id = $1, direccion = $2, metros_cuadrados = $3, estado = $4, latitud = $5, longitud = $6
+    WHERE id = $7`,
+  [zonaId, direccion, metros, estado, Number.isFinite(latitud) ? latitud : null, Number.isFinite(longitud) ? longitud : null, puestoId]);
 
-  return getPuestos(db).find((item) => item.id === puestoId);
+  return findPuesto(db, puestoId);
 }
 
-export function deactivatePuesto(db, id) {
+export async function deactivatePuesto(db, id) {
   const puestoId = Number(id);
-  const current = getPuestos(db).find((item) => item.id === puestoId);
-  if (!current) throw new Error('Puesto no encontrado');
-
-  db.run("UPDATE puestos SET estado = 'inactivo' WHERE id = ?", [puestoId]);
-  return getPuestos(db).find((item) => item.id === puestoId);
+  if (!(await findPuesto(db, puestoId))) throw new Error('Puesto no encontrado');
+  await db.query(`UPDATE puestos SET estado = 'inactivo' WHERE id = $1`, [puestoId]);
+  return findPuesto(db, puestoId);
 }
 
-export function getTarifas(db, options = {}) {
+// ---------------------------------------------------------------------------
+// Tarifas y liquidación
+// ---------------------------------------------------------------------------
+
+const TARIFA_SELECT = `
+  SELECT t.id, t.rubro_id, r.nombre AS rubro, t.zona_id, t.tipo_tarifa, t.monto_fijo, t.monto_variable,
+         t.unidad_medida, ${DAY('t.vigencia_inicio')} AS vigencia_inicio, ${DAY('t.vigencia_fin')} AS vigencia_fin,
+         CASE WHEN t.activo THEN 1 ELSE 0 END AS estado, t.version
+  FROM tarifas t JOIN rubros r ON r.id = t.rubro_id`;
+
+export async function getTarifas(db, options = {}) {
   const rubroId = Number(options.rubro_id || 0);
-  const conditions = rubroId ? 'WHERE t.rubro_id = ?' : '';
-  const parameters = rubroId ? [rubroId] : [];
-  const result = db.exec(`
-    SELECT t.id, t.rubro_id, r.nombre AS rubro, t.tipo_tarifa, t.monto_fijo, t.monto_variable,
-           t.unidad_medida, t.vigencia_inicio, t.vigencia_fin, t.estado, t.version
-    FROM tarifas t
-    JOIN rubros r ON r.id = t.rubro_id
-    ${conditions}
-    ORDER BY t.vigencia_inicio DESC, t.id DESC
-  `, parameters);
-  return rowsToObjects(result);
+  return rows(db, `${TARIFA_SELECT} ${rubroId ? 'WHERE t.rubro_id = $1' : ''} ORDER BY t.vigencia_inicio DESC, t.id DESC`, rubroId ? [rubroId] : []);
+}
+
+async function findTarifa(db, id) {
+  return first(db, `${TARIFA_SELECT} WHERE t.id = $1`, [Number(id)]);
 }
 
 function validateTariff(payload) {
   const rubroId = Number(payload.rubro_id);
+  const zonaId = payload.zona_id === undefined || payload.zona_id === null || payload.zona_id === '' ? null : Number(payload.zona_id);
   const tipoTarifa = String(payload.tipo_tarifa || 'fija').trim();
   const montoFijo = Number(payload.monto_fijo || 0);
   const montoVariable = Number(payload.monto_variable || 0);
@@ -1420,21 +1014,20 @@ function validateTariff(payload) {
   if (vigenciaFin && vigenciaFin < vigenciaInicio) throw new Error('La vigencia final no puede ser anterior a la inicial');
   if (!Number.isFinite(version) || version < 1) throw new Error('La versión de la tarifa no es válida');
 
-  return { rubroId, tipoTarifa, montoFijo, montoVariable, unidadMedida, vigenciaInicio, vigenciaFin, version };
+  return { rubroId, zonaId, tipoTarifa, montoFijo, montoVariable, unidadMedida, vigenciaInicio, vigenciaFin, version };
 }
 
-export function insertTarifa(db, payload) {
+export async function insertTarifa(db, payload) {
   const tariff = validateTariff({ ...payload, version: payload.version ?? 1 });
-  db.run(`
-    INSERT INTO tarifas (rubro_id, tipo_tarifa, monto_fijo, monto_variable, unidad_medida, vigencia_inicio, vigencia_fin, estado, version)
-    VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?)
-  `, [tariff.rubroId, tariff.tipoTarifa, tariff.montoFijo, tariff.montoVariable, tariff.unidadMedida, tariff.vigenciaInicio, tariff.vigenciaFin, tariff.version]);
-  const result = db.exec('SELECT last_insert_rowid() AS id');
-  return getTarifas(db).find((item) => item.id === Number(result[0]?.values?.[0]?.[0]));
+  const created = await first(db, `
+    INSERT INTO tarifas (rubro_id, zona_id, tipo_tarifa, monto_fijo, monto_variable, unidad_medida, vigencia_inicio, vigencia_fin, activo, version)
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, TRUE, $9) RETURNING id`,
+  [tariff.rubroId, tariff.zonaId, tariff.tipoTarifa, tariff.montoFijo, tariff.montoVariable, tariff.unidadMedida, tariff.vigenciaInicio, tariff.vigenciaFin, tariff.version]);
+  return findTarifa(db, created.id);
 }
 
-export function updateTarifa(db, id, payload) {
-  const current = getTarifas(db).find((item) => item.id === Number(id));
+export async function updateTarifa(db, id, payload) {
+  const current = await findTarifa(db, id);
   if (!current) throw new Error('Tarifa no encontrada');
 
   const receivedVersion = payload.version === undefined ? current.version : Number(payload.version);
@@ -1444,6 +1037,7 @@ export function updateTarifa(db, id, payload) {
 
   const tariff = validateTariff({
     rubro_id: payload.rubro_id ?? current.rubro_id,
+    zona_id: payload.zona_id === undefined ? current.zona_id : payload.zona_id,
     tipo_tarifa: payload.tipo_tarifa ?? current.tipo_tarifa,
     monto_fijo: payload.monto_fijo ?? current.monto_fijo,
     monto_variable: payload.monto_variable ?? current.monto_variable,
@@ -1453,147 +1047,157 @@ export function updateTarifa(db, id, payload) {
     version: current.version + 1
   });
 
-  db.run(`
-    UPDATE tarifas SET rubro_id = ?, tipo_tarifa = ?, monto_fijo = ?, monto_variable = ?, unidad_medida = ?, vigencia_inicio = ?, vigencia_fin = ?, version = ?
-    WHERE id = ?
-  `, [tariff.rubroId, tariff.tipoTarifa, tariff.montoFijo, tariff.montoVariable, tariff.unidadMedida, tariff.vigenciaInicio, tariff.vigenciaFin, tariff.version, Number(id)]);
-  return getTarifas(db).find((item) => item.id === Number(id));
+  const updated = await db.query(`
+    UPDATE tarifas
+    SET rubro_id = $1, zona_id = $2, tipo_tarifa = $3, monto_fijo = $4, monto_variable = $5, unidad_medida = $6,
+        vigencia_inicio = $7, vigencia_fin = $8, version = $9
+    WHERE id = $10 AND version = $11`,
+  [tariff.rubroId, tariff.zonaId, tariff.tipoTarifa, tariff.montoFijo, tariff.montoVariable, tariff.unidadMedida,
+    tariff.vigenciaInicio, tariff.vigenciaFin, tariff.version, Number(id), current.version]);
+  if (!updated.rowCount) throw new Error('La tarifa fue actualizada por otro usuario; recargue la versión antes de continuar');
+
+  return findTarifa(db, id);
 }
 
 function periodMultiplier(periodo, unidad) {
-  if (unidad === 'semanal') return 1;
-  if (unidad === 'mensual') return 1;
-  if (unidad === 'diaria') {
-    if (/^\d{4}-\d{2}$/.test(periodo)) {
-      const [year, month] = periodo.split('-').map(Number);
-      return new Date(Date.UTC(year, month, 0)).getUTCDate();
-    }
-    return 1;
+  if (unidad === 'diaria' && /^\d{4}-\d{2}$/.test(periodo)) {
+    const [year, month] = periodo.split('-').map(Number);
+    return new Date(Date.UTC(year, month, 0)).getUTCDate();
   }
   return 1;
 }
 
-export function calculateLiquidation(db, comercianteId, periodo = new Date().toISOString().slice(0, 7)) {
-  const merchant = getComerciantes(db, { includeInactive: true, limit: 1000 }).find((item) => item.id === Number(comercianteId));
+async function findMerchantPost(db, merchantId) {
+  return first(db, `
+    SELECT id, metros_cuadrados, estado FROM puestos
+    WHERE comerciante_id = $1 AND estado NOT IN ('disponible', 'inactivo')
+    ORDER BY id LIMIT 1`, [merchantId]);
+}
+
+export async function calculateLiquidation(db, comercianteId, periodo) {
+  periodo = periodo || new Date().toISOString().slice(0, 7);
+  const merchant = await findComerciante(db, comercianteId);
   if (!merchant) throw new Error('Comerciante no encontrado');
 
   const merchantType = String(merchant.tipo_comerciante || merchant.categoria || '').trim().toLowerCase();
-
   const pendingRegularization = String(merchant.estado_empadronamiento || '').toUpperCase() === 'PENDIENTE_REGULARIZACION';
-  const merchantPost = getPuestos(db).find((item) => item.comerciante_id === merchant.id && item.estado !== 'disponible');
-  if (pendingRegularization && (!merchantPost || merchantPost.metros_cuadrados === null || merchantPost.metros_cuadrados === undefined)) {
-    return {
-      comerciante: merchant,
-      tarifa: null,
-      periodo,
-      metros_cuadrados: null,
-      monto_total: 0,
-      monto_pagado: 0,
-      saldo: 0,
-      estado: 'pendiente_regularizacion',
-      vencida: false,
-      no_devengo: true,
-      motivo: 'pendiente_regularizacion_sin_metraje'
-    };
+  const puesto = await findMerchantPost(db, merchant.id);
+
+  const noDevengo = (motivo, extra = {}) => ({
+    comerciante: merchant,
+    tarifa: null,
+    periodo,
+    metros_cuadrados: 0,
+    monto_total: 0,
+    monto_pagado: 0,
+    saldo: 0,
+    estado: 'pagado',
+    vencida: false,
+    no_devengo: true,
+    motivo,
+    ...extra
+  });
+
+  if (pendingRegularization && (!puesto || puesto.metros_cuadrados === null || puesto.metros_cuadrados === undefined)) {
+    return noDevengo('pendiente_regularizacion_sin_metraje', { metros_cuadrados: null, estado: 'pendiente_regularizacion' });
+  }
+  if (merchantType === 'eventual') return noDevengo('eventual');
+  if (merchantType === 'ferial' && !puesto) {
+    return noDevengo('ferial_sin_asistencia', { metros_cuadrados: 0 });
   }
 
-  if (merchantType === 'eventual') {
-    return {
-      comerciante: merchant,
-      tarifa: null,
-      periodo,
-      metros_cuadrados: 0,
-      monto_total: 0,
-      monto_pagado: 0,
-      saldo: 0,
-      estado: 'pagado',
-      vencida: false,
-      no_devengo: true,
-      motivo: 'eventual'
-    };
-  }
-
-  const puesto = merchantPost || getPuestos(db).find((item) => item.comerciante_id === merchant.id && item.estado !== 'disponible');
-  const isFerialSinAsistencia = merchantType === 'ferial' && (!puesto || puesto.estado === 'disponible');
-
-  if (isFerialSinAsistencia) {
-    return {
-      comerciante: merchant,
-      tarifa: null,
-      periodo,
-      metros_cuadrados: Number(puesto?.metros_cuadrados || 0),
-      monto_total: 0,
-      monto_pagado: 0,
-      saldo: 0,
-      estado: 'pagado',
-      vencida: false,
-      no_devengo: true,
-      motivo: 'ferial_sin_asistencia'
-    };
-  }
-
-  const tarifa = getTarifas(db).find((item) => item.rubro_id === merchant.rubro_id && item.vigencia_inicio <= `${periodo}-01` && (!item.vigencia_fin || item.vigencia_fin >= `${periodo}-01`));
+  const periodStart = `${periodo}-01`;
+  const tariffs = await rows(db, `
+    ${TARIFA_SELECT}
+    WHERE t.rubro_id = $1 AND t.activo
+      AND (t.zona_id IS NULL OR t.zona_id = $2)
+      AND t.vigencia_inicio <= $3::date AND (t.vigencia_fin IS NULL OR t.vigencia_fin >= $3::date)
+    ORDER BY (t.zona_id IS NOT NULL) DESC, t.vigencia_inicio DESC, t.id DESC LIMIT 1`,
+  [merchant.rubro_id, merchant.zona_id, periodStart]);
+  const tarifa = tariffs[0];
   if (!tarifa) throw new Error('No existe una tarifa vigente para el rubro y periodo indicado');
 
   const metros = Number(puesto?.metros_cuadrados || 1);
-  const base = Number(tarifa.monto_fijo) * periodMultiplier(periodo, tarifa.unidad_medida);
-  const variable = Number(tarifa.monto_variable) * (tarifa.unidad_medida === 'metro_cuadrado' ? metros : 1) * periodMultiplier(periodo, tarifa.unidad_medida);
+  const multiplier = periodMultiplier(periodo, tarifa.unidad_medida);
+  const base = Number(tarifa.monto_fijo) * multiplier;
+  const variable = Number(tarifa.monto_variable) * (tarifa.unidad_medida === 'metro_cuadrado' ? metros : 1) * multiplier;
   const montoTotal = Number((base + variable).toFixed(2));
-  const paidResult = db.exec('SELECT COALESCE(SUM(monto), 0) AS pagado FROM cobros WHERE comerciante_id = ? AND tarifa_id = ? AND fecha_cobro LIKE ?', [merchant.id, tarifa.id, `${periodo}%`]);
-  const montoPagado = Number(paidResult[0]?.values?.[0]?.[0] ?? 0);
+  const paid = await first(db, `
+    SELECT COALESCE(SUM(monto), 0) AS pagado FROM transacciones
+    WHERE comerciante_id = $1 AND tarifa_id = $2 AND estado = 'confirmado'
+      AND to_char(fecha_cobro_cliente, 'YYYY-MM') = $3`, [merchant.id, tarifa.id, periodo]);
+  const montoPagado = Number(paid.pagado);
   const saldo = Number(Math.max(montoTotal - montoPagado, 0).toFixed(2));
 
-  return { comerciante: merchant, tarifa, periodo, metros_cuadrados: metros, monto_total: montoTotal, monto_pagado: montoPagado, saldo, estado: saldo === 0 ? 'pagado' : 'pendiente', vencida: saldo > 0 && periodo < new Date().toISOString().slice(0, 7), no_devengo: false };
+  return {
+    comerciante: merchant,
+    tarifa,
+    periodo,
+    metros_cuadrados: metros,
+    monto_total: montoTotal,
+    monto_pagado: montoPagado,
+    saldo,
+    estado: saldo === 0 ? 'pagado' : 'pendiente',
+    vencida: saldo > 0 && periodo < new Date().toISOString().slice(0, 7),
+    no_devengo: false
+  };
 }
 
-export function getCobros(db) {
-  const result = db.exec(`
+// ---------------------------------------------------------------------------
+// Cobros / transacciones
+// ---------------------------------------------------------------------------
+
+export async function getCobros(db) {
+  return rows(db, `
     SELECT co.id, co.comerciante_id, c.nombre AS comerciante, co.tarifa_id, co.cobrador_id,
            co.monto, co.concepto, co.metodo_pago, co.codigo_operacion, co.observaciones,
-           co.estado, co.fecha_cobro, cp.numero_correlativo AS comprobante
-    FROM cobros co
+           co.estado, ${PAYMENT_DAY} AS fecha_cobro, cp.numero_correlativo AS comprobante
+    FROM transacciones co
     JOIN comerciantes c ON c.id = co.comerciante_id
     LEFT JOIN comprobantes cp ON cp.id = co.comprobante_id
-    ORDER BY co.id DESC
-  `);
-  return rowsToObjects(result);
+    ORDER BY co.id DESC`);
 }
 
-export function getMerchantPortal(db, identifier) {
+export async function getMerchantPortal(db, identifier) {
   const value = String(identifier || '').trim();
   const code = value.toUpperCase().replace(/^CM-/, '');
-  const result = db.exec(`
-    SELECT c.id, c.dni_ruc, c.nombre, c.categoria, c.tipo_comerciante, c.estado,
-      c.fecha_registro, 'CM-' || printf('%03d', c.id) AS codigo, r.nombre AS rubro, z.nombre AS zona
+  const merchant = await first(db, `
+    SELECT c.id, c.dni_ruc, c.nombre, COALESCE(c.categoria, c.tipo_comerciante) AS categoria, c.tipo_comerciante, c.estado,
+           ${TS('c.creado_en')} AS fecha_registro, ${CODE('c.id')} AS codigo, r.nombre AS rubro, z.nombre AS zona
     FROM comerciantes c JOIN rubros r ON r.id = c.rubro_id JOIN zonas z ON z.id = c.zona_id
-    WHERE c.estado <> 'inactivo' AND (c.dni_ruc = ? OR c.id = ?)
-    LIMIT 1
-  `, [value, Number(code) || 0]);
-  const merchant = rowsToObjects(result)[0];
+    WHERE c.estado <> 'inactivo' AND (c.dni_ruc = $1 OR c.id = $2)
+    LIMIT 1`, [value, Number(code) || 0]);
   if (!merchant) throw new Error('DNI o código de comerciante no encontrado');
-  const payments = rowsToObjects(db.exec(`
-    SELECT co.id, co.fecha_cobro AS fecha, co.concepto, co.monto, co.metodo_pago, co.estado,
-      cp.numero_correlativo AS comprobante
-    FROM cobros co LEFT JOIN comprobantes cp ON cp.id = co.comprobante_id
-    WHERE co.comerciante_id = ? ORDER BY co.fecha_cobro DESC
-  `, [merchant.id]));
-  const liquidation = calculateLiquidation(db, merchant.id);
+
+  const payments = await rows(db, `
+    SELECT co.id, ${PAYMENT_DAY} AS fecha, co.concepto, co.monto, co.metodo_pago, co.estado,
+           cp.numero_correlativo AS comprobante
+    FROM transacciones co LEFT JOIN comprobantes cp ON cp.id = co.comprobante_id
+    WHERE co.comerciante_id = $1 ORDER BY co.fecha_cobro_cliente DESC`, [merchant.id]);
+  const liquidation = await calculateLiquidation(db, merchant.id);
   return { comerciante: merchant, pagos: payments, deuda: liquidation };
 }
 
-export function createNotification(db, payload) {
+export async function createNotification(db, payload) {
   const merchantId = Number(payload.comerciante_id);
   const tipo = String(payload.tipo || 'recordatorio_deuda');
   const canal = String(payload.canal || 'whatsapp');
   const mensaje = String(payload.mensaje || '').trim();
-  if (!merchantId || !mensaje || !['whatsapp', 'sms', 'email'].includes(canal)) throw new Error('Comerciante, canal y mensaje son obligatorios');
-  db.run('INSERT INTO notificaciones (comerciante_id, tipo, canal, mensaje, estado) VALUES (?, ?, ?, ?, ?)', [merchantId, tipo, canal, mensaje, 'preparada']);
-  const id = db.exec('SELECT last_insert_rowid() AS id')[0].values[0][0];
-  return { id: Number(id), comerciante_id: merchantId, tipo, canal, mensaje, estado: 'preparada' };
+  if (!merchantId || !mensaje || !['whatsapp', 'sms', 'email'].includes(canal)) {
+    throw new Error('Comerciante, canal y mensaje son obligatorios');
+  }
+  if (!(await first(db, 'SELECT id FROM comerciantes WHERE id = $1', [merchantId]))) throw new Error('Comerciante no encontrado');
+  const created = await first(db,
+    `INSERT INTO notificaciones (comerciante_id, tipo, canal, mensaje, estado) VALUES ($1, $2, $3, $4, 'preparada') RETURNING id`,
+    [merchantId, tipo, canal, mensaje]);
+  return { id: Number(created.id), comerciante_id: merchantId, tipo, canal, mensaje, estado: 'preparada' };
 }
 
-export function getNotifications(db, comercianteId) {
-  return rowsToObjects(db.exec('SELECT * FROM notificaciones WHERE comerciante_id = ? ORDER BY id DESC', [Number(comercianteId)]));
+export async function getNotifications(db, comercianteId) {
+  return rows(db, `
+    SELECT id, comerciante_id, tipo, canal, mensaje, estado,
+           ${TS('creado_en')} AS fecha_creacion, ${TS('enviado_en')} AS fecha_envio
+    FROM notificaciones WHERE comerciante_id = $1 ORDER BY id DESC`, [Number(comercianteId)]);
 }
 
 function createTransactionHash({ comercianteId, cobradorId, monto, concepto, periodo, metodoPago, salt }) {
@@ -1601,7 +1205,7 @@ function createTransactionHash({ comercianteId, cobradorId, monto, concepto, per
   return createHash('sha256').update(seed).digest('hex');
 }
 
-export function insertCobro(db, payload) {
+export async function insertCobro(db, payload) {
   const comercianteId = Number(payload.comerciante_id);
   const cobradorId = Number(payload.cobrador_id || 1);
   const monto = Number(payload.monto);
@@ -1613,6 +1217,9 @@ export function insertCobro(db, payload) {
 
   if (!comercianteId || !cobradorId || !Number.isFinite(monto) || monto <= 0 || !allowedMethods.includes(metodoPago)) {
     throw new Error('Comerciante, monto positivo y método de pago válido son obligatorios');
+  }
+  if (['yape', 'plin', 'pos'].includes(metodoPago) && !codigoOperacion) {
+    throw new Error('El código de operación es obligatorio para pagos digitales');
   }
 
   const uniqueCode = codigoOperacion || `COB-${Date.now()}-${comercianteId}-${Math.random().toString(16).slice(2, 10)}`;
@@ -1626,46 +1233,67 @@ export function insertCobro(db, payload) {
     salt: uniqueCode
   });
 
-  if (['yape', 'plin', 'pos'].includes(metodoPago) && !codigoOperacion) {
-    throw new Error('El código de operación es obligatorio para pagos digitales');
-  }
+  const duplicate = await first(db,
+    'SELECT id FROM transacciones WHERE codigo_operacion = $1 OR hash_transaccion = $2', [uniqueCode, hashTransaccion]);
+  if (duplicate) throw new Error('Ya existe un cobro registrado con ese código de operación o hash transaccional');
 
-  const duplicate = db.exec('SELECT id FROM cobros WHERE (codigo_operacion = ? AND codigo_operacion IS NOT NULL) OR hash_transaccion = ?', [uniqueCode, hashTransaccion]);
-  if (duplicate[0]?.values?.length) {
-    throw new Error('Ya existe un cobro registrado con ese código de operación o hash transaccional');
-  }
-
-  const todayDuplicate = db.exec(
-    'SELECT id FROM cobros WHERE comerciante_id = ? AND date(fecha_cobro) = date(CURRENT_TIMESTAMP) AND estado = ?',
-    [comercianteId, 'confirmado']
-  );
-  if (todayDuplicate[0]?.values?.length) {
-    throw new Error('Ya existe un cobro confirmado para este comerciante en la fecha actual');
-  }
-
-  const liquidation = calculateLiquidation(db, comercianteId, payload.periodo);
+  const liquidation = await calculateLiquidation(db, comercianteId, payload.periodo);
   if (monto > liquidation.saldo) throw new Error(`El monto excede el saldo pendiente de S/ ${liquidation.saldo.toFixed(2)}`);
-  const next = db.exec("SELECT COUNT(*) + 1 AS next FROM comprobantes WHERE tipo = 'recibo'");
-  const number = `R-${String(next[0]?.values?.[0]?.[0] ?? 1).padStart(6, '0')}`;
-  db.run('INSERT INTO comprobantes (numero_correlativo, tipo) VALUES (?, ?)', [number, 'recibo']);
-  const comprobante = db.exec('SELECT last_insert_rowid() AS id');
-  db.run(`
-    INSERT INTO cobros (comerciante_id, tarifa_id, cobrador_id, comprobante_id, monto, concepto, metodo_pago, codigo_operacion, hash_transaccion, observaciones, estado)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'confirmado')
-  `, [comercianteId, liquidation.tarifa?.id ?? 1, cobradorId, Number(comprobante[0].values[0][0]), monto, concepto, metodoPago, uniqueCode, hashTransaccion, observaciones || null]);
-  const cobro = db.exec('SELECT last_insert_rowid() AS id');
-  const insertedCobro = { id: Number(cobro[0].values[0][0]), comprobante: number, comerciante_id: comercianteId, monto, metodo_pago: metodoPago, codigo_operacion: uniqueCode, hash_transaccion: hashTransaccion, observaciones, estado: 'confirmado', saldo_restante: Number((liquidation.saldo - monto).toFixed(2)) };
-  createNotification(db, {
+
+  const collector = await first(db, 'SELECT id FROM usuarios WHERE id = $1', [cobradorId]);
+  if (!collector) throw new Error('El cobrador indicado no existe');
+
+  const storedMethod = metodoPago === 'manual' ? 'efectivo' : metodoPago;
+  const storedNotes = metodoPago === 'manual' ? `[manual] ${observaciones}`.trim() : observaciones;
+  const sequence = await first(db, `SELECT nextval('comprobantes_recibo_seq') AS n`);
+  const number = `R-${String(sequence.n).padStart(6, '0')}`;
+  const comprobante = await first(db, `INSERT INTO comprobantes (numero_correlativo, tipo) VALUES ($1, 'recibo') RETURNING id`, [number]);
+
+  const clientDate = payload.fecha_cobro && !Number.isNaN(Date.parse(payload.fecha_cobro)) ? new Date(payload.fecha_cobro) : new Date();
+  const cobro = await first(db, `
+    INSERT INTO transacciones
+      (comerciante_id, tarifa_id, cobrador_id, comprobante_id, monto, concepto, metodo_pago, codigo_operacion,
+       hash_transaccion, observaciones, estado, fecha_cobro_cliente)
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'confirmado', $11) RETURNING id`,
+  [comercianteId, liquidation.tarifa?.id, cobradorId, comprobante.id, monto, concepto, storedMethod, uniqueCode,
+    hashTransaccion, storedNotes || null, clientDate]);
+
+  await createNotification(db, {
     comerciante_id: comercianteId,
     tipo: 'cobro_confirmado',
     canal: 'whatsapp',
-    mensaje: `Cobro confirmado para ${getComerciantes(db, { includeInactive: true, limit: 1000 }).find((item) => item.id === comercianteId)?.nombre || 'comerciante'} por S/ ${Number(monto).toFixed(2)}. Comprobante ${number}.`
+    mensaje: `Cobro confirmado para ${liquidation.comerciante?.nombre || 'comerciante'} por S/ ${Number(monto).toFixed(2)}. Comprobante ${number}.`
   });
-  return insertedCobro;
+
+  return {
+    id: Number(cobro.id),
+    comprobante: number,
+    comerciante_id: comercianteId,
+    monto,
+    metodo_pago: metodoPago,
+    codigo_operacion: uniqueCode,
+    hash_transaccion: hashTransaccion,
+    observaciones,
+    estado: 'confirmado',
+    saldo_restante: Number((liquidation.saldo - monto).toFixed(2))
+  };
 }
 
-export function syncOfflineCobro(db, payload) {
-  const normalizedPayload = {
+async function logSyncQueue({ deviceId, hash, payload, estado, error }) {
+  try {
+    await pool.query(`
+      INSERT INTO colas_sincronizacion (device_id, entidad, hash_transaccion, payload, estado, intentos, error, procesado_en)
+      VALUES ($1, 'transacciones', $2, $3::jsonb, $4, 1, $5, now())
+      ON CONFLICT (hash_transaccion) DO UPDATE
+        SET intentos = colas_sincronizacion.intentos + 1, error = EXCLUDED.error, procesado_en = now()`,
+    [deviceId || 'api', hash, JSON.stringify(payload), estado, error || null]);
+  } catch (logError) {
+    console.error('No se pudo registrar la cola de sincronización:', logError.message);
+  }
+}
+
+export async function syncOfflineCobro(_db, payload) {
+  const normalized = {
     ...payload,
     comerciante_id: Number(payload.comerciante_id ?? payload.comercianteId ?? 0),
     cobrador_id: Number(payload.cobrador_id ?? payload.cobradorId ?? 1),
@@ -1678,50 +1306,59 @@ export function syncOfflineCobro(db, payload) {
     periodo: payload.periodo || new Date().toISOString().slice(0, 7)
   };
 
-  if (!normalizedPayload.comerciante_id || !normalizedPayload.cobrador_id || !Number.isFinite(normalizedPayload.monto) || normalizedPayload.monto <= 0) {
+  if (!normalized.comerciante_id || !normalized.cobrador_id || !Number.isFinite(normalized.monto) || normalized.monto <= 0) {
     throw new Error('Cobro offline incompleto: faltan comerciante, cobrador o monto válido');
   }
 
-  db.run('BEGIN IMMEDIATE');
+  const hashValue = normalized.hash_transaccion || createTransactionHash({
+    comercianteId: normalized.comerciante_id,
+    cobradorId: normalized.cobrador_id,
+    monto: normalized.monto,
+    concepto: normalized.concepto,
+    periodo: normalized.periodo,
+    metodoPago: normalized.metodo_pago,
+    salt: normalized.codigo_operacion || normalized.fecha_cobro
+  });
+  const deviceId = payload.device_id || payload.deviceId;
+  const ignored = (message = 'El cobro ya fue registrado anteriormente (idempotencia aplicada)') => ({
+    status: 'IGNORED',
+    message,
+    hash_transaccion: hashValue
+  });
 
   try {
-    const hashValue = normalizedPayload.hash_transaccion || createTransactionHash({
-      comercianteId: normalizedPayload.comerciante_id,
-      cobradorId: normalizedPayload.cobrador_id,
-      monto: normalizedPayload.monto,
-      concepto: normalizedPayload.concepto,
-      periodo: normalizedPayload.periodo,
-      metodoPago: normalizedPayload.metodo_pago,
-      salt: normalizedPayload.codigo_operacion || normalizedPayload.fecha_cobro
+    const result = await withTransaction(async (client) => {
+      const duplicate = await first(client,
+        'SELECT id FROM transacciones WHERE hash_transaccion = $1 OR codigo_operacion = $2',
+        [hashValue, normalized.codigo_operacion || hashValue]);
+      if (duplicate) return null;
+      return insertCobro(client, { ...normalized, hash_transaccion: hashValue });
     });
 
-    const duplicate = db.exec('SELECT id FROM cobros WHERE hash_transaccion = ? OR (codigo_operacion = ? AND codigo_operacion IS NOT NULL)', [hashValue, normalizedPayload.codigo_operacion || hashValue]);
-    if (duplicate[0]?.values?.length) {
-      db.run('ROLLBACK');
-      return {
-        status: 'IGNORED',
-        message: 'El cobro ya fue registrado anteriormente (idempotencia aplicada)',
-        hash_transaccion: hashValue
-      };
+    if (!result) {
+      await logSyncQueue({ deviceId, hash: hashValue, payload: normalized, estado: 'duplicado' });
+      return ignored();
     }
-
-    const result = insertCobro(db, { ...normalizedPayload, hash_transaccion: hashValue });
-    db.run('COMMIT');
-    return {
-      status: 'SUCCESS',
-      message: 'Cobro sincronizado correctamente',
-      data: result
-    };
+    await logSyncQueue({ deviceId, hash: hashValue, payload: normalized, estado: 'procesado' });
+    return { status: 'SUCCESS', message: 'Cobro sincronizado correctamente', data: result };
   } catch (error) {
-    db.run('ROLLBACK');
     const message = String(error.message || '');
-    if (/ya existe un cobro registrado|hash transaccional|codigo de operación/i.test(message)) {
-      return {
-        status: 'IGNORED',
-        message: 'El cobro ya fue registrado anteriormente (idempotencia aplicada)',
-        hash_transaccion: normalizedPayload.hash_transaccion || null
-      };
+    if (error.code === '23505' || /ya existe un cobro registrado|hash transaccional|código de operación/i.test(message)) {
+      await logSyncQueue({ deviceId, hash: hashValue, payload: normalized, estado: 'duplicado' });
+      return ignored();
     }
+    await logSyncQueue({ deviceId, hash: hashValue, payload: normalized, estado: 'error', error: message });
     throw error;
   }
+}
+
+// ---------------------------------------------------------------------------
+// Autenticación contra la base de datos
+// ---------------------------------------------------------------------------
+
+export async function findUserByEmail(db, email) {
+  return first(db, `
+    SELECT u.id, u.nombre, u.email, u.password_hash, r.codigo AS rol
+    FROM usuarios u JOIN roles r ON r.id = u.rol_id
+    WHERE lower(u.email) = lower($1) AND u.activo`, [String(email || '').trim()]);
 }

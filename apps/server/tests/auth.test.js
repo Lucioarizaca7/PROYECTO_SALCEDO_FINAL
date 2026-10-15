@@ -1,18 +1,20 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { loginUser, hasRoleAccess, requireAuth, requireRoles } from '../src/auth.js';
-import { initializeDatabase, recordAudit, getAuditTrail, syncOfflineCobro, createNotification, getNotifications, getMerchantPortal, generateForecastProjection, scoreMorosidadComerciante } from '../src/db.js';
+import { loginUser, hasRoleAccess, requireAuth, requireRoles } from '../src/auth.ts';
+import { initializeDatabase, recordAudit, getAuditTrail, syncOfflineCobro, createNotification, getNotifications, getMerchantPortal, generateForecastProjection, scoreMorosidadComerciante, verifyAuditChain } from '../src/db.js';
 
-test('loginUser acepta credenciales válidas y devuelve usuario', () => {
-  const result = loginUser({ email: 'admin@salcedo.gob.pe', password: 'admin123' });
+test('loginUser acepta credenciales válidas y devuelve usuario', async () => {
+  const db = await initializeDatabase();
+  const result = await loginUser({ email: 'admin@salcedo.gob.pe', password: 'admin123' }, db);
 
   assert.equal(result.user.rol, 'super_admin');
   assert.ok(result.token.length > 10);
 });
 
-test('loginUser rechaza credenciales inválidas', () => {
-  assert.throws(() => loginUser({ email: 'admin@salcedo.gob.pe', password: 'badpass' }), /credenciales/i);
+test('loginUser rechaza credenciales inválidas', async () => {
+  const db = await initializeDatabase();
+  await assert.rejects(async () => loginUser({ email: 'admin@salcedo.gob.pe', password: 'badpass' }, db), /credenciales/i);
 });
 
 test('hasRoleAccess permite acceso según rol', () => {
@@ -21,8 +23,9 @@ test('hasRoleAccess permite acceso según rol', () => {
   assert.equal(hasRoleAccess('comerciante', 'comerciante'), true);
 });
 
-test('requireAuth valida JWT real y rechaza sin token', () => {
-  const validToken = loginUser({ email: 'cobrador@salcedo.gob.pe', password: 'cobro123' }).token;
+test('requireAuth valida JWT real y rechaza sin token', async () => {
+  const db = await initializeDatabase();
+  const validToken = (await loginUser({ email: 'cobrador@salcedo.gob.pe', password: 'cobro123' }, db)).token;
   const req = { headers: { authorization: `Bearer ${validToken}` } };
   const res = { status(code) { this.code = code; return this; }, json(payload) { this.payload = payload; return this; } };
   let nextCalled = false;
@@ -39,8 +42,9 @@ test('requireAuth valida JWT real y rechaza sin token', () => {
   assert.equal(missingTokenRes.code, 401);
 });
 
-test('requireRoles bloquea acceso si el rol no está permitido', () => {
-  const validToken = loginUser({ email: 'super_admin@salcedo.gob.pe', password: 'admin123' }).token;
+test('requireRoles bloquea acceso si el rol no está permitido', async () => {
+  const db = await initializeDatabase();
+  const validToken = (await loginUser({ email: 'super_admin@salcedo.gob.pe', password: 'admin123' }, db)).token;
   const req = { headers: { authorization: `Bearer ${validToken}` } };
   const res = { status(code) { this.code = code; return this; }, json(payload) { this.payload = payload; return this; } };
   let nextCalled = false;
@@ -51,7 +55,7 @@ test('requireRoles bloquea acceso si el rol no está permitido', () => {
 
   assert.equal(nextCalled, true);
 
-  const cobradorToken = loginUser({ email: 'cobrador@salcedo.gob.pe', password: 'cobro123' }).token;
+  const cobradorToken = (await loginUser({ email: 'cobrador@salcedo.gob.pe', password: 'cobro123' }, db)).token;
   const blockedReq = { headers: { authorization: `Bearer ${cobradorToken}` } };
   const blockedRes = { status(code) { this.code = code; return this; }, json(payload) { this.payload = payload; return this; } };
 
@@ -65,7 +69,7 @@ test('requireRoles bloquea acceso si el rol no está permitido', () => {
 test('recordAudit persiste trazabilidad inmutable del cambio y bloquea ediciones', async () => {
   const db = await initializeDatabase();
 
-  recordAudit(db, {
+  await recordAudit(db, {
     usuarioId: 1,
     entidad: 'tarifas',
     accion: 'MODIFICAR_TARIFA',
@@ -80,7 +84,7 @@ test('recordAudit persiste trazabilidad inmutable del cambio y bloquea ediciones
     payloadNuevo: JSON.stringify({ monto_fijo: 140 })
   });
 
-  const trail = getAuditTrail(db, { entidad: 'tarifas' });
+  const trail = await getAuditTrail(db, { entidad: 'tarifas' });
   assert.ok(trail.length >= 1);
   const last = trail[0];
   assert.equal(last.accion, 'MODIFICAR_TARIFA');
@@ -88,13 +92,16 @@ test('recordAudit persiste trazabilidad inmutable del cambio y bloquea ediciones
   assert.equal(last.usuario, 'Administrador');
   assert.equal(last.ruta_endpoint || last.rutaEndpoint, '/api/tarifas/1');
 
-  assert.throws(() => {
-    db.run('UPDATE auditoria SET detalle = ? WHERE id = ?', ['modificado', last.id]);
-  }, /No se permite modificar/i);
+  await assert.rejects(async () => {
+    await db.query('UPDATE auditoria_logs SET detalle = $1 WHERE id = $2', ['modificado', last.id]);
+  }, /solo anexado/i);
 
-  assert.throws(() => {
-    db.run('DELETE FROM auditoria WHERE id = ?', [last.id]);
-  }, /No se permite eliminar/i);
+  await assert.rejects(async () => {
+    await db.query('DELETE FROM auditoria_logs WHERE id = $1', [last.id]);
+  }, /solo anexado/i);
+
+  const chain = await verifyAuditChain(db);
+  assert.equal(chain.valid, true);
 });
 
 test('syncOfflineCobro detecta duplicados por hash idempotente y evita reinsertar cobros', async () => {
@@ -111,25 +118,25 @@ test('syncOfflineCobro detecta duplicados por hash idempotente y evita reinserta
     fecha_cobro: '2026-09-16T10:00:00.000Z'
   };
 
-  const first = syncOfflineCobro(db, payload);
+  const first = await syncOfflineCobro(db, payload);
   assert.equal(first.status, 'SUCCESS');
 
-  const second = syncOfflineCobro(db, payload);
+  const second = await syncOfflineCobro(db, payload);
   assert.equal(second.status, 'IGNORED');
 
-  const totalCobros = db.exec('SELECT COUNT(*) AS total FROM cobros WHERE hash_transaccion = ?', [payload.hash_transaccion])[0].values[0][0];
+  const totalCobros = (await db.query('SELECT COUNT(*) AS total FROM transacciones WHERE hash_transaccion = $1', [payload.hash_transaccion])).rows[0].total;
   assert.equal(Number(totalCobros), 1);
 });
 
 test('getMerchantPortal y createNotification exponen el portal del comerciante y su historial de avisos', async () => {
   const db = await initializeDatabase();
-  const portal = getMerchantPortal(db, '20123456780');
+  const portal = await getMerchantPortal(db, '20123456780');
 
   assert.equal(portal.comerciante.nombre, 'Comerciante Demo');
   assert.ok(Array.isArray(portal.pagos));
   assert.equal(typeof portal.deuda.saldo, 'number');
 
-  const notification = createNotification(db, {
+  const notification = await createNotification(db, {
     comerciante_id: portal.comerciante.id,
     tipo: 'cobro_confirmado',
     canal: 'whatsapp',
@@ -137,18 +144,18 @@ test('getMerchantPortal y createNotification exponen el portal del comerciante y
   });
 
   assert.equal(notification.canal, 'whatsapp');
-  assert.equal(getNotifications(db, portal.comerciante.id).length >= 1, true);
+  assert.equal((await getNotifications(db, portal.comerciante.id)).length >= 1, true);
 });
 
 test('generateForecastProjection y scoreMorosidadComerciante entregan métricas predictivas razonables', async () => {
   const db = await initializeDatabase();
 
-  const forecast = generateForecastProjection(db, { period: '2026-09', horizonteDias: 90 });
+  const forecast = await generateForecastProjection(db, { period: '2026-09', horizonteDias: 90 });
   assert.ok(Number(forecast.totalProyectado) > 0);
   assert.ok(Array.isArray(forecast.porZona));
   assert.ok(forecast.porZona.length >= 1);
 
-  const score = scoreMorosidadComerciante(db, 1);
+  const score = await scoreMorosidadComerciante(db, 1);
   assert.ok(score.score >= 0 && score.score <= 1);
   assert.match(score.nivel, /bajo|medio|alto|critico/i);
   assert.ok(score.motivo_principal.length > 0);

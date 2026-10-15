@@ -25,7 +25,7 @@ const workbook = [
 
 test('seeder crea comerciantes temporales, puestos por bloque y conserva marcas sin duplicar al reejecutar', async () => {
   const db = await initializeDatabase();
-  const plan = buildFeriaZapatillasSeedPlan(workbook, db);
+  const plan = await buildFeriaZapatillasSeedPlan(workbook, db);
 
   assert.equal(plan.totals.blocksProcessed, 2);
   assert.equal(plan.totals.uniqueMerchants, 2);
@@ -33,14 +33,14 @@ test('seeder crea comerciantes temporales, puestos por bloque y conserva marcas 
   assert.equal(plan.totals.attendanceCells, 5);
   assert.equal(plan.totals.skippedRows, 1);
 
-  const first = seedFeriaZapatillas(db, plan, 'FERIA ZAPATILLAS 2026.xlsx');
+  const first = await seedFeriaZapatillas(db, plan, 'FERIA ZAPATILLAS 2026.xlsx');
   assert.equal(first.createdMerchants, 2);
   assert.equal(first.assignedPosts, 3);
   assert.equal(first.createdPosts, 3);
   assert.equal(first.savedAttendanceMarks, 5);
 
-  const importedMerchant = getComerciantes(db, { search: 'Yorica Choque', includeInactive: true, limit: 20 })[0];
-  const importedPosts = getPuestos(db).filter((post) => post.comerciante_id === importedMerchant.id);
+  const importedMerchant = (await getComerciantes(db, { search: 'Yorica Choque', includeInactive: true, limit: 20 }))[0];
+  const importedPosts = (await getPuestos(db)).filter((post) => post.comerciante_id === importedMerchant.id);
   assert.match(importedMerchant.dni_ruc, /^TEMP_DNIZAP_[A-F0-9]{12}$/);
   assert.equal(importedMerchant.estado, 'pendiente');
   assert.equal(importedMerchant.estado_empadronamiento, 'PENDIENTE_REGULARIZACION');
@@ -48,23 +48,23 @@ test('seeder crea comerciantes temporales, puestos por bloque y conserva marcas 
   assert.ok(importedPosts.every((post) => post.metros_cuadrados === null));
   assert.ok(importedPosts.some((post) => post.codigo === 'ZAP-A-I-01'));
   assert.ok(importedPosts.some((post) => post.codigo === 'ZAP-ROPA-01'));
-  assert.equal(calculateLiquidation(db, importedMerchant.id, '2026-09').no_devengo, true);
-  assert.equal(calculateLiquidation(db, importedMerchant.id, '2026-09').motivo, 'pendiente_regularizacion_sin_metraje');
+  assert.equal((await calculateLiquidation(db, importedMerchant.id, '2026-09')).no_devengo, true);
+  assert.equal((await calculateLiquidation(db, importedMerchant.id, '2026-09')).motivo, 'pendiente_regularizacion_sin_metraje');
 
-  const rate = db.exec("SELECT monto_variable, unidad_medida FROM tarifas t JOIN rubros r ON r.id = t.rubro_id WHERE LOWER(r.nombre) = 'zapatillas' AND t.unidad_medida = 'metro_cuadrado' AND t.monto_variable = 2");
-  assert.equal(rate[0].values.length, 1);
-  assert.equal(db.exec('SELECT COUNT(*) FROM asistencias_feriales')[0].values[0][0], 5);
+  const scalar = async (text, params = []) => Number((await db.query(text, params)).rows[0].count);
+  assert.equal(await scalar("SELECT COUNT(*) FROM tarifas t JOIN rubros r ON r.id = t.rubro_id WHERE LOWER(r.nombre) = 'zapatillas' AND t.unidad_medida = 'metro_cuadrado' AND t.monto_variable = 2"), 1);
+  assert.equal(await scalar('SELECT COUNT(*) FROM asistencias_feriales'), 5);
   const blockPost = importedPosts.find((post) => post.codigo === 'ZAP-A-I-01');
-  assert.equal(db.exec('SELECT COUNT(*) FROM asistencias_feriales WHERE puesto_id = ? AND fecha = ?', [blockPost.id, '2026-09-08'])[0].values[0][0], 2);
+  assert.equal(await scalar('SELECT COUNT(*) FROM asistencias_feriales WHERE puesto_id = $1 AND fecha = $2', [blockPost.id, '2026-09-08']), 2);
 
-  const secondPlan = buildFeriaZapatillasSeedPlan(workbook, db);
-  const second = seedFeriaZapatillas(db, secondPlan, 'FERIA ZAPATILLAS 2026.xlsx');
+  const secondPlan = await buildFeriaZapatillasSeedPlan(workbook, db);
+  const second = await seedFeriaZapatillas(db, secondPlan, 'FERIA ZAPATILLAS 2026.xlsx');
   assert.equal(second.createdMerchants, 0);
   assert.equal(second.createdPosts, 0);
-  assert.equal(db.exec("SELECT COUNT(*) FROM comerciantes WHERE dni_ruc LIKE 'TEMP_DNIZAP_%'")[0].values[0][0], 2);
-  assert.equal(db.exec('SELECT COUNT(*) FROM puestos WHERE codigo_puesto LIKE \'ZAP-%\'')[0].values[0][0], 3);
-  assert.equal(db.exec('SELECT COUNT(*) FROM asistencias_feriales')[0].values[0][0], 5);
-  assert.equal(db.exec("SELECT COUNT(*) FROM auditoria WHERE accion = 'SEED_FERIA_ZAPATILLAS'")[0].values[0][0], 2);
+  assert.equal(await scalar("SELECT COUNT(*) FROM comerciantes WHERE dni_ruc LIKE 'TEMP_DNIZAP_%'"), 2);
+  assert.equal(await scalar("SELECT COUNT(*) FROM puestos WHERE codigo_puesto LIKE 'ZAP-%'"), 3);
+  assert.equal(await scalar('SELECT COUNT(*) FROM asistencias_feriales'), 5);
+  assert.equal(await scalar("SELECT COUNT(*) FROM auditoria_logs WHERE accion = 'SEED_FERIA_ZAPATILLAS'"), 2);
 });
 
 test('seeder omite y reporta correlativos repetidos en el mismo bloque', async () => {
@@ -77,7 +77,7 @@ test('seeder omite y reporta correlativos repetidos en el mismo bloque', async (
       [1, 'Titular Dos']
     ]
   }];
-  const plan = buildFeriaZapatillasSeedPlan(repeatedWorkbook, db);
+  const plan = await buildFeriaZapatillasSeedPlan(repeatedWorkbook, db);
 
   assert.equal(plan.totals.validPosts, 1);
   assert.equal(plan.totals.uniqueMerchants, 1);

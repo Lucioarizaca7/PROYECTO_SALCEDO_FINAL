@@ -1,81 +1,73 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { initializeDatabase, getDbStats, getOperationalDashboard, buildReportCsv, initializeComerciantePreferencias, getComerciantePreferencias, updateComerciantePreferencias, insertZona, getZonas, insertCalle, getCalles, updateCalle } from '../src/db.js';
+import { initializeDatabase, getDbStats, getOperationalDashboard, buildReportCsv, getComerciantePreferencias, updateComerciantePreferencias, insertZona, getZonas, insertCalle, getCalles, updateCalle } from '../src/db.js';
 
 test('initializeDatabase crea las tablas principales del modelo', async () => {
   const db = await initializeDatabase();
-  const tables = db.exec("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name");
-  const tableNames = tables[0]?.values.map((row) => row[0]) || [];
+  const tables = await db.query("SELECT table_name FROM information_schema.tables WHERE table_schema = current_schema() ORDER BY table_name");
+  const tableNames = tables.rows.map((row) => row.table_name);
 
   assert.ok(tableNames.includes('usuarios'));
   assert.ok(tableNames.includes('zonas'));
   assert.ok(tableNames.includes('rubros'));
   assert.ok(tableNames.includes('comerciantes'));
   assert.ok(tableNames.includes('tarifas'));
-  assert.ok(tableNames.includes('cobros'));
-  assert.ok(tableNames.includes('auditoria'));
+  assert.ok(tableNames.includes('transacciones'));
+  assert.ok(tableNames.includes('auditoria_logs'));
+  assert.ok(tableNames.includes('roles'));
+  assert.ok(tableNames.includes('colas_sincronizacion'));
+  assert.ok(tableNames.includes('modelos_ia_metricas'));
 });
 
 test('getDbStats devuelve números básicos del sistema', async () => {
   const db = await initializeDatabase();
-  const stats = getDbStats(db);
+  const stats = await getDbStats(db);
 
   assert.ok(stats.totalUsuarios >= 0);
   assert.ok(stats.totalComerciantes >= 0);
   assert.ok(stats.totalCobros >= 0);
 });
 
-test('las preferencias express se inicializan y quedan persistidas por comerciante', async () => {
+test('las preferencias del comerciante se guardan como clave/valor y se reemplazan', async () => {
   const db = await initializeDatabase();
-  initializeComerciantePreferencias(db);
+  const merchant = (await db.query('SELECT id FROM comerciantes ORDER BY id LIMIT 1')).rows[0];
 
-  const merchantId = Number(db.exec('SELECT id FROM comerciantes ORDER BY id LIMIT 1')[0].values[0][0]);
-  const initial = getComerciantePreferencias(db, merchantId);
-
-  assert.equal(initial.metodo_pago_preferido, 'efectivo');
-  assert.equal(typeof initial.monto_sugerido, 'number');
-
-  const updated = updateComerciantePreferencias(db, merchantId, {
-    monto_sugerido: 75.5,
+  const updated = await updateComerciantePreferencias(db, merchant.id, {
     metodo_pago_preferido: 'yape',
-    ultimo_monto: 75.5,
-    ultimo_metodo_pago: 'yape',
-    ultimo_cobro_fecha: '2026-09-15T09:00:00.000Z'
+    monto_sugerido: 75.5
   });
+  assert.equal(updated.length, 2);
 
-  assert.equal(updated.monto_sugerido, 75.5);
-  assert.equal(updated.metodo_pago_preferido, 'yape');
-
-  const stored = getComerciantePreferencias(db, merchantId);
-  assert.equal(stored.monto_sugerido, 75.5);
-  assert.equal(stored.metodo_pago_preferido, 'yape');
-  assert.equal(stored.ultimo_metodo_pago, 'yape');
+  const stored = await getComerciantePreferencias(db, merchant.id);
+  const asMap = Object.fromEntries(stored.map((item) => [item.clave, item.valor]));
+  assert.equal(asMap.metodo_pago_preferido, 'yape');
+  assert.equal(asMap.monto_sugerido, '75.5');
 });
 
 test('las zonas y calles se gestionan con validación y conteo', async () => {
   const db = await initializeDatabase();
 
-  const zone = insertZona(db, {
+  const zone = await insertZona(db, {
     nombre: 'Zona Este',
     descripcion: 'Sector este del mercado'
   });
 
-  const calle = insertCalle(db, {
+  const calle = await insertCalle(db, {
     zona_id: zone.id,
     nombre: 'Jr. Los Rosales',
     descripcion: 'Calle principal',
     estado: 'activo'
   });
 
-  const zones = getZonas(db);
-  const calles = getCalles(db, { zona_id: zone.id });
+  const zones = await getZonas(db);
+  const calles = await getCalles(db, { zona_id: zone.id });
 
   assert.ok(zones.some((item) => Number(item.id) === Number(zone.id)));
   assert.equal(calles[0].nombre, 'Jr. Los Rosales');
   assert.equal(Number(calles[0].zona_id), Number(zone.id));
 
-  const updated = updateCalle(db, calle.id, {
+  const updated = await updateCalle(db, calle.id, {
     nombre: 'Jr. Los Rosales Sur',
     estado: 'activo'
   });
@@ -85,14 +77,14 @@ test('las zonas y calles se gestionan con validación y conteo', async () => {
 
 test('getOperationalDashboard produce KPIs reales y buildReportCsv exporta CSV auditables', async () => {
   const db = await initializeDatabase();
-  const metrics = getOperationalDashboard(db, { periodo: '2026-09' });
+  const metrics = await getOperationalDashboard(db, { periodo: '2026-09' });
 
   assert.equal(typeof metrics.recaudacion, 'number');
   assert.equal(typeof metrics.deudaPendiente, 'number');
   assert.ok(Array.isArray(metrics.porZona));
   assert.ok(Array.isArray(metrics.porRubro));
 
-  const csv = buildReportCsv(db, { periodo: '2026-09' });
+  const csv = await buildReportCsv(db, { periodo: '2026-09' });
   assert.match(csv, /fecha,comerciante/);
   assert.match(csv, /recaudacion|monto|comprobante/i);
 });
