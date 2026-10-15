@@ -62,15 +62,19 @@ export class ApiService {
    * @private
    */
   async _fetch(endpoint, options) {
-    const url = `${this.baseUrl}${endpoint}`;
+    const apiEndpoint = endpoint.startsWith('/api/')
+      ? endpoint.replace(/^\/api\//, '/api/v1/')
+      : endpoint;
+    const url = `${this.baseUrl}${apiEndpoint}`;
 
     try {
       const response = await fetch(url, {
+        ...options,
         headers: {
           'Content-Type': 'application/json',
+          ...this.getAuthHeaders(),
           ...(options.headers || {})
-        },
-        ...options
+        }
       });
 
       // Manejo de errores HTTP
@@ -78,7 +82,7 @@ export class ApiService {
         let errorMessage = `Error ${response.status}: ${response.statusText}`;
         try {
           const errorData = await response.json();
-          errorMessage = errorData.message || errorMessage;
+          errorMessage = errorData.message || errorData.error || errorMessage;
         } catch (e) {
           // Si no se puede parsear como JSON, usar el texto plano
           errorMessage = await response.text() || errorMessage;
@@ -308,6 +312,9 @@ export class ApiService {
 }
 
 // Instancia única del servicio (singleton)
-export const apiService = new ApiService(
-  process.env.REACT_APP_API_URL || 'http://localhost:4000'
-);
+const apiBaseUrl =
+  typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_API_URL
+    ? import.meta.env.VITE_API_URL
+    : 'http://localhost:3003';
+
+export const apiService = new ApiService(apiBaseUrl);

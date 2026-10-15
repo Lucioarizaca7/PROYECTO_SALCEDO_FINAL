@@ -9,12 +9,14 @@
     "preview": "vite preview --host"
   },
   "dependencies": {
+    "@tanstack/react-query": "^5.104.1",
     "html5-qrcode": "^2.3.8",
     "leaflet": "^1.9.4",
     "qrcode.react": "^4.2.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
-    "react-leaflet": "^4.1.0"
+    "react-leaflet": "^4.1.0",
+    "react-router-dom": "^7.18.4"
   },
   "devDependencies": {
     "@vitejs/plugin-react": "^4.3.2",

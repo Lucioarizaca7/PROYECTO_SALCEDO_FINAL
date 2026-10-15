@@ -15,7 +15,7 @@ export function useDashboardQuery(params = {}) {
     queryKey: ['dashboard', params],
     queryFn: () => apiService.getDashboard(params),
     staleTime: 5 * 60 * 1000, // 5 minutos
-    garbageCollectionTime: 10 * 60 * 1000, // 10 minutos
+    gcTime: 10 * 60 * 1000, // 10 minutos
     refetchOnWindowFocus: false, // No refetch al enfocar ventana (evita llamadas innecesarias)
     retry: 1, // Solo un reintento en caso de fallo
     meta: {
@@ -34,7 +34,7 @@ export function useComerciantesQuery(filters = {}) {
     queryKey: ['comerciantes', filters],
     queryFn: () => apiService.getComerciantes(filters),
     staleTime: 2 * 60 * 1000, // 2 minutos (datos que cambian con frecuencia)
-    garbageCollectionTime: 5 * 60 * 1000, // 5 minutos
+    gcTime: 5 * 60 * 1000, // 5 minutos
     refetchOnWindowFocus: true, // Refetch al enfocar ventana (datos pueden haber cambiado)
     retry: 2, // Dos reintentos para datos críticos
     meta: {
@@ -54,7 +54,7 @@ export function useComercianteQuery(id) {
     queryFn: () => apiService.getComercianteById(id),
     enabled: !!id, // Solo ejecutar si hay un ID válido
     staleTime: 1 * 60 * 1000, // 1 minuto
-    garbageCollectionTime: 3 * 60 * 1000, // 3 minutos
+    gcTime: 3 * 60 * 1000, // 3 minutos
     retry: 1,
     meta: {
       module: 'comerciante',
@@ -72,7 +72,7 @@ export function useCatalogosQuery() {
     queryKey: ['catalogos'],
     queryFn: () => apiService.getCatalogos(),
     staleTime: 30 * 60 * 1000, // 30 minutos (datos quasi-estáticos)
-    garbageCollectionTime: 60 * 60 * 1000, // 1 hora
+    gcTime: 60 * 60 * 1000, // 1 hora
     retry: 1,
     meta: {
       module: 'catalogos',
@@ -90,7 +90,7 @@ export function useTarifasQuery(filters = {}) {
     queryKey: ['tarifas', filters],
     queryFn: () => apiService.getTarifas(filters),
     staleTime: 15 * 60 * 1000, // 15 minutos
-    garbageCollectionTime: 30 * 60 * 1000, // 30 minutos
+    gcTime: 30 * 60 * 1000, // 30 minutos
     refetchOnWindowFocus: false,
     retry: 1,
     meta: {
@@ -109,7 +109,7 @@ export function useCobrosQuery(filters = {}) {
     queryKey: ['cobros', filters],
     queryFn: () => apiService.getCobros(filters),
     staleTime: 1 * 60 * 1000, // 1 minuto (datos muy volátiles)
-    garbageCollectionTime: 3 * 60 * 1000, // 3 minutos
+    gcTime: 3 * 60 * 1000, // 3 minutos
     refetchOnWindowFocus: true,
     retry: 2, // Más reintentos por ser datos operacionales críticos
     meta: {
@@ -127,7 +127,7 @@ export function usePuertosQuery(filters = {}) {
     queryKey: ['puertos', filters],
     queryFn: () => apiService.getPuertos(filters),
     staleTime: 5 * 60 * 1000, // 5 minutos
-    garbageCollectionTime: 10 * 60 * 1000, // 10 minutos
+    gcTime: 10 * 60 * 1000, // 10 minutos
     retry: 1,
     meta: {
       module: 'puertos',
@@ -144,7 +144,7 @@ export function useZonasQuery() {
     queryKey: ['zonas'],
     queryFn: () => apiService.getZonas(),
     staleTime: 15 * 60 * 1000, // 15 minutos
-    garbageCollectionTime: 30 * 60 * 1000, // 30 minutos
+    gcTime: 30 * 60 * 1000, // 30 minutos
     retry: 1,
     meta: {
       module: 'zonas',
@@ -162,7 +162,7 @@ export function useReportesQuery(filters = {}) {
     queryKey: ['reportes', filters],
     queryFn: () => apiService.getReportes(filters),
     staleTime: 10 * 60 * 1000, // 10 minutos
-    garbageCollectionTime: 20 * 60 * 1000, // 20 minutos
+    gcTime: 20 * 60 * 1000, // 20 minutos
     retry: 1,
     meta: {
       module: 'reportes',
@@ -180,7 +180,7 @@ export function useAuditoriaQuery(filters = {}) {
     queryKey: ['auditoria', filters],
     queryFn: () => apiService.getAuditoria(filters),
     staleTime: 5 * 60 * 1000, // 5 minutos
-    garbageCollectionTime: 10 * 60 * 1000, // 10 minutos
+    gcTime: 10 * 60 * 1000, // 10 minutos
     retry: 1,
     meta: {
       module: 'auditoria',
@@ -198,7 +198,7 @@ export function useAnaliticaPrediccionQuery(params = {}) {
     queryKey: ['analitica', 'prediccion', params],
     queryFn: () => apiService.getAnaliticaPrediccion(params),
     staleTime: 30 * 60 * 1000, // 30 minutos (predicciones no cambian mucho en corto plazo)
-    garbageCollectionTime: 60 * 60 * 1000, // 1 hora
+    gcTime: 60 * 60 * 1000, // 1 hora
     retry: 1,
     meta: {
       module: 'analitica',
@@ -216,7 +216,7 @@ export function useAnaliticaRiesgoQuery(params = {}) {
     queryKey: ['analitica', 'riesgo', params],
     queryFn: () => apiService.getAnaliticaRiesgo(params),
     staleTime: 10 * 60 * 1000, // 10 minutos
-    garbageCollectionTime: 20 * 60 * 1000, // 20 minutos
+    gcTime: 20 * 60 * 1000, // 20 minutos
     retry: 1,
     meta: {
       module: 'analitica_riesgo',
@@ -235,7 +235,7 @@ export function usePreferenciasComercianteQuery(comercianteId) {
     queryFn: () => apiService.getPreferenciasComerciante(comercianteId),
     enabled: !!comercianteId,
     staleTime: 2 * 60 * 1000, // 2 minutos
-    garbageCollectionTime: 5 * 60 * 1000, // 5 minutos
+    gcTime: 5 * 60 * 1000, // 5 minutos
     retry: 1,
     meta: {
       module: 'preferencias',
@@ -253,7 +253,7 @@ export function useHealthCheckQuery() {
     queryKey: ['health'],
     queryFn: () => apiService.healthCheck(),
     staleTime: 30 * 1000, // 30 segundos (muy frecuente para monitoreo)
-    garbageCollectionTime: 60 * 1000, // 1 minuto
+    gcTime: 60 * 1000, // 1 minuto
     refetchInterval: 45 * 1000, // Refetch cada 45 segundos
     refetchOnWindowFocus: true,
     retry: 3, // Más reintentos para health check
@@ -359,7 +359,7 @@ export function useInfiniteComerciantesQuery(filters = {}) {
       return currentPage;
     },
     staleTime: 2 * 60 * 1000,
-    garbageCollectionTime: 5 * 60 * 1000,
+    gcTime: 5 * 60 * 1000,
     retry: 1
   });
 }

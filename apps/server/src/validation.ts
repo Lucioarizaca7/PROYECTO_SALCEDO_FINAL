@@ -47,6 +47,7 @@ export const handleValidationErrors = (req: Request, res: Response, next: NextFu
     // Convert to any to inspect the error structure
     const errorArray = errors.array() as any[];
     res.status(400).json({
+      message: errorArray[0]?.msg || 'Datos inválidos',
       errors: errorArray.map(err => ({
         field: err.field || err.param || 'unknown',
         message: err.msg

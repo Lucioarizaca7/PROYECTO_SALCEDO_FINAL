@@ -56,10 +56,31 @@ dotenv.config();
 export const app = express();
 const port = process.env.PORT || 4000;
 
+const allowedOrigins = [
+  'http://localhost:5173',
+  'http://localhost:5174',
+  'http://127.0.0.1:5173',
+  'http://127.0.0.1:5174',
+  ...(process.env.FRONTEND_URL ? process.env.FRONTEND_URL.split(',') : [])
+].filter(Boolean);
+
+app.use(cors({
+  origin: (origin, callback) => {
+    if (!origin || allowedOrigins.includes(origin) || /^https?:\/\/(localhost|127\.0\.0\.1):\d+$/.test(origin)) {
+      callback(null, true);
+      return;
+    }
+
+    callback(new Error('Origen no permitido por CORS'));
+  },
+  credentials: true
+}));
 // Configurar rate limiting
 const rateLimiter = rateLimit({
   windowMs: Number(process.env.RATE_LIMIT_WINDOW_MS || 900000), // 15 minutos por defecto
   max: Number(process.env.RATE_LIMIT_MAX_REQUESTS || 100), // límite de requests por ventana
+  // En desarrollo no se limita el tráfico local (el SPA hace ~12 peticiones por carga)
+  skip: (req) => process.env.NODE_ENV !== 'production' && /^(::1|127\.0\.0\.1|::ffff:127\.0\.0\.1)$/.test(req.ip || ''),
   standardHeaders: true, // devolver información de rate limit en los headers
   legacyHeaders: false, // desactivar headers X-RateLimit-*
   message: {
@@ -92,25 +113,6 @@ app.use((req, res, next) => {
   next();
 });
 
-const allowedOrigins = [
-  'http://localhost:5173',
-  'http://localhost:5174',
-  'http://127.0.0.1:5173',
-  'http://127.0.0.1:5174',
-  ...(process.env.FRONTEND_URL ? process.env.FRONTEND_URL.split(',') : [])
-].filter(Boolean);
-
-app.use(cors({
-  origin: (origin, callback) => {
-    if (!origin || allowedOrigins.includes(origin) || /^https?:\/\/(localhost|127\.0\.0\.1):\d+$/.test(origin)) {
-      callback(null, true);
-      return;
-    }
-
-    callback(new Error('Origen no permitido por CORS'));
-  },
-  credentials: true
-}));
 app.use(express.json());
 
 const padronUpload = multer({
