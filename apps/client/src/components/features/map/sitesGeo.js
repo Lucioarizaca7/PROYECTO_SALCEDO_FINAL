@@ -116,3 +116,11 @@ export function siteFromFeature(feature, sites) {
   if (id === undefined || id === null) return null;
   return sites.find((site) => String(site.id ?? site.codigo) === String(id)) ?? null;
 }
+
+/** Mensaje legible para un error de `navigator.geolocation` (code 1 = permiso, 2 = sin señal, 3 = tiempo agotado). */
+export function geolocationErrorMessage(error) {
+  if (error?.code === 1) return 'Permiso de ubicación denegado. Actívalo en el candado de la barra de direcciones y vuelve a intentar.';
+  if (error?.code === 2) return 'No se pudo determinar tu ubicación. Revisa que el GPS o el Wi-Fi estén activos.';
+  if (error?.code === 3) return 'La ubicación tardó demasiado en llegar. Vuelve a intentar.';
+  return error?.message || 'No se pudo obtener tu ubicación.';
+}

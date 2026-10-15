@@ -57,11 +57,12 @@ function buildPopup(props, { onCollect, onInspect }) {
   return root;
 }
 
-export default function SitesMap25D({ sites, selectedSite, baseLayer, drawing, draftLocation, onSelect, onCollect, onInspect, onPickLocation }) {
+export default function SitesMap25D({ sites, selectedSite, baseLayer, drawing, draftLocation, userLocation, onSelect, onCollect, onInspect, onPickLocation }) {
   const containerRef = useRef(null);
   const mapRef = useRef(null);
   const popupRef = useRef(null);
   const draftMarkerRef = useRef(null);
+  const userMarkerRef = useRef(null);
   const sitesRef = useRef(sites);
   const handlersRef = useRef({});
   const dataRef = useRef({ type: 'FeatureCollection', features: [] });
@@ -204,6 +205,7 @@ export default function SitesMap25D({ sites, selectedSite, baseLayer, drawing, d
       resizeObserver.disconnect();
       popupRef.current?.remove();
       draftMarkerRef.current?.remove();
+      userMarkerRef.current?.remove();
       readyRef.current = false;
       map.remove();
       mapRef.current = null;
@@ -232,7 +234,21 @@ export default function SitesMap25D({ sites, selectedSite, baseLayer, drawing, d
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [baseLayer]);
 
-  // "Mi ubicación" o selección externa.
+  // "Mi ubicación": punto azul y vuelo hasta la posición del usuario.
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !userLocation) return;
+    const lngLat = [userLocation.lng, userLocation.lat];
+    if (!userMarkerRef.current) {
+      userMarkerRef.current = new mapboxgl.Marker({ element: el('div', 'user-location-dot') })
+        .setPopup(new mapboxgl.Popup({ offset: 14, closeButton: false }));
+    }
+    userMarkerRef.current.setLngLat(lngLat).addTo(map);
+    userMarkerRef.current.getPopup().setText(`Estás aquí (precisión ±${Math.round(userLocation.accuracy)} m)`);
+    map.flyTo({ center: lngLat, zoom: 18, pitch: DEFAULT_PITCH, duration: 800 });
+  }, [userLocation]);
+
+  // Selección externa de un puesto.
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !selectedSite) return;
