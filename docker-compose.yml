@@ -1,0 +1,15 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: sisrec-postgres
+    environment:
+      POSTGRES_USER: sisrec
+      POSTGRES_PASSWORD: sisrec_dev
+      POSTGRES_DB: sisrec
+    ports:
+      - "5433:5432"
+    volumes:
+      - sisrec_pgdata:/var/lib/postgresql/data
+
+volumes:
+  sisrec_pgdata:

@@ -5,13 +5,13 @@ import multer from 'multer';
 import rateLimit from 'express-rate-limit';
 import { pathToFileURL } from 'node:url';
 
-import { loginUser, hasRoleAccess, requireAuth, requireRoles, auditMutation } from './auth.js';
-import { validateLogin, handleValidationErrors, validateComerciante, validateCobro } from './validation.js';
+import { loginUser, hasRoleAccess, requireAuth, requireRoles, auditMutation } from './auth';
+import { validateLogin, handleValidationErrors, validateComerciante, validateCobro } from './validation';
 import {
   initializeDatabase,
-  persistDatabase,
   recordAudit,
   getDbStats,
+  verifyAuditChain,
   getRubros,
   getZonas,
   getCalles,
@@ -102,7 +102,7 @@ const allowedOrigins = [
 
 app.use(cors({
   origin: (origin, callback) => {
-    if (!origin || allowedOrigins.includes(origin)) {
+    if (!origin || allowedOrigins.includes(origin) || /^https?:\/\/(localhost|127\.0\.0\.1):\d+$/.test(origin)) {
       callback(null, true);
       return;
     }
@@ -118,7 +118,8 @@ const padronUpload = multer({
   limits: { fileSize: 10 * 1024 * 1024, files: 1 },
   fileFilter: (_req, file, callback) => {
     const allowed = /\.xlsx$/i.test(file.originalname) || file.mimetype === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
-    callback(allowed ? null : new Error('Solo se aceptan libros Excel .xlsx'), allowed);
+    if (allowed) callback(null, true);
+    else callback(new Error('Solo se aceptan libros Excel .xlsx'));
   }
 });
 
@@ -131,40 +132,23 @@ function receivePadronWorkbook(req, res, next) {
 
 const roles = ['super_admin', 'cobrador', 'auditor', 'comerciante'];
 
-function toRowObject(resultSet) {
-  if (!resultSet || !resultSet[0] || !resultSet[0].values || !resultSet[0].values.length) {
-    return null;
-  }
-
-  const columns = resultSet[0].columns || [];
-  const values = resultSet[0].values[0] || [];
-  return Object.fromEntries(columns.map((column, index) => [column, values[index]]));
-}
-
 let db;
 
-const cobros = [
-  {
-    id: 1,
-    comercianteId: 1,
-    monto: 240,
-    tipoPago: 'efectivo',
-    fecha: '2026-08-30',
-    comprobante: 'B-0001',
-    estado: 'validado'
-  }
-];
+async function rowById(table: string, id: number) {
+  const result = await db.query(`SELECT * FROM ${table} WHERE id = $1`, [id]);
+  return result.rows[0] ?? null;
+}
 
-app.get('/api/health', (_req, res) => {
+app.get('/api/v1/health', (_req, res) => {
   res.json({ status: 'ok', message: 'SISREC Salcedo API funcionando' });
 });
 
-app.get('/api/dashboard', (req, res) => {
+app.get('/api/v1/dashboard', async (req, res) => {
   const period = String(req.query.periodo || new Date().toISOString().slice(0, 7));
-  const metrics = getOperationalDashboard(db, { periodo: period });
-  const totalDeuda = Number((db.exec('SELECT COALESCE(SUM(saldo), 0) AS saldo FROM deudas WHERE estado <> "pagado"')[0]?.values?.[0]?.[0] ?? 0));
-  const totalCobrado = Number((db.exec('SELECT COALESCE(SUM(monto), 0) AS total FROM cobros WHERE fecha_cobro LIKE ?',[`${period}%`])[0]?.values?.[0]?.[0] ?? 0));
-  const totalComerciantes = Number((db.exec('SELECT COUNT(*) AS total FROM comerciantes WHERE estado = "activo"')[0]?.values?.[0]?.[0] ?? 0));
+  const metrics = await getOperationalDashboard(db, { periodo: period });
+  const totalDeuda = Number(metrics.deudaPendiente || 0);
+  const totalCobrado = Number(metrics.recaudacion || 0);
+  const totalComerciantes = Number(metrics.comerciantesActivos || 0);
   const deudaPendiente = Number(metrics.deudaPendiente || totalDeuda || 0);
   const totaleDeuda = totalDeuda > 0 ? totalDeuda : deudaPendiente;
   const morosidad = totaleDeuda > 0 ? Number(((deudaPendiente / totaleDeuda) * 100).toFixed(1)) : 0;
@@ -190,42 +174,42 @@ app.get('/api/dashboard', (req, res) => {
   });
 });
 
-app.get('/api/analitica/prediccion', (req, res) => {
+app.get('/api/v1/analitica/prediccion', async (req, res) => {
   try {
     const period = String(req.query.periodo || new Date().toISOString().slice(0, 7));
-    const forecast = generateForecastProjection(db, { period, horizonteDias: Number(req.query.horizonte_dias || req.query.horizon || 90) });
+    const forecast = await generateForecastProjection(db, { period, horizonteDias: Number(req.query.horizonte_dias || req.query.horizon || 90) });
     return res.json({ data: forecast, message: 'Proyección de recaudación generada correctamente' });
   } catch (error) {
     return res.status(500).json({ message: error.message || 'No se pudo generar la predicción' });
   }
 });
 
-app.get('/api/analitica/riesgo', (req, res) => {
+app.get('/api/v1/analitica/riesgo', async (req, res) => {
   try {
     const limit = Math.min(Math.max(Number(req.query.limit || 5), 1), 20);
-    const data = getRiskDashboard(db, { limit });
+    const data = await getRiskDashboard(db, { limit });
     return res.json({ data, message: 'Scoring de morosidad actualizado' });
   } catch (error) {
     return res.status(500).json({ message: error.message || 'No se pudo calcular el riesgo de morosidad' });
   }
 });
 
-app.get('/api/roles', (_req, res) => {
+app.get('/api/v1/roles', (_req, res) => {
   res.json({ roles });
 });
 
-app.get('/api/catalogos', (_req, res) => {
+app.get('/api/v1/catalogos', async (_req, res) => {
   res.json({
-    rubros: getRubros(db),
-    zonas: getZonas(db)
+    rubros: await getRubros(db),
+    zonas: await getZonas(db)
   });
 });
 
-app.get('/api/zonas', (_req, res) => {
+app.get('/api/v1/zonas', async (_req, res) => {
   try {
     res.json({
-      data: getZonas(db),
-      calles: getCalles(db),
+      data: await getZonas(db),
+      calles: await getCalles(db),
       message: 'Zonas y calles consultadas correctamente'
     });
   } catch (error) {
@@ -233,38 +217,38 @@ app.get('/api/zonas', (_req, res) => {
   }
 });
 
-app.post('/api/zonas', requireAuth, requireRoles(['super_admin', 'auditor']), (req, res) => {
+app.post('/api/v1/zonas', requireAuth, requireRoles(['super_admin', 'auditor']), auditMutation({ db, accion: 'CREAR_ZONA', entidad: 'zonas', serializeResponse: (body) => body?.data ?? body }), async (req, res) => {
   try {
-    const data = insertZona(db, req.body || {});
+    const data = await insertZona(db, req.body || {});
     return res.status(201).json({ data, message: 'Zona creada correctamente' });
   } catch (error) {
     return res.status(400).json({ message: error.message || 'No se pudo crear la zona' });
   }
 });
 
-app.put('/api/zonas/:id', requireAuth, requireRoles(['super_admin', 'auditor']), (req, res) => {
+app.put('/api/v1/zonas/:id', requireAuth, requireRoles(['super_admin', 'auditor']), auditMutation({ db, accion: 'ACTUALIZAR_ZONA', entidad: 'zonas', getPreviousState: async (req) => rowById('zonas', Number(req.params.id)), serializeResponse: (body) => body?.data ?? body }), async (req, res) => {
   try {
-    const data = updateZona(db, req.params.id, req.body || {});
+    const data = await updateZona(db, req.params.id, req.body || {});
     return res.json({ data, message: 'Zona actualizada correctamente' });
   } catch (error) {
     return res.status(400).json({ message: error.message || 'No se pudo actualizar la zona' });
   }
 });
 
-app.delete('/api/zonas/:id', requireAuth, requireRoles(['super_admin', 'auditor']), (req, res) => {
+app.delete('/api/v1/zonas/:id', requireAuth, requireRoles(['super_admin', 'auditor']), auditMutation({ db, accion: 'ELIMINAR_ZONA', entidad: 'zonas', getPreviousState: async (req) => rowById('zonas', Number(req.params.id)), serializeResponse: (body) => body?.data ?? body }), async (req, res) => {
   try {
-    const data = deleteZona(db, req.params.id);
+    const data = await deleteZona(db, req.params.id);
     return res.json({ data, message: 'Zona eliminada correctamente' });
   } catch (error) {
     return res.status(400).json({ message: error.message || 'No se pudo eliminar la zona' });
   }
 });
 
-app.get('/api/calles', (_req, res) => {
+app.get('/api/v1/calles', async (_req, res) => {
   try {
     const zonaId = Number(_req.query.zona_id || 0);
     res.json({
-      data: getCalles(db, { zona_id: zonaId }),
+      data: await getCalles(db, { zona_id: zonaId }),
       message: 'Calles consultadas correctamente'
     });
   } catch (error) {
@@ -272,63 +256,63 @@ app.get('/api/calles', (_req, res) => {
   }
 });
 
-app.post('/api/calles', requireAuth, requireRoles(['super_admin', 'auditor']), (req, res) => {
+app.post('/api/v1/calles', requireAuth, requireRoles(['super_admin', 'auditor']), auditMutation({ db, accion: 'CREAR_CALLE', entidad: 'calles', serializeResponse: (body) => body?.data ?? body }), async (req, res) => {
   try {
-    const data = insertCalle(db, req.body || {});
+    const data = await insertCalle(db, req.body || {});
     return res.status(201).json({ data, message: 'Calle creada correctamente' });
   } catch (error) {
     return res.status(400).json({ message: error.message || 'No se pudo crear la calle' });
   }
 });
 
-app.put('/api/calles/:id', requireAuth, requireRoles(['super_admin', 'auditor']), (req, res) => {
+app.put('/api/v1/calles/:id', requireAuth, requireRoles(['super_admin', 'auditor']), auditMutation({ db, accion: 'ACTUALIZAR_CALLE', entidad: 'calles', getPreviousState: async (req) => rowById('calles', Number(req.params.id)), serializeResponse: (body) => body?.data ?? body }), async (req, res) => {
   try {
-    const data = updateCalle(db, req.params.id, req.body || {});
+    const data = await updateCalle(db, req.params.id, req.body || {});
     return res.json({ data, message: 'Calle actualizada correctamente' });
   } catch (error) {
     return res.status(400).json({ message: error.message || 'No se pudo actualizar la calle' });
   }
 });
 
-app.delete('/api/calles/:id', requireAuth, requireRoles(['super_admin', 'auditor']), (req, res) => {
+app.delete('/api/v1/calles/:id', requireAuth, requireRoles(['super_admin', 'auditor']), auditMutation({ db, accion: 'ELIMINAR_CALLE', entidad: 'calles', getPreviousState: async (req) => rowById('calles', Number(req.params.id)), serializeResponse: (body) => body?.data ?? body }), async (req, res) => {
   try {
-    const data = deleteCalle(db, req.params.id);
+    const data = await deleteCalle(db, req.params.id);
     return res.json({ data, message: 'Calle eliminada correctamente' });
   } catch (error) {
     return res.status(400).json({ message: error.message || 'No se pudo eliminar la calle' });
   }
 });
 
-app.post('/api/portal/login', (req, res) => {
+app.post('/api/v1/portal/login', async (req, res) => {
   try {
     const identifier = String(req.body?.identifier || '').trim();
     if (!identifier) {
       return res.status(400).json({ message: 'Debe ingresar su DNI o código de comerciante' });
     }
 
-    const data = getMerchantPortal(db, identifier);
+    const data = await getMerchantPortal(db, identifier);
     return res.json({ data, message: 'Portal del comerciante consultado correctamente' });
   } catch (error) {
     return res.status(404).json({ message: error.message || 'No se encontró el comerciante en el padrón' });
   }
 });
 
-app.get('/api/portal/:comercianteId/notificaciones', (req, res) => {
+app.get('/api/v1/portal/:comercianteId/notificaciones', async (req, res) => {
   try {
     const comercianteId = Number(req.params.comercianteId || 0);
-    const data = getNotifications(db, comercianteId);
+    const data = await getNotifications(db, comercianteId);
     return res.json({ data, total: data.length });
   } catch (error) {
     return res.status(400).json({ message: error.message || 'No se pudieron consultar las notificaciones' });
   }
 });
 
-app.post('/api/notificaciones',
+app.post('/api/v1/notificaciones',
   requireAuth,
   requireRoles(['super_admin', 'cobrador', 'auditor']),
-  (req, res) => {
+  async (req, res) => {
     try {
-      const notification = createNotification(db, req.body || {});
+      const notification = await createNotification(db, req.body || {});
       return res.status(201).json({ data: notification, message: 'Notificación registrada correctamente' });
     } catch (error) {
       return res.status(400).json({ message: error.message || 'No se pudo registrar la notificación' });
@@ -336,14 +320,14 @@ app.post('/api/notificaciones',
   }
 );
 
-app.get('/api/v1/comprobantes/:id/pdf', (req, res) => {
+app.get('/api/v1/comprobantes/:id/pdf', async (req, res) => {
   try {
-    const payment = getCobros(db).find((item) => item.id === Number(req.params.id) || String(item.comprobante) === String(req.params.id) || String(item.codigo_operacion) === String(req.params.id));
+    const payment = (await getCobros(db)).find((item) => item.id === Number(req.params.id) || String(item.comprobante) === String(req.params.id) || String(item.codigo_operacion) === String(req.params.id));
     if (!payment) {
       return res.status(404).json({ message: 'Comprobante no encontrado' });
     }
 
-    const merchant = getComerciantes(db, { includeInactive: true, limit: 1000 }).find((item) => item.id === Number(payment.comerciante_id));
+    const merchant = (await getComerciantes(db, { includeInactive: true, limit: 1000 })).find((item) => item.id === Number(payment.comerciante_id));
     const textLines = [
       `Comerciante: ${merchant?.nombre || 'N/D'}`,
       `Comprobante: ${payment.comprobante || payment.codigo_operacion || `COBRO-${payment.id}`}`,
@@ -396,18 +380,18 @@ app.get('/api/v1/comprobantes/:id/pdf', (req, res) => {
   }
 });
 
-app.get('/api/reportes', (req, res) => {
+app.get('/api/v1/reportes', async (req, res) => {
   const options = {
     periodo: req.query.periodo,
     zona_id: req.query.zona_id,
     rubro_id: req.query.rubro_id,
     cobrador_id: req.query.cobrador_id
   };
-  const data = getReportRows(db, options);
+  const data = await getReportRows(db, options);
   const formato = String(req.query.formato || 'json').toLowerCase();
 
   if (formato === 'csv') {
-    const csv = buildReportCsv(db, options);
+    const csv = await buildReportCsv(db, options);
     res.setHeader('Content-Type', 'text/csv; charset=utf-8');
     res.setHeader('Content-Disposition', 'attachment; filename="reporte-cobros.csv"');
     return res.send(csv);
@@ -416,7 +400,7 @@ app.get('/api/reportes', (req, res) => {
   return res.json({ data, total: data.length, periodo: options.periodo || null });
 });
 
-app.get('/api/comerciantes', (req, res) => {
+app.get('/api/v1/comerciantes', async (req, res) => {
   const page = Math.max(Number(req.query.page || 1), 1);
   const limit = Math.min(Math.max(Number(req.query.limit || 10), 1), 100);
   const filters = {
@@ -427,12 +411,12 @@ app.get('/api/comerciantes', (req, res) => {
     page,
     limit
   };
-  const total = countComerciantes(db, filters);
-  const result = getComerciantes(db, filters);
+  const total = await countComerciantes(db, filters);
+  const result = await getComerciantes(db, filters);
   res.json({ data: result, total, page, limit, totalPages: Math.max(Math.ceil(total / limit), 1) });
 });
 
-app.post('/api/comerciantes/importar-padron',
+app.post('/api/v1/comerciantes/importar-padron',
   requireAuth,
   requireRoles(['super_admin', 'auditor']),
   receivePadronWorkbook,
@@ -441,7 +425,7 @@ app.post('/api/comerciantes/importar-padron',
 
     try {
       const sheets = await readPadronWorkbook(req.file.buffer);
-      const preview = previewPadronSheets(sheets, { filename: req.file.originalname, db });
+      const preview = await previewPadronSheets(sheets, { filename: req.file.originalname, db });
       const publicPreview = {
         filename: req.file.originalname,
         workbookType: preview.workbookType,
@@ -465,8 +449,8 @@ app.post('/api/comerciantes/importar-padron',
         return res.status(422).json({ data: publicPreview, message: 'No hay filas válidas para importar. Corrige los errores del libro.' });
       }
 
-      const result = importPadronPreview(db, preview, req.user?.id || 1);
-      recordAudit(db, {
+      const result = await importPadronPreview(db, preview, req.user?.id || 1);
+      await recordAudit(db, {
         usuarioId: Number(req.user?.id || 1),
         usuarioRol: req.user?.rol || 'anonimo',
         entidad: 'padron',
@@ -477,7 +461,6 @@ app.post('/api/comerciantes/importar-padron',
         rutaEndpoint: req.originalUrl,
         payloadNuevo: result
       });
-      persistDatabase(db);
       return res.json({ data: { ...publicPreview, result }, message: 'Padrón importado y auditado correctamente.' });
     } catch (error) {
       return res.status(400).json({ message: error.message || 'No se pudo procesar el libro Excel' });
@@ -485,8 +468,8 @@ app.post('/api/comerciantes/importar-padron',
   }
 );
 
-app.get('/api/comerciantes/:id', (req, res) => {
-  const comerciante = getComerciantes(db).find((item) => item.id === Number(req.params.id));
+app.get('/api/v1/comerciantes/:id', async (req, res) => {
+  const comerciante = (await getComerciantes(db, { search: String(Number(req.params.id)), limit: 100 })).find((item) => item.id === Number(req.params.id));
 
   if (!comerciante) {
     return res.status(404).json({ message: 'Comerciante no encontrado' });
@@ -495,24 +478,30 @@ app.get('/api/comerciantes/:id', (req, res) => {
   return res.json({ data: comerciante });
 });
 
-app.get('/api/comerciantes/:id/preferencias', (req, res) => {
+app.get('/api/v1/comerciantes/:id/preferencias', async (req, res) => {
   try {
     const comercianteId = Number(req.params.id || 0);
-    const data = getComerciantePreferencias(db, comercianteId);
+    const data = await getComerciantePreferencias(db, comercianteId);
     return res.json({ data, message: 'Preferencias del comerciante consultadas correctamente' });
   } catch (error) {
     return res.status(400).json({ message: error.message || 'No se pudieron consultar las preferencias' });
   }
 });
 
-app.post('/api/comerciantes/:id/preferencias',
+app.post('/api/v1/comerciantes/:id/preferencias',
   requireAuth,
   requireRoles(['super_admin', 'cobrador', 'auditor']),
-  (req, res) => {
+  auditMutation({
+    db,
+    accion: 'ACTUALIZAR_PREFERENCIAS',
+    entidad: 'comerciante_preferencias',
+    serializeResponse: (body) => body?.data ?? body
+  }),
+  async (req, res) => {
     try {
       const comercianteId = Number(req.params.id || 0);
       const payload = req.body || {};
-      const data = updateComerciantePreferencias(db, comercianteId, payload);
+      const data = await updateComerciantePreferencias(db, comercianteId, payload);
       return res.status(201).json({ data, message: 'Preferencias actualizadas correctamente' });
     } catch (error) {
       return res.status(400).json({ message: error.message || 'No se pudieron guardar las preferencias' });
@@ -520,7 +509,7 @@ app.post('/api/comerciantes/:id/preferencias',
   }
 );
 
-app.post('/api/comerciantes',
+app.post('/api/v1/comerciantes',
   requireAuth,
   requireRoles(['super_admin', 'auditor']),
   validateComerciante,
@@ -531,9 +520,9 @@ app.post('/api/comerciantes',
     entidad: 'comerciantes',
     serializeResponse: (body) => body?.data ?? body
   }),
-  (req, res) => {
+  async (req, res) => {
     try {
-      const comerciante = insertComerciante(db, {
+      const comerciante = await insertComerciante(db, {
         ...req.body,
         usuario_creador: req.body.usuario_creador || req.user?.id || 1
       });
@@ -545,7 +534,7 @@ app.post('/api/comerciantes',
   }
 );
 
-app.put('/api/comerciantes/:id',
+app.put('/api/v1/comerciantes/:id',
   requireAuth,
   requireRoles(['super_admin', 'auditor']),
   auditMutation({
@@ -553,15 +542,13 @@ app.put('/api/comerciantes/:id',
     accion: 'ACTUALIZAR_COMERCIANTE',
     entidad: 'comerciantes',
     getPreviousState: async (req) => {
-      const id = Number(req.params.id);
-      const result = db.exec(`SELECT * FROM comerciantes WHERE id = ${id}`);
-      return toRowObject(result);
+      return rowById('comerciantes', Number(req.params.id));
     },
     serializeResponse: (body) => body?.data ?? body
   }),
-  (req, res) => {
+  async (req, res) => {
     try {
-      const comerciante = updateComerciante(db, req.params.id, req.body || {});
+      const comerciante = await updateComerciante(db, req.params.id, req.body || {});
       return res.json({ data: comerciante, message: 'Comerciante actualizado correctamente' });
     } catch (error) {
       return res.status(400).json({ message: error.message || 'No se pudo actualizar el comerciante' });
@@ -569,7 +556,7 @@ app.put('/api/comerciantes/:id',
   }
 );
 
-app.delete('/api/comerciantes/:id',
+app.delete('/api/v1/comerciantes/:id',
   requireAuth,
   requireRoles(['super_admin', 'auditor']),
   auditMutation({
@@ -577,15 +564,13 @@ app.delete('/api/comerciantes/:id',
     accion: 'DAR_DE_BAJA_COMERCIANTE',
     entidad: 'comerciantes',
     getPreviousState: async (req) => {
-      const id = Number(req.params.id);
-      const result = db.exec(`SELECT * FROM comerciantes WHERE id = ${id}`);
-      return toRowObject(result);
+      return rowById('comerciantes', Number(req.params.id));
     },
     serializeResponse: (body) => body?.data ?? body
   }),
-  (req, res) => {
+  async (req, res) => {
     try {
-      const comerciante = deactivateComerciante(db, req.params.id);
+      const comerciante = await deactivateComerciante(db, req.params.id);
       return res.json({ data: comerciante, message: 'Comerciante dado de baja correctamente' });
     } catch (error) {
       return res.status(404).json({ message: error.message || 'No se pudo dar de baja el comerciante' });
@@ -593,12 +578,12 @@ app.delete('/api/comerciantes/:id',
   }
 );
 
-app.get('/api/puestos', (_req, res) => {
-  const data = getPuestos(db);
+app.get('/api/v1/puestos', async (_req, res) => {
+  const data = await getPuestos(db);
   res.json({ data, total: data.length });
 });
 
-app.post('/api/puestos',
+app.post('/api/v1/puestos',
   requireAuth,
   requireRoles(['super_admin', 'cobrador']),
   auditMutation({
@@ -607,9 +592,9 @@ app.post('/api/puestos',
     entidad: 'puestos',
     serializeResponse: (body) => body?.data ?? body
   }),
-  (req, res) => {
+  async (req, res) => {
     try {
-      const puesto = insertPuesto(db, req.body || {});
+      const puesto = await insertPuesto(db, req.body || {});
       return res.status(201).json({ data: puesto, message: 'Puesto asignado correctamente' });
     } catch (error) {
       return res.status(400).json({ message: error.message || 'No se pudo asignar el puesto' });
@@ -626,9 +611,9 @@ app.post('/api/v1/puestos-mapa',
     entidad: 'puestos',
     serializeResponse: (body) => body?.data ?? body
   }),
-  (req, res) => {
+  async (req, res) => {
     try {
-      const puesto = insertPuesto(db, {
+      const puesto = await insertPuesto(db, {
         ...req.body,
         comerciante_id: req.body.comerciante_id ?? req.body.comercianteId,
         zona_id: req.body.zona_id ?? req.body.zonaId,
@@ -650,12 +635,12 @@ app.put('/api/v1/puestos-mapa/:id',
     db,
     accion: 'ACTUALIZAR_PUESTO_MAPA',
     entidad: 'puestos',
-    getPreviousState: async (req) => getPuestos(db).find((item) => item.id === Number(req.params.id)),
+    getPreviousState: async (req) => rowById('puestos', Number(req.params.id)),
     serializeResponse: (body) => body?.data ?? body
   }),
-  (req, res) => {
+  async (req, res) => {
     try {
-      return res.json({ data: updatePuesto(db, req.params.id, req.body || {}), message: 'Puesto geolocalizado actualizado correctamente' });
+      return res.json({ data: await updatePuesto(db, req.params.id, req.body || {}), message: 'Puesto geolocalizado actualizado correctamente' });
     } catch (error) {
       return res.status(400).json({ message: error.message || 'No se pudo actualizar el puesto geolocalizado' });
     }
@@ -669,24 +654,24 @@ app.delete('/api/v1/puestos-mapa/:id',
     db,
     accion: 'DAR_DE_BAJA_PUESTO_MAPA',
     entidad: 'puestos',
-    getPreviousState: async (req) => getPuestos(db).find((item) => item.id === Number(req.params.id)),
+    getPreviousState: async (req) => rowById('puestos', Number(req.params.id)),
     serializeResponse: (body) => body?.data ?? body
   }),
-  (req, res) => {
+  async (req, res) => {
     try {
-      return res.json({ data: deactivatePuesto(db, req.params.id), message: 'Puesto dado de baja lógicamente' });
+      return res.json({ data: await deactivatePuesto(db, req.params.id), message: 'Puesto dado de baja lógicamente' });
     } catch (error) {
       return res.status(404).json({ message: error.message || 'No se pudo dar de baja el puesto' });
     }
   }
 );
 
-app.get('/api/tarifas', (_req, res) => {
-  const data = getTarifas(db, { rubro_id: _req.query.rubro_id });
+app.get('/api/v1/tarifas', async (_req, res) => {
+  const data = await getTarifas(db, { rubro_id: _req.query.rubro_id });
   res.json({ data, total: data.length });
 });
 
-app.post('/api/tarifas',
+app.post('/api/v1/tarifas',
   requireAuth,
   requireRoles(['super_admin']),
   auditMutation({
@@ -695,16 +680,16 @@ app.post('/api/tarifas',
     entidad: 'tarifas',
     serializeResponse: (body) => body?.data ?? body
   }),
-  (req, res) => {
+  async (req, res) => {
     try {
-      return res.status(201).json({ data: insertTarifa(db, req.body || {}), message: 'Tarifa creada correctamente' });
+      return res.status(201).json({ data: await insertTarifa(db, req.body || {}), message: 'Tarifa creada correctamente' });
     } catch (error) {
       return res.status(400).json({ message: error.message || 'No se pudo crear la tarifa' });
     }
   }
 );
 
-app.put('/api/tarifas/:id',
+app.put('/api/v1/tarifas/:id',
   requireAuth,
   requireRoles(['super_admin']),
   auditMutation({
@@ -712,46 +697,50 @@ app.put('/api/tarifas/:id',
     accion: 'ACTUALIZAR_TARIFA',
     entidad: 'tarifas',
     getPreviousState: async (req) => {
-      const id = Number(req.params.id);
-      const result = db.exec(`SELECT * FROM tarifas WHERE id = ${id}`);
-      return toRowObject(result);
+      return rowById('tarifas', Number(req.params.id));
     },
     serializeResponse: (body) => body?.data ?? body
   }),
-  (req, res) => {
+  async (req, res) => {
     try {
-      return res.json({ data: updateTarifa(db, req.params.id, req.body || {}), message: 'Tarifa actualizada correctamente' });
+      return res.json({ data: await updateTarifa(db, req.params.id, req.body || {}), message: 'Tarifa actualizada correctamente' });
     } catch (error) {
       return res.status(400).json({ message: error.message || 'No se pudo actualizar la tarifa' });
     }
   }
 );
 
-app.get('/api/liquidaciones/:comercianteId', (req, res) => {
+app.get('/api/v1/liquidaciones/:comercianteId', async (req, res) => {
   try {
-    return res.json({ data: calculateLiquidation(db, req.params.comercianteId, req.query.periodo) });
+    return res.json({ data: await calculateLiquidation(db, req.params.comercianteId, String(req.query.periodo || '')) });
   } catch (error) {
     return res.status(400).json({ message: error.message || 'No se pudo calcular la liquidación' });
   }
 });
 
-app.get('/api/comerciantes/:comercianteId/saldo', (req, res) => {
+app.get('/api/v1/comerciantes/:comercianteId/saldo', async (req, res) => {
   try {
-    return res.json({ data: calculateLiquidation(db, req.params.comercianteId, req.query.periodo) });
+    return res.json({ data: await calculateLiquidation(db, req.params.comercianteId, String(req.query.periodo || '')) });
   } catch (error) {
     return res.status(400).json({ message: error.message || 'No se pudo consultar el saldo' });
   }
 });
 
-app.get('/api/cobros', (_req, res) => {
-  const data = getCobros(db);
+app.get('/api/v1/cobros', async (_req, res) => {
+  const data = await getCobros(db);
   res.json({ data, total: data.length });
 });
 
 app.post('/api/v1/cobros/sincronizar',
   requireAuth,
   requireRoles(['super_admin', 'cobrador']),
-  (req, res) => {
+  auditMutation({
+    db,
+    accion: 'SINCRONIZAR_COBRO_OFFLINE',
+    entidad: 'cobros',
+    serializeResponse: (body) => body?.data ?? body
+  }),
+  async (req, res) => {
     const idempotencyKey = String(req.headers['x-idempotency-key'] || req.body.hash_transaccion || req.body.hashTransaccion || '').trim();
     const payload = {
       ...req.body,
@@ -765,7 +754,7 @@ app.post('/api/v1/cobros/sincronizar',
     };
 
     try {
-      const result = syncOfflineCobro(db, payload);
+      const result = await syncOfflineCobro(db, payload);
       if (result.status === 'IGNORED') {
         return res.status(200).json(result);
       }
@@ -776,12 +765,12 @@ app.post('/api/v1/cobros/sincronizar',
   }
 );
 
-app.get('/api/auditoria',
+app.get('/api/v1/auditoria',
   requireAuth,
   requireRoles(['super_admin', 'auditor']),
-  (req, res) => {
+  async (req, res) => {
     const { comerciante_id, entidad } = req.query || {};
-    const data = getAuditTrail(db, {
+    const data = await getAuditTrail(db, {
       comerciante_id: comerciante_id ? Number(comerciante_id) : undefined,
       entidad: entidad || undefined
     });
@@ -789,7 +778,15 @@ app.get('/api/auditoria',
   }
 );
 
-app.post('/api/cobros',
+app.get('/api/v1/auditoria/verificacion',
+  requireAuth,
+  requireRoles(['super_admin', 'auditor']),
+  async (_req, res) => {
+    return res.json({ data: await verifyAuditChain(db) });
+  }
+);
+
+app.post('/api/v1/cobros',
   requireAuth,
   requireRoles(['super_admin', 'cobrador']),
   validateCobro,
@@ -800,18 +797,18 @@ app.post('/api/cobros',
     entidad: 'cobros',
     serializeResponse: (body) => body?.data ?? body
   }),
-  (req, res) => {
+  async (req, res) => {
     try {
-      return res.status(201).json({ data: insertCobro(db, req.body || {}), message: 'Cobro registrado correctamente' });
+      return res.status(201).json({ data: await insertCobro(db, req.body || {}), message: 'Cobro registrado correctamente' });
     } catch (error) {
       return res.status(400).json({ message: error.message || 'No se pudo registrar el cobro' });
     }
   }
 );
 
-app.post('/api/auth/login', validateLogin, handleValidationErrors, (req, res) => {
+app.post('/api/v1/auth/login', validateLogin, handleValidationErrors, async (req, res) => {
   try {
-    const result = loginUser(req.body);
+    const result = await loginUser(req.body, db);
     return res.json(result);
   } catch (error) {
     // Mensaje genérico para no revelar si el usuario existe o no
@@ -819,7 +816,7 @@ app.post('/api/auth/login', validateLogin, handleValidationErrors, (req, res) =>
   }
 });
 
-app.get('/api/auth/permissions/:role/:requiredRole', (req, res) => {
+app.get('/api/v1/auth/permissions/:role/:requiredRole', (req, res) => {
   const { role, requiredRole } = req.params;
   res.json({ allowed: hasRoleAccess(role, requiredRole) });
 });

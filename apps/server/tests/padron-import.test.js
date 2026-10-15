@@ -15,14 +15,14 @@ const workbook = [{
 
 test('previsualiza e importa hojas por bloque, reimporta sin duplicar y no devenga para ausente ferial', async () => {
   const db = await initializeDatabase();
-  const preview = previewPadronSheets(workbook, { filename: 'FERIA ZAPATILLAS 2026.xlsx', db });
+  const preview = await previewPadronSheets(workbook, { filename: 'FERIA ZAPATILLAS 2026.xlsx', db });
 
   assert.equal(preview.rows, 2);
   assert.equal(preview.validRows, 2);
   assert.equal(preview.absentRows, 1);
   assert.equal(preview.newMerchants, 2);
 
-  const result = importPadronPreview(db, preview, 1);
+  const result = await importPadronPreview(db, preview, 1);
   assert.deepEqual(result, {
     createdMerchants: 2,
     updatedMerchants: 0,
@@ -32,22 +32,22 @@ test('previsualiza e importa hojas por bloque, reimporta sin duplicar y no deven
     skippedRows: 0
   });
 
-  const absentMerchant = getComerciantes(db, { search: '20123456781', includeInactive: true, limit: 100 }).find((item) => item.dni_ruc === '20123456781');
-  const absentPost = getPuestos(db).find((item) => item.codigo === 'ZAP-TEST-01');
+  const absentMerchant = (await getComerciantes(db, { search: '20123456781', includeInactive: true, limit: 100 })).find((item) => item.dni_ruc === '20123456781');
+  const absentPost = (await getPuestos(db)).find((item) => item.codigo === 'ZAP-TEST-01');
   assert.equal(absentMerchant.tipo_comerciante, 'ferial');
   assert.equal(absentPost.metros_cuadrados, 4.5);
   assert.equal(absentPost.estado, 'disponible');
-  assert.equal(calculateLiquidation(db, absentMerchant.id, '2026-09').no_devengo, true);
+  assert.equal((await calculateLiquidation(db, absentMerchant.id, '2026-09')).no_devengo, true);
 
-  const secondPreview = previewPadronSheets(workbook, { filename: 'FERIA ZAPATILLAS 2026.xlsx', db });
+  const secondPreview = await previewPadronSheets(workbook, { filename: 'FERIA ZAPATILLAS 2026.xlsx', db });
   assert.equal(secondPreview.validRows, 2);
   assert.equal(secondPreview.newMerchants, 0);
-  const secondResult = importPadronPreview(db, secondPreview, 1);
+  const secondResult = await importPadronPreview(db, secondPreview, 1);
   assert.equal(secondResult.createdMerchants, 0);
   assert.equal(secondResult.createdPosts, 0);
   assert.equal(secondResult.updatedMerchants, 2);
   assert.equal(secondResult.updatedPosts, 2);
-  assert.equal(db.exec("SELECT COUNT(*) FROM comerciantes WHERE dni_ruc IN ('20123456781', '20123456782')")[0].values[0][0], 2);
+  assert.equal(Number((await db.query("SELECT COUNT(*) FROM comerciantes WHERE dni_ruc IN ('20123456781', '20123456782')")).rows[0].count), 2);
 });
 
 test('marca documentos y códigos de puesto duplicados dentro del mismo libro', async () => {
@@ -60,7 +60,7 @@ test('marca documentos y códigos de puesto duplicados dentro del mismo libro', 
       ['20123456781', 'Titular Dos', 'ZAP-DUP-01', 2]
     ]
   }];
-  const preview = previewPadronSheets(duplicateRows, { filename: 'FERIA ZAPATILLAS 2026.xlsx', db });
+  const preview = await previewPadronSheets(duplicateRows, { filename: 'FERIA ZAPATILLAS 2026.xlsx', db });
 
   assert.equal(preview.validRows, 1);
   assert.equal(preview.invalidRows, 1);
@@ -79,7 +79,7 @@ test('reconoce hojas de control de asistencia por bloque sin inventar DNI ni met
     ]
   }];
 
-  const preview = previewPadronSheets(attendanceWorkbook, { filename: 'FERIA ZAPATILLAS 2026.xlsx', db });
+  const preview = await previewPadronSheets(attendanceWorkbook, { filename: 'FERIA ZAPATILLAS 2026.xlsx', db });
   assert.equal(preview.workbookType, 'attendance');
   assert.equal(preview.attendanceRecords, 3);
   assert.equal(preview.attendanceMarks, 4);

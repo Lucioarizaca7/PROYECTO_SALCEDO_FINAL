@@ -5,8 +5,9 @@
 
 import { config } from 'dotenv';
 import { resolve } from 'node:path';
+import { Request, Response, NextFunction } from 'express';
 import { validationResult } from 'express-validator';
-import { body, param, query } from 'express-validator';
+import { body, param } from 'express-validator';
 
 // Cargar variables de entorno desde el directorio raíz del proyecto
 // Desde apps/server:
@@ -40,15 +41,18 @@ export const validateMonto = body('monto')
   .withMessage('Monto debe ser un número positivo');
 
 // Middleware para manejar resultados de validación
-export const handleValidationErrors = (req, res, next) => {
+export const handleValidationErrors = (req: Request, res: Response, next: NextFunction) => {
   const errors = validationResult(req);
   if (!errors.isEmpty()) {
-    return res.status(400).json({
-      errors: errors.array().map(err => ({
-        field: err.param,
+    // Convert to any to inspect the error structure
+    const errorArray = errors.array() as any[];
+    res.status(400).json({
+      errors: errorArray.map(err => ({
+        field: err.field || err.param || 'unknown',
         message: err.msg
       }))
     });
+    return;
   }
   next();
 };
@@ -75,6 +79,7 @@ export const validateComerciante = [
     .isInt({ gt: 0 })
     .withMessage('Zona ID debe ser un número entero positivo'),
   body('monto_tasa_diaria')
+    .optional({ values: 'falsy' })
     .isFloat({ gt: 0 })
     .withMessage('Monto tasa diaria debe ser un número positivo'),
   handleValidationErrors
@@ -89,11 +94,12 @@ export const validateCobro = [
     .isFloat({ gt: 0 })
     .withMessage('Monto debe ser un número positivo'),
   body('metodo_pago')
-    .isIn(['efectivo', 'Yape', 'Plin', 'Transferencia', 'Tarjeta'])
+    .customSanitizer((value) => String(value ?? '').trim().toLowerCase())
+    .isIn(['efectivo', 'yape', 'plin', 'pos', 'manual'])
     .withMessage('Método de pago no válido'),
   body('fecha_cobro')
+    .optional({ values: 'falsy' })
     .isISO8601()
-    .toDate()
     .withMessage('Fecha de cobro debe ser una fecha válida'),
   handleValidationErrors
 ];

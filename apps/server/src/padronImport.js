@@ -1,5 +1,6 @@
 import readExcelFile from 'read-excel-file/node';
 
+import { withTransaction } from './pg.js';
 import { insertComerciante, insertPuesto, updateComerciante, updatePuesto, getRubros, getZonas, validateDocument } from './db.js';
 
 const aliases = {
@@ -140,9 +141,9 @@ export async function readPadronWorkbook(buffer) {
   return sheets.map(({ sheet, data }) => ({ name: sheet, rows: data }));
 }
 
-export function previewPadronSheets(sheets, { filename = '', db }) {
-  const rubros = getRubros(db);
-  const zonas = getZonas(db);
+export async function previewPadronSheets(sheets, { filename = '', db }) {
+  const rubros = await getRubros(db);
+  const zonas = await getZonas(db);
   const defaultRubroId = resolveCatalogId(rubros, filename, null);
   const defaultZonaId = zonas[0]?.id;
   const seenDocuments = new Set();
@@ -218,10 +219,10 @@ export function previewPadronSheets(sheets, { filename = '', db }) {
       seenCodes.add(code);
 
       const existingMerchant = document
-        ? db.exec('SELECT id, estado FROM comerciantes WHERE dni_ruc = ?', [document])[0]?.values?.[0]
+        ? (await db.query('SELECT id, estado FROM comerciantes WHERE dni_ruc = $1', [document])).rows[0]
         : null;
-      const existingPost = db.exec('SELECT id, comerciante_id FROM puestos WHERE codigo_puesto = ?', [code])[0]?.values?.[0];
-      if (existingPost && (!existingMerchant || Number(existingPost[1]) !== Number(existingMerchant[0]))) {
+      const existingPost = (await db.query('SELECT id, comerciante_id FROM puestos WHERE codigo_puesto = $1', [code])).rows[0];
+      if (existingPost && (!existingMerchant || Number(existingPost.comerciante_id) !== Number(existingMerchant.id))) {
         rowErrors.push(`El código de puesto ${code} ya está asignado a otro comerciante.`);
       }
 
@@ -237,9 +238,9 @@ export function previewPadronSheets(sheets, { filename = '', db }) {
         sector,
         area,
         absence,
-        existingMerchantId: existingMerchant ? Number(existingMerchant[0]) : null,
-        existingMerchantState: existingMerchant?.[1] || null,
-        existingPostId: existingPost ? Number(existingPost[0]) : null,
+        existingMerchantId: existingMerchant ? Number(existingMerchant.id) : null,
+        existingMerchantState: existingMerchant?.estado || null,
+        existingPostId: existingPost ? Number(existingPost.id) : null,
         errors: rowErrors
       };
       candidates.push(candidate);
@@ -267,15 +268,14 @@ export function previewPadronSheets(sheets, { filename = '', db }) {
   };
 }
 
-export function importPadronPreview(db, preview, userId = 1) {
+export async function importPadronPreview(_db, preview, userId = 1) {
   let createdMerchants = 0;
   let updatedMerchants = 0;
   let createdPosts = 0;
   let updatedPosts = 0;
   let absentPosts = 0;
 
-  db.run('BEGIN TRANSACTION');
-  try {
+  await withTransaction(async (client) => {
     for (const row of preview.candidates) {
       if (row.errors.length) continue;
       const merchantPayload = {
@@ -291,10 +291,10 @@ export function importPadronPreview(db, preview, userId = 1) {
 
       let merchantId = row.existingMerchantId;
       if (merchantId) {
-        updateComerciante(db, merchantId, merchantPayload);
+        await updateComerciante(client, merchantId, merchantPayload);
         updatedMerchants += 1;
       } else {
-        merchantId = insertComerciante(db, merchantPayload).id;
+        merchantId = (await insertComerciante(client, merchantPayload)).id;
         createdMerchants += 1;
       }
 
@@ -307,19 +307,15 @@ export function importPadronPreview(db, preview, userId = 1) {
         estado: row.absence ? 'disponible' : 'ocupado'
       };
       if (row.existingPostId) {
-        updatePuesto(db, row.existingPostId, postPayload);
+        await updatePuesto(client, row.existingPostId, postPayload);
         updatedPosts += 1;
       } else {
-        insertPuesto(db, postPayload);
+        await insertPuesto(client, postPayload);
         createdPosts += 1;
       }
       if (row.absence) absentPosts += 1;
     }
-    db.run('COMMIT');
-  } catch (error) {
-    db.run('ROLLBACK');
-    throw error;
-  }
+  });
 
   return {
     createdMerchants,

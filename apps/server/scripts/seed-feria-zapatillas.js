@@ -3,7 +3,7 @@ import { resolve } from 'node:path';
 
 import readExcelFile from 'read-excel-file/node';
 
-import { initializeDatabase, persistDatabase } from '../src/db.js';
+import { initializeDatabase, closeDatabase } from '../src/db.js';
 import { buildFeriaZapatillasSeedPlan, seedFeriaZapatillas } from '../src/feriaZapatillasSeed.js';
 
 const args = process.argv.slice(2);
@@ -20,7 +20,7 @@ if (!existsSync(sourceFile)) {
   try {
     const workbook = await readExcelFile(sourceFile);
     db = await initializeDatabase();
-    const plan = buildFeriaZapatillasSeedPlan(workbook, db);
+    const plan = await buildFeriaZapatillasSeedPlan(workbook, db);
 
     console.log(`Archivo: ${sourceFile}`);
     console.log(`Modo: ${applyChanges ? 'APLICAR' : 'DRY-RUN (sin importar cambios)'}`);
@@ -35,8 +35,7 @@ if (!existsSync(sourceFile)) {
     console.log('Tarifa: S/ 2.00 por m² para el rubro Zapatillas/Calzado.');
 
     if (applyChanges) {
-      const result = seedFeriaZapatillas(db, plan, sourceFile, 1);
-      persistDatabase(db);
+      const result = await seedFeriaZapatillas(db, plan, sourceFile, 1);
       console.log('RESULTADO:');
       console.log(`Total de comerciantes creados: ${result.createdMerchants}`);
       console.log(`Total de comerciantes actualizados: ${result.updatedMerchants}`);
@@ -53,6 +52,6 @@ if (!existsSync(sourceFile)) {
     console.error(`Falló la carga; no se confirmó la transacción: ${error.stack || error.message}`);
     process.exitCode = 1;
   } finally {
-    db?.close();
+    await closeDatabase();
   }
 }

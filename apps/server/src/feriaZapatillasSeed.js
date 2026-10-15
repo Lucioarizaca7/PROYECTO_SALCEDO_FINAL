@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { recordAudit } from './db.js';
+import { withTransaction } from './pg.js';
 
 function normalizeName(value) {
   return String(value ?? '')
@@ -49,8 +50,9 @@ function postNumber(value) {
   return text ? text.padStart(2, '0') : '';
 }
 
-export function buildFeriaZapatillasSeedPlan(sheets, db) {
-  const rubroId = Number(db.exec("SELECT id FROM rubros WHERE LOWER(nombre) IN ('zapatillas', 'calzado') ORDER BY CASE LOWER(nombre) WHEN 'zapatillas' THEN 0 ELSE 1 END LIMIT 1")[0]?.values?.[0]?.[0] ?? 0);
+export async function buildFeriaZapatillasSeedPlan(sheets, db) {
+  const rubroRow = (await db.query("SELECT id FROM rubros WHERE LOWER(nombre) IN ('zapatillas', 'calzado') ORDER BY CASE LOWER(nombre) WHEN 'zapatillas' THEN 0 ELSE 1 END LIMIT 1")).rows[0];
+  const rubroId = Number(rubroRow?.id ?? 0);
   const blocks = [];
   const postsByCode = new Map();
   const merchantsByDocument = new Map();
@@ -102,12 +104,12 @@ export function buildFeriaZapatillasSeedPlan(sheets, db) {
         duplicatePostCodes.push({ code, firstName: workbookDuplicate.name, duplicateName: name, sheet: sheetName });
         continue;
       }
-      const existingByCode = db.exec('SELECT id, comerciante_id FROM puestos WHERE codigo_puesto = ?', [code])[0]?.values?.[0];
+      const existingByCode = (await db.query('SELECT id, comerciante_id FROM puestos WHERE codigo_puesto = $1', [code])).rows[0];
       const linkedMerchant = existingByCode
-        ? db.exec('SELECT id, dni_ruc, estado_empadronamiento FROM comerciantes WHERE id = ?', [Number(existingByCode[1])])[0]?.values?.[0]
+        ? (await db.query('SELECT id, dni_ruc, estado_empadronamiento FROM comerciantes WHERE id = $1', [Number(existingByCode.comerciante_id)])).rows[0]
         : null;
       const generatedDocument = temporaryDocument(name);
-      const document = linkedMerchant?.[1] || merchantDocumentByName.get(name) || generatedDocument;
+      const document = linkedMerchant?.dni_ruc || merchantDocumentByName.get(name) || generatedDocument;
       const post = {
         code,
         number,
@@ -134,10 +136,10 @@ export function buildFeriaZapatillasSeedPlan(sheets, db) {
         attendanceCells += 1;
       }
 
-      if (existingByCode) post.existingPostId = Number(existingByCode[0]);
+      if (existingByCode) post.existingPostId = Number(existingByCode.id);
       const existingMerchant = linkedMerchant
-        || db.exec('SELECT id, dni_ruc, estado_empadronamiento FROM comerciantes WHERE dni_ruc = ?', [document])[0]?.values?.[0];
-      if (existingMerchant) post.existingMerchantId = Number(existingMerchant[0]);
+        || (await db.query('SELECT id, dni_ruc, estado_empadronamiento FROM comerciantes WHERE dni_ruc = $1', [document])).rows[0];
+      if (existingMerchant) post.existingMerchantId = Number(existingMerchant.id);
       postsByCode.set(code, post);
       if (!merchantDocumentByName.has(name)) merchantDocumentByName.set(name, document);
       if (!merchantsByDocument.has(document)) merchantsByDocument.set(document, { document, name, id: post.existingMerchantId || null });
@@ -169,7 +171,7 @@ export function buildFeriaZapatillasSeedPlan(sheets, db) {
   };
 }
 
-export function seedFeriaZapatillas(db, plan, sourceFile, userId = 1) {
+export async function seedFeriaZapatillas(_db, plan, sourceFile, userId = 1) {
   let createdMerchants = 0;
   let updatedMerchants = 0;
   let assignedPosts = 0;
@@ -177,32 +179,35 @@ export function seedFeriaZapatillas(db, plan, sourceFile, userId = 1) {
   let updatedPosts = 0;
   let savedAttendanceMarks = 0;
 
-  db.run('BEGIN TRANSACTION');
-  try {
-    db.run("INSERT INTO rubros (nombre, descripcion, estado) SELECT 'zapatillas', 'Calzado y zapatillas de feria', 1 WHERE NOT EXISTS (SELECT 1 FROM rubros WHERE LOWER(nombre) IN ('zapatillas', 'calzado'))");
-    const rubroId = Number(db.exec("SELECT id FROM rubros WHERE LOWER(nombre) IN ('zapatillas', 'calzado') ORDER BY CASE LOWER(nombre) WHEN 'zapatillas' THEN 0 ELSE 1 END LIMIT 1")[0].values[0][0]);
+  await withTransaction(async (c) => {
+    const one = async (text, params = []) => (await c.query(text, params)).rows[0];
+
+    await c.query("INSERT INTO rubros (nombre, descripcion, activo) SELECT 'zapatillas', 'Calzado y zapatillas de feria', TRUE WHERE NOT EXISTS (SELECT 1 FROM rubros WHERE LOWER(nombre) IN ('zapatillas', 'calzado'))");
+    const rubroId = Number((await one("SELECT id FROM rubros WHERE LOWER(nombre) IN ('zapatillas', 'calzado') ORDER BY CASE LOWER(nombre) WHEN 'zapatillas' THEN 0 ELSE 1 END LIMIT 1")).id);
 
     for (const block of plan.blocks.filter((item) => item.candidates > 0)) {
-      db.run('INSERT INTO zonas (nombre, descripcion) SELECT ?, ? WHERE NOT EXISTS (SELECT 1 FROM zonas WHERE LOWER(nombre) = LOWER(?))', [block.sheet, `Sector ferial ${block.sheet}`, block.sheet]);
+      await c.query('INSERT INTO zonas (nombre, descripcion) SELECT $1::text, $2::text WHERE NOT EXISTS (SELECT 1 FROM zonas WHERE LOWER(nombre) = LOWER($1::text))', [block.sheet, `Sector ferial ${block.sheet}`]);
     }
-    db.run(`INSERT INTO tarifas (rubro_id, tipo_tarifa, monto_fijo, monto_variable, unidad_medida, vigencia_inicio, vigencia_fin, estado, version)
-      SELECT ?, 'variable', 0, 2, 'metro_cuadrado', '2026-01-01', NULL, 1, 1
-      WHERE NOT EXISTS (SELECT 1 FROM tarifas WHERE rubro_id = ? AND tipo_tarifa = 'variable' AND monto_fijo = 0 AND monto_variable = 2 AND unidad_medida = 'metro_cuadrado' AND vigencia_inicio = '2026-01-01')`, [rubroId, rubroId]);
+    await c.query(`INSERT INTO tarifas (rubro_id, tipo_tarifa, monto_fijo, monto_variable, unidad_medida, vigencia_inicio, vigencia_fin, activo, version)
+      SELECT $1::int, 'variable', 0, 2, 'metro_cuadrado', '2026-01-01', NULL, TRUE, 1
+      WHERE NOT EXISTS (SELECT 1 FROM tarifas WHERE rubro_id = $1::int AND tipo_tarifa = 'variable' AND monto_fijo = 0 AND monto_variable = 2 AND unidad_medida = 'metro_cuadrado' AND vigencia_inicio = '2026-01-01')`, [rubroId]);
+
+    const userRow = await one('SELECT id FROM usuarios WHERE id = $1', [userId]);
+    const creatorId = userRow ? userId : null;
 
     for (const merchant of plan.merchants) {
-      const existing = db.exec('SELECT id, estado_empadronamiento FROM comerciantes WHERE dni_ruc = ?', [merchant.document])[0]?.values?.[0];
-      let merchantId = Number(existing?.[0] || 0);
+      const existing = await one('SELECT id, estado_empadronamiento FROM comerciantes WHERE dni_ruc = $1', [merchant.document]);
+      let merchantId = Number(existing?.id || 0);
       const zoneName = plan.posts.find((post) => post.document === merchant.document)?.sheet || plan.blocks[0]?.sheet || 'BLOQUE';
-      const zoneId = Number(db.exec('SELECT id FROM zonas WHERE LOWER(nombre) = LOWER(?) ORDER BY id LIMIT 1', [zoneName])[0]?.values?.[0]?.[0] || 0);
+      const zoneId = Number((await one('SELECT id FROM zonas WHERE LOWER(nombre) = LOWER($1) ORDER BY id LIMIT 1', [zoneName]))?.id || 0);
       if (!merchantId) {
-        db.run(`INSERT INTO comerciantes (dni_ruc, nombre, rubro_id, zona_id, categoria, tipo_comerciante, estado, estado_empadronamiento, usuario_creador)
-          VALUES (?, ?, ?, ?, 'ferial', 'ferial', 'pendiente', 'PENDIENTE_REGULARIZACION', ?)`, [merchant.document, merchant.name, rubroId, zoneId, userId]);
-        merchantId = Number(db.exec('SELECT last_insert_rowid()')[0].values[0][0]);
+        merchantId = Number((await one(`INSERT INTO comerciantes (dni_ruc, nombre, rubro_id, zona_id, categoria, tipo_comerciante, estado, estado_empadronamiento, usuario_creador_id)
+          VALUES ($1, $2, $3, $4, 'ferial', 'ferial', 'pendiente', 'PENDIENTE_REGULARIZACION', $5) RETURNING id`, [merchant.document, merchant.name, rubroId, zoneId, creatorId])).id);
         createdMerchants += 1;
       } else {
-        const empadronamiento = existing[1] === 'REGULARIZADO' ? 'REGULARIZADO' : 'PENDIENTE_REGULARIZACION';
+        const empadronamiento = existing.estado_empadronamiento === 'REGULARIZADO' ? 'REGULARIZADO' : 'PENDIENTE_REGULARIZACION';
         const status = empadronamiento === 'REGULARIZADO' ? 'activo' : 'pendiente';
-        db.run(`UPDATE comerciantes SET nombre = ?, rubro_id = ?, categoria = 'ferial', tipo_comerciante = 'ferial', estado = ?, estado_empadronamiento = ? WHERE id = ?`, [merchant.name, rubroId, status, empadronamiento, merchantId]);
+        await c.query(`UPDATE comerciantes SET nombre = $1, rubro_id = $2, categoria = 'ferial', tipo_comerciante = 'ferial', estado = $3, estado_empadronamiento = $4 WHERE id = $5`, [merchant.name, rubroId, status, empadronamiento, merchantId]);
         updatedMerchants += 1;
       }
       merchant.id = merchantId;
@@ -210,44 +215,38 @@ export function seedFeriaZapatillas(db, plan, sourceFile, userId = 1) {
 
     for (const post of plan.posts) {
       const merchantId = plan.merchants.find((merchant) => merchant.document === post.document)?.id;
-      const zoneId = Number(db.exec('SELECT id FROM zonas WHERE LOWER(nombre) = LOWER(?) ORDER BY id LIMIT 1', [post.sheet])[0]?.values?.[0]?.[0] || 0);
+      const zoneId = Number((await one('SELECT id FROM zonas WHERE LOWER(nombre) = LOWER($1) ORDER BY id LIMIT 1', [post.sheet]))?.id || 0);
       const address = `${post.sheet} - Puesto ${post.number}`;
-      let postId = Number(db.exec('SELECT id FROM puestos WHERE codigo_puesto = ?', [post.code])[0]?.values?.[0]?.[0] || 0);
+      let postId = Number((await one('SELECT id FROM puestos WHERE codigo_puesto = $1', [post.code]))?.id || 0);
       if (postId) {
-        db.run("UPDATE puestos SET comerciante_id = ?, zona_id = ?, direccion = ?, metros_cuadrados = NULL, estado = 'ocupado' WHERE id = ?", [merchantId, zoneId, address, postId]);
+        await c.query("UPDATE puestos SET comerciante_id = $1, zona_id = $2, direccion = $3, metros_cuadrados = NULL, estado = 'ocupado' WHERE id = $4", [merchantId, zoneId, address, postId]);
         updatedPosts += 1;
       } else {
-        db.run("INSERT INTO puestos (comerciante_id, zona_id, direccion, metros_cuadrados, estado, codigo_puesto) VALUES (?, ?, ?, NULL, 'ocupado', ?)", [merchantId, zoneId, address, post.code]);
-        postId = Number(db.exec('SELECT last_insert_rowid()')[0].values[0][0]);
+        postId = Number((await one("INSERT INTO puestos (comerciante_id, zona_id, direccion, metros_cuadrados, estado, codigo_puesto) VALUES ($1, $2, $3, NULL, 'ocupado', $4) RETURNING id", [merchantId, zoneId, address, post.code])).id);
         createdPosts += 1;
       }
       post.id = postId;
       assignedPosts += 1;
 
       for (const attendance of post.attendance) {
-        db.run(`INSERT INTO asistencias_feriales (puesto_id, fecha, sesion, marca, fuente) VALUES (?, ?, ?, ?, ?)
-          ON CONFLICT(puesto_id, fecha, sesion) DO UPDATE SET marca = excluded.marca, fuente = excluded.fuente`, [postId, attendance.date, attendance.session, attendance.mark, sourceFile]);
+        await c.query(`INSERT INTO asistencias_feriales (puesto_id, fecha, sesion, marca, fuente) VALUES ($1, $2, $3, $4, $5)
+          ON CONFLICT (puesto_id, fecha, sesion) DO UPDATE SET marca = EXCLUDED.marca, fuente = EXCLUDED.fuente`, [postId, attendance.date, attendance.session, attendance.mark, sourceFile]);
         savedAttendanceMarks += 1;
       }
     }
+  });
 
-    recordAudit(db, {
-      usuarioId: userId,
-      usuarioRol: 'super_admin',
-      entidad: 'padron',
-      accion: 'SEED_FERIA_ZAPATILLAS',
-      detalle: `Carga ${sourceFile}: ${createdMerchants} comerciantes nuevos, ${assignedPosts} puestos vinculados, ${savedAttendanceMarks} marcas de asistencia`,
-      metodoHttp: 'CLI',
-      ipOrigen: 'local',
-      rutaEndpoint: 'scripts/seed-feria-zapatillas.js',
-      payloadNuevo: { createdMerchants, assignedPosts, createdPosts, updatedPosts, savedAttendanceMarks }
-    });
-
-    db.run('COMMIT');
-  } catch (error) {
-    db.run('ROLLBACK');
-    throw error;
-  }
+  await recordAudit(null, {
+    usuarioId: userId,
+    usuarioRol: 'super_admin',
+    entidad: 'padron',
+    accion: 'SEED_FERIA_ZAPATILLAS',
+    detalle: `Carga ${sourceFile}: ${createdMerchants} comerciantes nuevos, ${assignedPosts} puestos vinculados, ${savedAttendanceMarks} marcas de asistencia`,
+    metodoHttp: 'CLI',
+    ipOrigen: 'local',
+    rutaEndpoint: 'scripts/seed-feria-zapatillas.js',
+    payloadNuevo: { createdMerchants, assignedPosts, createdPosts, updatedPosts, savedAttendanceMarks }
+  });
 
   return {
     createdMerchants,

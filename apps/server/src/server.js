@@ -14,7 +14,7 @@ const result = config({ path: envPath });
 console.log('Resultado de dotenv config:', result);
 
 import { app } from './index.js';
-import { initializeDatabase, persistDatabase } from './db.js';
+import { initializeDatabase, closeDatabase } from './db.js';
 
 const PORT = process.env.PORT || 3000;
 console.log('PORT desde process.env:', process.env.PORT);
@@ -25,8 +25,8 @@ app.get('/health', (req, res) => {
   res.json({ status: 'OK', timestamp: new Date().toISOString() });
 });
 
-// Inicializar la base de datos
-initializeDatabase();
+// Inicializar la base de datos (PostgreSQL)
+await initializeDatabase();
 
 // Iniciar el servidor
 const server = app.listen(PORT, () => {
@@ -36,8 +36,8 @@ const server = app.listen(PORT, () => {
 // Para permitir un cierre graceful
 process.on('SIGTERM', () => {
   console.log('Recibida señal SIGTERM. Cerrando servidor...');
-  persistDatabase();
-  server.close(() => {
+  server.close(async () => {
+    await closeDatabase();
     console.log('Servidor cerrado.');
     process.exit(0);
   });
