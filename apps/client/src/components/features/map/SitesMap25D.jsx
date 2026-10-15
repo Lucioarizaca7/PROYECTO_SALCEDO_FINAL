@@ -1,10 +1,11 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
 import mapboxgl from 'mapbox-gl';
 import 'mapbox-gl/dist/mapbox-gl.css';
 import { accountStatusText, buildSiteFeatures, siteFromFeature } from './sitesGeo';
 
 const SOURCE_ID = 'puestos';
 const LAYER_ID = 'puestos-3d';
+const DOT_LAYER_ID = 'puestos-puntos';
 const MAPBOX_TOKEN = import.meta.env.VITE_MAPBOX_TOKEN;
 
 // Sin token de Mapbox el mapa sigue funcionando con teselas raster de OpenStreetMap.
@@ -63,10 +64,28 @@ export default function SitesMap25D({ sites, selectedSite, baseLayer, drawing, d
 
   sitesRef.current = sites;
   handlersRef.current = { onSelect, onCollect, onInspect, onPickLocation, drawing };
-  dataRef.current = buildSiteFeatures(sites);
+
+  // El padre entrega un array nuevo en cada render; solo se vuelve a dibujar si cambia el contenido.
+  const signature = sites.map((s) => `${s.id}|${s.latitud}|${s.longitud}|${s.estadoPago}|${s.comerciante}`).join(';');
+  const data = useMemo(() => buildSiteFeatures(sites), [signature]); // eslint-disable-line react-hooks/exhaustive-deps
+  dataRef.current = data;
 
   const installLayers = (map) => {
     if (!map.getSource(SOURCE_ID)) map.addSource(SOURCE_ID, { type: 'geojson', data: dataRef.current });
+    if (!map.getLayer(DOT_LAYER_ID)) {
+      // Marcadores planos visibles de lejos; los bloques 3D toman el relevo al acercar.
+      map.addLayer({
+        id: DOT_LAYER_ID,
+        type: 'circle',
+        source: SOURCE_ID,
+        paint: {
+          'circle-color': ['coalesce', ['get', 'color'], '#64748b'],
+          'circle-radius': ['interpolate', ['linear'], ['zoom'], 12, 5, 18, 9],
+          'circle-stroke-color': '#ffffff',
+          'circle-stroke-width': 2
+        }
+      });
+    }
     if (!map.getLayer(LAYER_ID)) {
       map.addLayer({
         id: LAYER_ID,
@@ -101,10 +120,11 @@ export default function SitesMap25D({ sites, selectedSite, baseLayer, drawing, d
       zoom: 17.5,
       pitch: 55,
       bearing: -20,
-      maxPitch: 75,
+      maxPitch: 60,
       antialias: false
     });
     mapRef.current = map;
+    if (import.meta.env.DEV) window.__sisrecMap = map;
     map.addControl(new mapboxgl.NavigationControl({ visualizePitch: true, showCompass: true }), 'top-right');
 
     map.on('style.load', () => {
@@ -133,6 +153,12 @@ export default function SitesMap25D({ sites, selectedSite, baseLayer, drawing, d
       if (!handlersRef.current.drawing) return;
       handlersRef.current.onPickLocation?.({ lat: event.lngLat.lat, lng: event.lngLat.lng });
     });
+    map.on('click', DOT_LAYER_ID, (event) => {
+      const feature = event.features && event.features[0];
+      if (!feature || handlersRef.current.drawing || feature === undefined) return;
+      const site = siteFromFeature(feature, sitesRef.current);
+      handlersRef.current.onSelect?.(site);
+    });
     map.on('mouseenter', LAYER_ID, () => { map.getCanvas().style.cursor = 'pointer'; });
     map.on('mouseleave', LAYER_ID, () => { map.getCanvas().style.cursor = ''; });
 
@@ -157,7 +183,7 @@ export default function SitesMap25D({ sites, selectedSite, baseLayer, drawing, d
     map.getSource(SOURCE_ID)?.setData(dataRef.current);
     popupRef.current?.remove();
     recenterOnce(map);
-  }, [sites]);
+  }, [data]);
 
   // Capa base: al cambiar de estilo hay que reinstalar la capa 3D.
   const lastBase = useRef(baseLayer);
