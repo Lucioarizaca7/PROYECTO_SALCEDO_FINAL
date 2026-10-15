@@ -1,125 +1,69 @@
 /**
- * Pruebas de seguridad para verificar las mejoras implementadas
+ * Pruebas de seguridad (node:test): validación de entrada, JWT y control de acceso.
  */
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 
-import { jest } from '@jest/globals';
+import { requireAuth, requireRoles } from '../src/auth.ts';
+import { validateLogin } from '../src/validation.ts';
 
-// Mock de las dependencias
-jest.mock('../src/auth.js');
-jest.mock('../src/validation.js');
-jest.mock('../src/db.js');
+function mockRes() {
+  return {
+    statusCode: 200,
+    body: undefined,
+    status(code) { this.statusCode = code; return this; },
+    json(payload) { this.body = payload; return this; },
+    setHeader() { return this; }
+  };
+}
 
-import { loginUser } from '../src/auth.js';
-import { validateLogin } from '../src/validation.js';
-import { initializeDatabase } from '../src/db.js';
-
-describe('Security Improvements', () => {
-  let mockDb;
-  let mockReq;
-  let mockRes;
-  let mockNext;
-
-  beforeEach(() => {
-    // Reiniciar mocks antes de cada prueba
-    jest.clearAllMocks();
-
-    // Configurar mocks comunes
-    mockDb = {};
-    mockReq = {
-      body: {},
-      headers: {},
-      ip: '127.0.0.1'
-    };
-    mockRes = {
-      status: jest.fn().mockReturnThis(),
-      json: jest.fn().mockReturnThis(),
-      setHeader: jest.fn().mockReturnThis()
-    };
-    mockNext = jest.fn();
-  });
-
-  describe('JWT Secret from Environment Variables', () => {
-    it('should use JWT_SECRET from environment variables', () => {
-      // Este test sería más apropiado como prueba de integración
-      // Pero verificamos que no haya valor hardcodeado en auth.js
-      expect(process.env.JWT_SECRET).toBeDefined();
+async function runValidators(validators, body) {
+  const req = { body, headers: {}, params: {}, query: {} };
+  const res = mockRes();
+  let nexted = false;
+  for (const validator of validators) {
+    await new Promise((resolve) => {
+      const maybe = validator(req, res, () => { nexted = true; resolve(); });
+      if (res.body !== undefined) resolve();
+      if (maybe && typeof maybe.then === 'function') maybe.then(() => resolve());
     });
-  });
+    if (res.body !== undefined) break;
+  }
+  return { res, nexted };
+}
 
-  describe('Rate Limiting Headers', () => {
-    it('should add security headers to responses', () => {
-      // Simular que pasamos por el middleware de seguridad
-      // Este test sería más apropiado como prueba de integración
-      expect(true).toBe(true); // Placeholder
-    });
-  });
+test('auth.ts toma el secreto JWT del entorno y no lo deja fijo en el código', () => {
+  assert.ok(process.env.JWT_SECRET, 'JWT_SECRET debe estar definido en el entorno de pruebas');
+  const source = readFileSync(new URL('../src/auth.ts', import.meta.url), 'utf8');
+  assert.match(source, /process\.env\.JWT_SECRET/);
+  assert.doesNotMatch(source, /jwtSecret\s*=\s*['"`]/);
+});
 
-  describe('Input Validation Login', () => {
-    it('should validate email format', async () => {
-      // Mock de validateLogin
-      validateLogin.mockImplementation((req, res, next) => {
-        if (!req.body.email || !req.body.password) {
-          mockRes.status(400).json({ message: 'Email y contraseña requeridos' });
-          return;
-        }
-        next();
-      });
+test('validateLogin rechaza un correo con formato inválido', async () => {
+  const { res } = await runValidators(validateLogin, { email: 'no-es-correo', password: 'admin123' });
+  assert.equal(res.statusCode, 400);
+  assert.ok(res.body.message);
+});
 
-      // Test con email inválido
-      mockReq.body = { email: 'invalid-email', password: 'password123' };
+test('validateLogin acepta credenciales con formato válido', async () => {
+  const { res, nexted } = await runValidators(validateLogin, { email: 'admin@salcedo.gob.pe', password: 'admin123' });
+  assert.equal(res.body, undefined);
+  assert.equal(nexted, true);
+});
 
-      // Ejecutar middleware de validación
-      await validateLogin(mockReq, mockRes, mockNext);
+test('requireAuth responde 401 sin token', () => {
+  const res = mockRes();
+  let nexted = false;
+  requireAuth({ headers: {} }, res, () => { nexted = true; });
+  assert.equal(res.statusCode, 401);
+  assert.equal(nexted, false);
+});
 
-      // Verificar que se llamó a next (pasó la validación básica)
-      expect(mockNext).toHaveBeenCalled();
-    });
-
-    it('should reject empty credentials', async () => {
-      // Test con credenciales vacías
-      mockReq.body = { email: '', password: '' };
-
-      // Ejecutar middleware de validación
-      await validateLogin(mockReq, mockRes, mockNext);
-
-      // Verificar que se devolvió error 400
-      expect(mockRes.status).toHaveBeenCalledWith(400);
-      expect(mockRes.json).toHaveBeenCalledWith(
-        expect.objectContaining({ message: 'Email y contraseña requeridos' })
-      );
-    });
-  });
-
-  describe('Error Message Security', () => {
-    it('should return generic error messages for auth failures', () => {
-      // Simular error de autenticación
-      loginUser.mockImplementation(() => {
-        throw new Error('Detalles específicos que no deberían revelarse');
-      });
-
-      mockReq.body = { email: 'test@test.com', password: 'wrongpass' };
-
-      // Llamar al controlador de login (simplificado)
-      try {
-        loginUser(mockReq.body);
-      } catch (error) {
-        // Verificar que el mensaje no revele detalles internos
-        expect(error.message).not.toContain('Detalles específicos');
-        // En el controlador real, se convierte en un mensaje genérico
-        expect('Credenciales inválidas').toBe('Credenciales inválidas');
-      }
-    });
-  });
-
-  describe('Environment Variable Usage', () => {
-    it('should use PORT from environment variables', () => {
-      const port = process.env.PORT || 4000;
-      expect(port).toBeDefined();
-    });
-
-    it('should use JWT_EXPIRES_IN from environment variables', () => {
-      const expiresIn = process.env.JWT_EXPIRES_IN || '15m';
-      expect(expiresIn).toBeDefined();
-    });
-  });
+test('requireRoles responde 403 para un rol sin permiso', () => {
+  const res = mockRes();
+  let nexted = false;
+  requireRoles(['super_admin'])({ user: { rol: 'cobrador' } }, res, () => { nexted = true; });
+  assert.equal(res.statusCode, 403);
+  assert.equal(nexted, false);
 });
