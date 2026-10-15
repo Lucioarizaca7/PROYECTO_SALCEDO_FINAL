@@ -244,7 +244,7 @@ export default function SitesMap25D({ sites, selectedSite, baseLayer, drawing, d
         .setPopup(new mapboxgl.Popup({ offset: 14, closeButton: false }));
     }
     userMarkerRef.current.setLngLat(lngLat).addTo(map);
-    userMarkerRef.current.getPopup().setText(`Estás aquí (precisión ±${Math.round(userLocation.accuracy)} m)`);
+    userMarkerRef.current.getPopup().setText(userLocation.manual ? "Estás aquí (fijado a mano)" : `Estás aquí (precisión ±${Math.round(userLocation.accuracy)} m)`);
     map.flyTo({ center: lngLat, zoom: 18, pitch: DEFAULT_PITCH, duration: 800 });
   }, [userLocation]);
 

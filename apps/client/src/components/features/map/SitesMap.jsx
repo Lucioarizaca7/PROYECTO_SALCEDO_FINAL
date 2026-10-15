@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useMemo, useState } from 'react';
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import { Circle, CircleMarker, MapContainer, Marker, Popup, TileLayer, useMap, useMapEvents } from 'react-leaflet';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
@@ -65,6 +65,18 @@ export function SitesMap({ sites = [], onCollect, onCreate, onUpdate, onDelete }
   const [isLocating, setIsLocating] = useState(false);
   const [userLocation, setUserLocation] = useState(null);
   const [locateError, setLocateError] = useState('');
+  const [correctingLocation, setCorrectingLocation] = useState(false);
+  const watchRef = useRef(null);
+
+  const stopWatching = () => {
+    if (watchRef.current) {
+      navigator.geolocation.clearWatch(watchRef.current.id);
+      window.clearTimeout(watchRef.current.timer);
+      watchRef.current = null;
+    }
+    setIsLocating(false);
+  };
+  useEffect(() => stopWatching, []); // eslint-disable-line react-hooks/exhaustive-deps
   const [viewMode, setViewMode] = useState('3d');
   const [query, setQuery] = useState('');
   const [draftError, setDraftError] = useState('');
@@ -87,8 +99,9 @@ export function SitesMap({ sites = [], onCollect, onCreate, onUpdate, onDelete }
   );
 
   const locateUser = () => {
-    if (isLocating) return;
+    if (isLocating) return stopWatching();
     setLocateError('');
+    setCorrectingLocation(false);
     if (!window.isSecureContext) {
       setLocateError('El navegador solo permite la ubicación en HTTPS o en localhost.');
       return;
@@ -98,20 +111,28 @@ export function SitesMap({ sites = [], onCollect, onCreate, onUpdate, onDelete }
       return;
     }
     setIsLocating(true);
-    const found = (position) => {
-      // Objeto nuevo en cada clic: el mapa vuelve a centrarse aunque no te hayas movido.
-      setUserLocation({ lat: position.coords.latitude, lng: position.coords.longitude, accuracy: position.coords.accuracy, at: Date.now() });
-      setIsLocating(false);
-    };
-    const failed = (error) => {
+    let best = null;
+    // Lecturas frescas durante unos segundos: la primera suele ser aproximada (Wi-Fi/IP) y luego mejora.
+    const id = navigator.geolocation.watchPosition((position) => {
+      const { latitude, longitude, accuracy } = position.coords;
+      if (best && accuracy >= best.accuracy) return;
+      best = { lat: latitude, lng: longitude, accuracy, at: Date.now() };
+      setUserLocation(best);
+      if (accuracy <= 20) stopWatching();
+    }, (error) => {
+      if (error.code === 3 && best) return; // ya hay una posición; se sigue esperando una mejor
       setLocateError(geolocationErrorMessage(error));
-      setIsLocating(false);
-    };
-    // Primero GPS; en PCs sin GPS se reintenta con la ubicación aproximada por red.
-    navigator.geolocation.getCurrentPosition(found, (error) => {
-      if (error.code === 1) return failed(error);
-      navigator.geolocation.getCurrentPosition(found, failed, { enableHighAccuracy: false, timeout: 15000, maximumAge: 300000 });
-    }, { enableHighAccuracy: true, timeout: 10000, maximumAge: 30000 });
+      stopWatching();
+    }, { enableHighAccuracy: true, timeout: 20000, maximumAge: 0 });
+    watchRef.current = { id, timer: window.setTimeout(stopWatching, 20000) };
+  };
+
+  // Corrección manual: el siguiente clic en el mapa fija tu posición exacta.
+  const pickLocation = (latlng) => {
+    if (!correctingLocation) return setDraftLocation(latlng);
+    stopWatching();
+    setUserLocation({ lat: latlng.lat, lng: latlng.lng, accuracy: 0, manual: true, at: Date.now() });
+    setCorrectingLocation(false);
   };
 
   const submitDraft = async (event) => {
@@ -148,8 +169,8 @@ export function SitesMap({ sites = [], onCollect, onCreate, onUpdate, onDelete }
           <span>{filteredSites.length} puestos visibles · {navigator.onLine ? 'datos sincronizados' : 'instantánea local'}</span>
         </div>
         <div className="map-filters" aria-label="Filtros del mapa">
-          <button type="button" className={`secondary-button compact ${drawing ? 'map-tool-active' : ''}`} onClick={() => setDrawing((value) => !value)}>{drawing ? 'Cancelar pin' : 'Nuevo puesto'}</button>
-          <button type="button" className="secondary-button compact" onClick={locateUser} disabled={isLocating}>{isLocating ? 'Localizando...' : 'Mi ubicación'}</button>
+          <button type="button" className={`secondary-button compact ${drawing ? 'map-tool-active' : ''}`} onClick={() => { setCorrectingLocation(false); setDrawing((value) => !value); }}>{drawing ? 'Cancelar pin' : 'Nuevo puesto'}</button>
+          <button type="button" className="secondary-button compact" onClick={locateUser} title={isLocating ? 'Detener la búsqueda' : 'Centrar el mapa en tu posición'}>{isLocating ? `Localizando…${userLocation ? ` ±${Math.round(userLocation.accuracy)} m` : ''}` : 'Mi ubicación'}</button>
           <input type="search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Buscar titular o código" aria-label="Buscar puesto" />
           <select value={viewMode} onChange={(event) => setViewMode(event.target.value)} aria-label="Modo de vista">
             <option value="3d">Vista 2.5D</option>
@@ -175,13 +196,21 @@ export function SitesMap({ sites = [], onCollect, onCreate, onUpdate, onDelete }
       </div>
 
       {locateError && <p className="form-error" role="alert">{locateError}</p>}
+      {correctingLocation ? (
+        <p className="map-location-note" role="status">Haz clic en el mapa en el punto exacto donde estás. <button type="button" className="table-action" onClick={() => setCorrectingLocation(false)}>Cancelar</button></p>
+      ) : userLocation && !userLocation.manual && !isLocating && userLocation.accuracy > 100 && (
+        <p className="map-location-note" role="status">
+          Ubicación aproximada (±{userLocation.accuracy >= 1000 ? `${(userLocation.accuracy / 1000).toFixed(1)} km` : `${Math.round(userLocation.accuracy)} m`}): este equipo no tiene GPS y el navegador la estima por Wi-Fi o IP.
+          {' '}<button type="button" className="table-action" onClick={() => { setDrawing(false); setCorrectingLocation(true); }}>Corregir en el mapa</button>
+        </p>
+      )}
 
       <div className="map-legend" aria-label="Leyenda del mapa">
         <span><i className="legend-dot permanent" /> Permanente</span>
         <span><i className="legend-dot ferial" /> Ferial</span>
         <span><i className="legend-dot eventual" /> Eventual</span>
         <span><i className="legend-dot debt" /> Con deuda</span>
-        {userLocation && <span><i className="legend-dot user-location" /> Tu ubicación (±{Math.round(userLocation.accuracy)} m)</span>}
+        {userLocation && <span><i className="legend-dot user-location" /> {userLocation.manual ? 'Tu ubicación (fijada a mano)' : `Tu ubicación (±${Math.round(userLocation.accuracy)} m)`}</span>}
       </div>
 
       <div className="sites-map-canvas">
@@ -191,12 +220,12 @@ export function SitesMap({ sites = [], onCollect, onCreate, onUpdate, onDelete }
               sites={filteredSites}
               selectedSite={selectedSite}
               baseLayer={baseLayer}
-              drawing={drawing}
+              drawing={drawing || correctingLocation}
               draftLocation={draftLocation}
               userLocation={userLocation}
               onSelect={setSelectedSite}
               onCollect={onCollect}
-              onPickLocation={setDraftLocation}
+              onPickLocation={pickLocation}
             />
           </Suspense>
         ) : (
@@ -207,13 +236,13 @@ export function SitesMap({ sites = [], onCollect, onCreate, onUpdate, onDelete }
             subdomains={baseLayer === 'hybrid' ? ['mt0', 'mt1', 'mt2', 'mt3'] : ['a', 'b', 'c']}
             maxZoom={baseLayer === 'hybrid' ? 20 : 19}
           />
-          <MapInteractions drawing={drawing} onLocation={(latlng) => setDraftLocation(latlng)} />
+          <MapInteractions drawing={drawing || correctingLocation} onLocation={pickLocation} />
           <MapViewport selectedSite={selectedSite} userLocation={userLocation} />
           {userLocation && (
             <>
               <Circle center={[userLocation.lat, userLocation.lng]} radius={userLocation.accuracy} pathOptions={{ color: '#1a73e8', weight: 1, fillOpacity: 0.12 }} interactive={false} />
               <CircleMarker center={[userLocation.lat, userLocation.lng]} radius={8} pathOptions={{ color: '#ffffff', weight: 3, fillColor: '#1a73e8', fillOpacity: 1 }}>
-                <Popup>Estás aquí (precisión ±{Math.round(userLocation.accuracy)} m)</Popup>
+                <Popup>{userLocation.manual ? "Estás aquí (fijado a mano)" : `Estás aquí (precisión ±${Math.round(userLocation.accuracy)} m)`}</Popup>
               </CircleMarker>
             </>
           )}
