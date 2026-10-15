@@ -9,11 +9,14 @@ Uso:
       --out ../../client/public/data/salcedo-base.geojson
   # Grilla local en metros con origen conocido (plano de Salcedo): E = x + 390535, N = y + 8241169.3
   python dxf-to-geojson.py plano.dxf --layers Manzana_Comercial --offset 390535,8241169.3
+  # Correccion fina contra las calles de OSM (rotar 'rot' grados alrededor de cx,cy y desplazar dx,dy metros)
+  python dxf-to-geojson.py plano.dxf --layers Manzana_Comercial --offset 390535,8241169.3       --adjust=-10.27,12.05,-0.136,2955.8,3682.6
   # DXF en coordenadas locales: 2 o mas puntos de control "x,y,lng,lat"
   python dxf-to-geojson.py plano.dxf --layers CALLES --control 100,200,-70.589,-15.899 --control 400,250,-70.585,-15.897
 """
 import argparse
 import json
+import math
 import sys
 from collections import Counter
 
@@ -60,6 +63,14 @@ def build_transform(args):
     return lambda x, y: tr.transform(x, y)
 
 
+def build_adjust(spec):
+    if not spec:
+        return lambda x, y: (x, y)
+    ddx, ddy, rot, cx, cy = (float(v) for v in spec.split(","))
+    c, s = math.cos(math.radians(rot)), math.sin(math.radians(rot))
+    return lambda x, y: (c * (x - cx) - s * (y - cy) + cx + ddx, s * (x - cx) + c * (y - cy) + cy + ddy)
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("dxf")
@@ -67,6 +78,7 @@ def main():
     ap.add_argument("--layers", nargs="*", default=[])
     ap.add_argument("--epsg", type=int, default=32719, help="CRS del DXF (UTM 19S por defecto)")
     ap.add_argument("--offset", help="dx,dy a sumar a las coordenadas del DXF antes de reproyectar (grilla local)")
+    ap.add_argument("--adjust", help="dx,dy,rot,cx,cy: rota rot grados alrededor de (cx,cy) y desplaza (dx,dy), en unidades del DXF")
     ap.add_argument("--control", action="append", help="x,y,lng,lat (repetible)")
     ap.add_argument("--out", default="salcedo-base.geojson")
     ap.add_argument("--simplify", type=float, default=0.3, help="tolerancia en unidades del DXF")
@@ -85,7 +97,8 @@ def main():
     wanted = set(args.layers)
     base_transform = build_transform(args)
     dx, dy = (float(v) for v in args.offset.split(",")) if args.offset else (0.0, 0.0)
-    to_wgs = lambda x, y: base_transform(x + dx, y + dy)
+    adjust = build_adjust(args.adjust)
+    to_wgs = lambda x, y: (lambda ax, ay: base_transform(ax + dx, ay + dy))(*adjust(x, y))
     features = []
     for e in msp:
         if e.dxf.layer not in wanted or e.dxftype() not in GEOMETRY_TYPES:
