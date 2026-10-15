@@ -1,14 +1,14 @@
 import { lazy, Suspense, useEffect, useMemo, useState } from 'react';
-import { MapContainer, Marker, Popup, TileLayer, useMap, useMapEvents } from 'react-leaflet';
+import { Circle, CircleMarker, MapContainer, Marker, Popup, TileLayer, useMap, useMapEvents } from 'react-leaflet';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
-import { filterSites } from './sitesGeo';
+import { filterSites, geolocationErrorMessage } from './sitesGeo';
 
 const SitesMap25D = lazy(() => import('./SitesMap25D'));
 
 const salcedoCenter = [-15.8740, -69.9966]; // centro del plano municipal (DWG)
 
-function MapViewport({ selectedSite }) {
+function MapViewport({ selectedSite, userLocation }) {
   const map = useMap();
 
   useEffect(() => {
@@ -22,6 +22,10 @@ function MapViewport({ selectedSite }) {
 
     return () => window.clearTimeout(timer);
   }, [map, selectedSite]);
+
+  useEffect(() => {
+    if (userLocation) map.flyTo([userLocation.lat, userLocation.lng], 18, { duration: 0.6 });
+  }, [map, userLocation]);
 
   return null;
 }
@@ -59,6 +63,8 @@ export function SitesMap({ sites = [], onCollect, onCreate, onUpdate, onDelete }
   const [baseLayer, setBaseLayer] = useState('hybrid');
   const [draftLocation, setDraftLocation] = useState(null);
   const [isLocating, setIsLocating] = useState(false);
+  const [userLocation, setUserLocation] = useState(null);
+  const [locateError, setLocateError] = useState('');
   const [viewMode, setViewMode] = useState('3d');
   const [query, setQuery] = useState('');
   const [draftError, setDraftError] = useState('');
@@ -81,12 +87,31 @@ export function SitesMap({ sites = [], onCollect, onCreate, onUpdate, onDelete }
   );
 
   const locateUser = () => {
-    if (!navigator.geolocation) return;
+    if (isLocating) return;
+    setLocateError('');
+    if (!window.isSecureContext) {
+      setLocateError('El navegador solo permite la ubicación en HTTPS o en localhost.');
+      return;
+    }
+    if (!navigator.geolocation) {
+      setLocateError('Este navegador no permite obtener la ubicación.');
+      return;
+    }
     setIsLocating(true);
-    navigator.geolocation.getCurrentPosition((position) => {
-      setSelectedSite({ latitud: position.coords.latitude, longitud: position.coords.longitude });
+    const found = (position) => {
+      // Objeto nuevo en cada clic: el mapa vuelve a centrarse aunque no te hayas movido.
+      setUserLocation({ lat: position.coords.latitude, lng: position.coords.longitude, accuracy: position.coords.accuracy, at: Date.now() });
       setIsLocating(false);
-    }, () => setIsLocating(false), { enableHighAccuracy: true, timeout: 8000 });
+    };
+    const failed = (error) => {
+      setLocateError(geolocationErrorMessage(error));
+      setIsLocating(false);
+    };
+    // Primero GPS; en PCs sin GPS se reintenta con la ubicación aproximada por red.
+    navigator.geolocation.getCurrentPosition(found, (error) => {
+      if (error.code === 1) return failed(error);
+      navigator.geolocation.getCurrentPosition(found, failed, { enableHighAccuracy: false, timeout: 15000, maximumAge: 300000 });
+    }, { enableHighAccuracy: true, timeout: 10000, maximumAge: 30000 });
   };
 
   const submitDraft = async (event) => {
@@ -124,7 +149,7 @@ export function SitesMap({ sites = [], onCollect, onCreate, onUpdate, onDelete }
         </div>
         <div className="map-filters" aria-label="Filtros del mapa">
           <button type="button" className={`secondary-button compact ${drawing ? 'map-tool-active' : ''}`} onClick={() => setDrawing((value) => !value)}>{drawing ? 'Cancelar pin' : 'Nuevo puesto'}</button>
-          <button type="button" className="secondary-button compact" onClick={locateUser}>{isLocating ? 'Localizando...' : 'Mi ubicación'}</button>
+          <button type="button" className="secondary-button compact" onClick={locateUser} disabled={isLocating}>{isLocating ? 'Localizando...' : 'Mi ubicación'}</button>
           <input type="search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Buscar titular o código" aria-label="Buscar puesto" />
           <select value={viewMode} onChange={(event) => setViewMode(event.target.value)} aria-label="Modo de vista">
             <option value="3d">Vista 2.5D</option>
@@ -149,11 +174,14 @@ export function SitesMap({ sites = [], onCollect, onCreate, onUpdate, onDelete }
         </div>
       </div>
 
+      {locateError && <p className="form-error" role="alert">{locateError}</p>}
+
       <div className="map-legend" aria-label="Leyenda del mapa">
         <span><i className="legend-dot permanent" /> Permanente</span>
         <span><i className="legend-dot ferial" /> Ferial</span>
         <span><i className="legend-dot eventual" /> Eventual</span>
         <span><i className="legend-dot debt" /> Con deuda</span>
+        {userLocation && <span><i className="legend-dot user-location" /> Tu ubicación (±{Math.round(userLocation.accuracy)} m)</span>}
       </div>
 
       <div className="sites-map-canvas">
@@ -165,6 +193,7 @@ export function SitesMap({ sites = [], onCollect, onCreate, onUpdate, onDelete }
               baseLayer={baseLayer}
               drawing={drawing}
               draftLocation={draftLocation}
+              userLocation={userLocation}
               onSelect={setSelectedSite}
               onCollect={onCollect}
               onPickLocation={setDraftLocation}
@@ -179,7 +208,15 @@ export function SitesMap({ sites = [], onCollect, onCreate, onUpdate, onDelete }
             maxZoom={baseLayer === 'hybrid' ? 20 : 19}
           />
           <MapInteractions drawing={drawing} onLocation={(latlng) => setDraftLocation(latlng)} />
-          <MapViewport selectedSite={selectedSite} />
+          <MapViewport selectedSite={selectedSite} userLocation={userLocation} />
+          {userLocation && (
+            <>
+              <Circle center={[userLocation.lat, userLocation.lng]} radius={userLocation.accuracy} pathOptions={{ color: '#1a73e8', weight: 1, fillOpacity: 0.12 }} interactive={false} />
+              <CircleMarker center={[userLocation.lat, userLocation.lng]} radius={8} pathOptions={{ color: '#ffffff', weight: 3, fillColor: '#1a73e8', fillOpacity: 1 }}>
+                <Popup>Estás aquí (precisión ±{Math.round(userLocation.accuracy)} m)</Popup>
+              </CircleMarker>
+            </>
+          )}
           {draftLocation && <Marker position={[draftLocation.lat, draftLocation.lng]} icon={L.divIcon({ className: 'draft-marker', html: '<span>+</span>' })} />}
           {filteredSites.map((site) => (
             <Marker key={site.id} position={[site.latitud, site.longitud]} icon={markerIcon(site)} draggable={Boolean(onUpdate)} eventHandlers={{ click: () => setSelectedSite(site), dragend: (event) => onUpdate?.(site.id, { latitud: event.target.getLatLng().lat, longitud: event.target.getLatLng().lng }) }}>

@@ -2283,6 +2283,16 @@ tbody td {
 .legend-dot.ferial { background: #64748b; }
 .legend-dot.eventual { background: #e5a52b; }
 .legend-dot.debt { background: #d94841; }
+.legend-dot.user-location { background: #1a73e8; box-shadow: 0 0 0 2px #fff, 0 0 0 3px #1a73e8; }
+
+.user-location-dot {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #1a73e8;
+  border: 3px solid #fff;
+  box-shadow: 0 0 0 6px rgba(26, 115, 232, 0.25), 0 2px 6px rgba(0, 0, 0, 0.3);
+}
 
 .sites-map-canvas {
   overflow: hidden;
