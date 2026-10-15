@@ -4499,3 +4499,13 @@ tbody td {
   min-height: 420px;
   color: #64748b;
 }
+
+.map-location-note {
+  margin: 0;
+  padding: 0.7rem 0.9rem;
+  border-radius: 12px;
+  background: #e8f0fe;
+  border: 1px solid rgba(26, 115, 232, 0.25);
+  color: #174ea6;
+  font-size: 0.88rem;
+}
