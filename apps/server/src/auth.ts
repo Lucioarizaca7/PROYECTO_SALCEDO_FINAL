@@ -1,20 +1,13 @@
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
-import { config } from 'dotenv';
-import { resolve } from 'node:path';
-import { Request, Response, NextFunction } from './types';
+import type { Request, Response, NextFunction } from './types.js';
+import { config } from './config.js';
 
 // @ts-ignore
 import { recordAudit, findUserByEmail } from './db.js';
 
-// Cargar variables de entorno desde el directorio raíz del proyecto
-// Desde apps/server:
-//   .. = apps
-//   .. = Proyecto_Final_Salcedo_Rentas (directorio raíz)
-const envPath = resolve(process.cwd(), '..', '..', '.env');
-config({ path: envPath });
-
-const jwtSecret = process.env.JWT_SECRET!; // Assertion que no es null/undefined (verificado arriba)
+// config.ts valida al arrancar que JWT_SECRET exista (y su longitud en producción).
+const jwtSecret = config.jwtSecret;
 
 const emailAliases: Record<string, string> = {
   'super_admin@salcedo.gob.pe': 'admin@salcedo.gob.pe'
@@ -32,7 +25,7 @@ export async function loginUser({ email, password }: { email: string; password: 
   const token = jwt.sign(
     { id: Number(user.id), email: user.email, rol: user.rol },
     jwtSecret,
-    { expiresIn: '15m' }
+    { expiresIn: config.jwtExpiresIn as jwt.SignOptions['expiresIn'] }
   );
 
   return {
