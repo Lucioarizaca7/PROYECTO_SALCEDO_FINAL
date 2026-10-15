@@ -35,14 +35,14 @@ La solución se organiza en capas complementarias:
    - React + Vite + Tailwind CSS
    - Interfaz operativa para administración y cobranza
    - Modo offline con IndexedDB
-   - Mapa geográfico con Leaflet
+   - Mapa geográfico 2D (Leaflet) y 2.5D (mapbox-gl) con el plano municipal de Salcedo
    - Escaneo QR con html5-qrcode
 
 2. Backend y lógica de negocio
-   - Node.js + Express
+   - Node.js + Express 5 + TypeScript
    - API REST para administración, cobros, comercio y control
-   - Gestión de usuarios, roles, auditoría y datos operativos
-   - Base de datos local actual: SQLite con sql.js
+   - Gestión de usuarios, roles (JWT + RBAC), auditoría encadenada y datos operativos
+   - Base de datos: PostgreSQL 16 con migraciones versionadas (`apps/server/migrations`)
 
 3. Analítica y apoyo a la decisión
    - Proyección y análisis de recaudación
@@ -54,24 +54,20 @@ La solución se organiza en capas complementarias:
 ```text
 Proyecto_Final_Salcedo_Rentas/
 ├── apps/
-│   ├── client/          # Frontend de la aplicación
-│   │   ├── src/
-│   │   ├── public/
-│   │   └── package.json
-│   ├── server/          # Backend y lógica de negocio
-│   │   ├── src/
-│   │   ├── data/
-│   │   ├── scripts/
-│   │   ├── tests/
-│   │   └── package.json
-│   └── analytics/       # Módulo analítico y predictivo
+│   ├── client/              # Frontend (React + Vite) y su Dockerfile (Caddy)
+│   ├── server/              # API (Express + PostgreSQL) y su Dockerfile
+│   │   ├── src/             # config.ts, index.ts, auth.ts, db.js, pg.js…
+│   │   ├── src/cli/         # crear-admin.ts
+│   │   ├── migrations/      # esquema SQL versionado
+│   │   ├── scripts/         # migración desde SQLite, plano DXF → GeoJSON, semillas
+│   │   └── tests/           # pruebas con node:test
+│   └── analytics/           # Microservicio analítico (FastAPI) y su Dockerfile
 ├── docs/
-├── data/
-├── README.md
-├── package.json
-├── Dockerfile
-├── render.js
-└── render_fix.bat
+├── docker-compose.yml       # PostgreSQL para desarrollo (puerto 5433)
+├── docker-compose.prod.yml  # Servidor: Caddy + API + analítica + PostgreSQL
+├── Caddyfile                # HTTPS automático y proxy /api → API
+├── .env.example             # Variables de desarrollo
+└── .env.production.example  # Variables del servidor
 ```
 
 ## Stack tecnológico actual
@@ -85,12 +81,15 @@ Proyecto_Final_Salcedo_Rentas/
 - IndexedDB
 
 ### Backend
-- Node.js
-- Express
-- SQL.js
-- JWT
-- CORS
-- bcryptjs
+- Node.js 22+
+- Express 5 + TypeScript
+- PostgreSQL 16 (`pg`)
+- JWT + bcryptjs
+- helmet, CORS y límites de peticiones (express-rate-limit)
+
+### Despliegue
+- Docker Compose
+- Caddy (HTTPS automático con Let's Encrypt)
 
 ### Funcionalidades relacionadas
 - impresión térmica con Bluetooth
@@ -99,22 +98,26 @@ Proyecto_Final_Salcedo_Rentas/
 
 ## Requisitos para ejecutar el proyecto
 
-- Node.js 18 o superior
-- npm
+- Node.js 22 o superior y npm
+- Docker (para PostgreSQL)
 - Navegador moderno con soporte para APIs Web
 
-## Instalación y ejecución
+## Instalación y ejecución en desarrollo
 
 Desde la raíz del proyecto:
 
 ```bash
+docker compose up -d postgres
+cp .env.example .env        # y definir JWT_SECRET
 npm install
 npm run dev
 ```
 
 Esto levanta la aplicación con:
 - Frontend: http://localhost:5173
-- Backend: http://localhost:4000
+- API: http://localhost:3003 (variable `PORT`)
+
+Todas las variables se leen y validan en `apps/server/src/config.ts`: si falta `JWT_SECRET` (o `DATABASE_URL` en producción) el servidor no arranca y explica qué falta.
 
 ### Scripts disponibles
 
@@ -122,14 +125,41 @@ Esto levanta la aplicación con:
 npm run dev          # inicia frontend y backend simultáneamente
 npm run dev:server   # solo backend
 npm run dev:client   # solo frontend
-npm run build        # genera build del cliente
+npm run build        # compila la API (dist/) y el cliente
+npm test             # pruebas del servidor (PostgreSQL) y del cliente
+npm run crear-admin  # crea un usuario super_admin pidiendo la clave
 ```
+
+Las pruebas del servidor usan un esquema propio (`sisrec_test_<pid>`) y no tocan los datos de desarrollo.
 
 ## Verificación de salud del backend
 
 ```bash
-curl http://localhost:4000/api/health
+curl http://localhost:3003/api/v1/health
 ```
+
+## Despliegue en un servidor
+
+Un VPS con Docker Compose y cuatro contenedores: Caddy (único expuesto, puertos 80 y 443), API, analítica y PostgreSQL.
+
+```bash
+cp .env.production.example .env.production   # DOMAIN, POSTGRES_PASSWORD y JWT_SECRET
+docker compose --env-file .env.production -f docker-compose.prod.yml up -d --build
+docker compose --env-file .env.production -f docker-compose.prod.yml exec api node dist/cli/crear-admin.js
+```
+
+- El dominio debe apuntar a la IP del servidor antes de levantar Caddy, que obtiene el certificado solo.
+  Para un servidor de pruebas sin dominio sirve `<ip-con-guiones>.sslip.io`.
+- En producción no se crean usuarios demo; el primer administrador se crea con `crear-admin`.
+- Para probar el stack en la propia PC: `DOMAIN=localhost`, `HTTP_PORT=8080`, `HTTPS_PORT=8443` y abrir https://localhost:8443.
+
+## Seguridad
+
+- Todas las rutas GET de la API exigen token, salvo `/api/v1/health` y `/api/v1/publico/resumen` (cifras agregadas sin datos personales). La prueba `tests/api-seguridad.test.js` falla si una ruta nueva queda abierta.
+- El cobrador de un cobro se toma del token; comprobante, cobro y auditoría se graban en una sola transacción.
+- Límite general de peticiones por IP real (detrás de Caddy, `TRUST_PROXY=1`) y límite estricto en los accesos.
+- helmet y HSTS en producción; errores de la API capturados por un manejador global.
+- Los reportes agrupan por día y mes de Lima (`America/Lima`), aunque las fechas se guardan en UTC.
 
 ## Funcionalidades implementadas
 
@@ -190,11 +220,12 @@ curl http://localhost:4000/api/health
 ### 10. Autenticación y roles
 - Inicio de sesión con distintos perfiles.
 - Roles incluidos: super admin, cobrador, auditor y comerciante.
-- Usuarios de demostración para pruebas funcionales.
+- Usuarios de demostración solo en desarrollo; en producción el primer administrador se crea con `npm run crear-admin`.
 
-## Credenciales de demostración
+## Credenciales de demostración (solo desarrollo)
 
-El proyecto incluye usuarios de prueba para validar el flujo funcional del sistema:
+Fuera de producción el sistema crea usuarios de prueba para validar el flujo funcional.
+Con `NODE_ENV=production` no se crean y la pantalla de acceso no muestra ninguna cuenta.
 
 ```text
 admin@sisrec.demo / sisrec2026

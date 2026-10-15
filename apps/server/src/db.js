@@ -5,11 +5,15 @@ import { fileURLToPath } from 'node:url';
 import bcrypt from 'bcryptjs';
 
 import { pool, withTransaction, closePool, testSchema } from './pg.js';
+import { config } from './config.js';
 
 const migrationsDir = join(dirname(fileURLToPath(import.meta.url)), '..', 'migrations');
 
-const TS = (column) => `to_char(${column}, 'YYYY-MM-DD HH24:MI:SS')`;
-const DAY = (column) => `to_char(${column}, 'YYYY-MM-DD')`;
+// Las fechas se guardan en UTC (TIMESTAMPTZ); se muestran y agrupan por día y mes de Lima,
+// así un cobro de las 19:30 del 31 en Salcedo no cuenta para el mes siguiente.
+const LOCAL = (column) => `(${column} AT TIME ZONE '${config.timeZone}')`;
+const TS = (column) => `to_char(${LOCAL(column)}, 'YYYY-MM-DD HH24:MI:SS')`;
+const DAY = (column) => `to_char(${column}, 'YYYY-MM-DD')`; // solo para columnas DATE
 const CODE = (column) => `'CM-' || lpad(${column}::text, 3, '0')`;
 
 const rows = async (db, text, params = []) => (await db.query(text, params)).rows;
@@ -25,6 +29,12 @@ function toJson(value) {
     return JSON.stringify({ raw: value });
   }
 }
+
+const limaDate = new Intl.DateTimeFormat('en-CA', { timeZone: config.timeZone, year: 'numeric', month: '2-digit', day: '2-digit' });
+
+// Fecha (AAAA-MM-DD) y periodo (AAAA-MM) según el calendario de Salcedo, no el de UTC.
+export const todayInLima = (date = new Date()) => limaDate.format(date);
+export const currentPeriod = (date = new Date()) => todayInLima(date).slice(0, 7);
 
 function clamp(value, min, max) {
   return Math.min(Math.max(value, min), max);
@@ -68,8 +78,27 @@ async function runMigrations() {
   }
 }
 
-async function seedDefaults() {
+// Catálogo de rubros: hace falta en cualquier entorno para registrar comerciantes.
+async function seedCatalogs() {
+  const rubros = [
+    ['comida', 'Comida y venta de alimentos'],
+    ['ropa', 'Venta de ropa y textiles'],
+    ['zapatillas', 'Calzado y zapatillas'],
+    ['otros', 'Otros rubros']
+  ];
+  for (const [nombre, descripcion] of rubros) {
+    await pool.query('INSERT INTO rubros (nombre, descripcion) VALUES ($1, $2) ON CONFLICT (nombre) DO NOTHING', [nombre, descripcion]);
+  }
+}
+
+// Usuarios con claves conocidas y datos de ejemplo: nunca en producción.
+// En producción el primer administrador se crea con `npm run crear-admin`.
+async function seedDemoData() {
   const hasUsers = await first(pool, 'SELECT 1 AS ok FROM usuarios LIMIT 1');
+  if (config.isProduction) {
+    if (!hasUsers) console.warn('No hay usuarios. Cree el primer administrador con: npm run crear-admin');
+    return;
+  }
   if (hasUsers) return;
 
   await withTransaction(async (client) => {
@@ -84,18 +113,8 @@ async function seedDefaults() {
     for (const [nombre, email, password, rol] of demoUsers) {
       await client.query(
         'INSERT INTO usuarios (nombre, email, password_hash, rol_id) VALUES ($1, $2, $3, $4)',
-        [nombre, email, bcrypt.hashSync(password, 10), roleId[rol]]
+        [nombre, email, bcrypt.hashSync(password, config.bcryptSaltRounds), roleId[rol]]
       );
-    }
-
-    const rubros = [
-      ['comida', 'Comida y venta de alimentos'],
-      ['ropa', 'Venta de ropa y textiles'],
-      ['zapatillas', 'Calzado y zapatillas'],
-      ['otros', 'Otros rubros']
-    ];
-    for (const [nombre, descripcion] of rubros) {
-      await client.query('INSERT INTO rubros (nombre, descripcion) VALUES ($1, $2) ON CONFLICT (nombre) DO NOTHING', [nombre, descripcion]);
     }
 
     const zonas = [
@@ -155,18 +174,37 @@ async function seedDefaults() {
 
 // La pantalla de acceso del cliente anuncia admin@sisrec.demo; solo existe fuera de producción.
 async function ensureDemoAdmin() {
-  if (process.env.NODE_ENV === 'production') return;
+  if (config.isProduction) return;
   await pool.query(`
     INSERT INTO usuarios (nombre, email, password_hash, rol_id)
     SELECT 'Administrador Demo', 'admin@sisrec.demo', $1, r.id FROM roles r WHERE r.codigo = 'super_admin'
-    ON CONFLICT (email) DO NOTHING`, [bcrypt.hashSync('sisrec2026', 10)]);
+    ON CONFLICT (email) DO NOTHING`, [bcrypt.hashSync('sisrec2026', config.bcryptSaltRounds)]);
 }
 
-export async function initializeDatabase() {
+export async function initializeDatabase({ seed = true } = {}) {
   await runMigrations();
-  await seedDefaults();
-  await ensureDemoAdmin();
+  await seedCatalogs();
+  if (seed) {
+    await seedDemoData();
+    await ensureDemoAdmin();
+  }
   return pool;
+}
+
+export async function createAdminUser({ nombre, email, password }) {
+  const cleanEmail = String(email || '').trim().toLowerCase();
+  const cleanName = String(nombre || '').trim();
+  if (!cleanName) throw new Error('El nombre es obligatorio');
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)) throw new Error('Correo no válido');
+  if (String(password || '').length < 10) throw new Error('La contraseña debe tener al menos 10 caracteres');
+
+  const created = await first(pool, `
+    INSERT INTO usuarios (nombre, email, password_hash, rol_id)
+    SELECT $1, $2, $3, r.id FROM roles r WHERE r.codigo = 'super_admin'
+    ON CONFLICT (email) DO NOTHING
+    RETURNING id`, [cleanName, cleanEmail, bcrypt.hashSync(String(password), config.bcryptSaltRounds)]);
+  if (!created) throw new Error(`Ya existe un usuario con el correo ${cleanEmail}`);
+  return { id: Number(created.id), nombre: cleanName, email: cleanEmail, rol: 'super_admin' };
 }
 
 // Con PostgreSQL cada mutación ya es durable; se conserva por compatibilidad.
@@ -222,10 +260,30 @@ export async function recordAudit(_db, {
   payloadPrevio = null,
   payloadNuevo = null
 }) {
+  await withTransaction((client) => appendAudit(client, {
+    usuarioId, usuarioRol, rolUsuario, entidad, accion, detalle, metodoHttp, ipOrigen, rutaEndpoint, recursoId, payloadPrevio, payloadNuevo
+  }));
+}
+
+// Anexa un evento de auditoría dentro de la transacción del llamador (client).
+async function appendAudit(client, {
+  usuarioId = 1,
+  usuarioRol = 'anonimo',
+  rolUsuario = null,
+  entidad,
+  accion,
+  detalle = '',
+  metodoHttp = 'POST',
+  ipOrigen = 'unknown',
+  rutaEndpoint = null,
+  recursoId = null,
+  payloadPrevio = null,
+  payloadNuevo = null
+}) {
   const ip = /^[0-9a-fA-F:.]+$/.test(String(ipOrigen || '')) ? String(ipOrigen) : null;
   const rol = String(rolUsuario || usuarioRol || 'anonimo');
 
-  await withTransaction(async (client) => {
+  {
     await client.query('SELECT pg_advisory_xact_lock(7001)');
     const last = await first(client, 'SELECT hash_actual FROM auditoria_logs ORDER BY id DESC LIMIT 1');
     const hashPrev = last?.hash_actual ?? null;
@@ -244,7 +302,7 @@ export async function recordAudit(_db, {
         toJson(payloadPrevio), toJson(payloadNuevo), hashPrev, hashActual
       ]
     );
-  });
+  }
 }
 
 export async function getAuditTrail(db, options = {}) {
@@ -284,10 +342,10 @@ export async function verifyAuditChain(db) {
 // Dashboard, analítica y reportes
 // ---------------------------------------------------------------------------
 
-const PAYMENT_DAY = `to_char(co.fecha_cobro_cliente, 'YYYY-MM-DD HH24:MI:SS')`;
+const PAYMENT_DAY = TS('co.fecha_cobro_cliente');
 
 export async function getOperationalDashboard(db, options = {}) {
-  const period = String(options.periodo || new Date().toISOString().slice(0, 7));
+  const period = String(options.periodo || currentPeriod());
   const like = `${period}%`;
   const totals = await first(db, `
     SELECT COALESCE(SUM(co.monto), 0) AS total, COUNT(*) AS cantidad
@@ -322,7 +380,7 @@ export async function getOperationalDashboard(db, options = {}) {
 }
 
 // La deuda se devenga por liquidación (tarifa vigente - cobros del periodo).
-export async function getPendingDebt(db, period = new Date().toISOString().slice(0, 7), maxMerchants = 300) {
+export async function getPendingDebt(db, period = currentPeriod(), maxMerchants = 300) {
   const merchants = await rows(db, `SELECT id FROM comerciantes WHERE estado = 'activo' ORDER BY id LIMIT $1`, [maxMerchants]);
   let total = 0;
   for (const merchant of merchants) {
@@ -337,7 +395,7 @@ export async function getPendingDebt(db, period = new Date().toISOString().slice
 }
 
 export async function generateForecastProjection(db, options = {}) {
-  const period = String(options.period || new Date().toISOString().slice(0, 7));
+  const period = String(options.period || currentPeriod());
   const horizonDays = Number(options.horizonteDias || options.horizonDays || 90);
   const [year, month] = period.split('-').map(Number);
   const monthSequence = [];
@@ -1075,7 +1133,7 @@ async function findMerchantPost(db, merchantId) {
 }
 
 export async function calculateLiquidation(db, comercianteId, periodo) {
-  periodo = periodo || new Date().toISOString().slice(0, 7);
+  periodo = periodo || currentPeriod();
   const merchant = await findComerciante(db, comercianteId);
   if (!merchant) throw new Error('Comerciante no encontrado');
 
@@ -1125,7 +1183,7 @@ export async function calculateLiquidation(db, comercianteId, periodo) {
   const paid = await first(db, `
     SELECT COALESCE(SUM(monto), 0) AS pagado FROM transacciones
     WHERE comerciante_id = $1 AND tarifa_id = $2 AND estado = 'confirmado'
-      AND to_char(fecha_cobro_cliente, 'YYYY-MM') = $3`, [merchant.id, tarifa.id, periodo]);
+      AND to_char(${LOCAL('fecha_cobro_cliente')}, 'YYYY-MM') = $3`, [merchant.id, tarifa.id, periodo]);
   const montoPagado = Number(paid.pagado);
   const saldo = Number(Math.max(montoTotal - montoPagado, 0).toFixed(2));
 
@@ -1138,7 +1196,7 @@ export async function calculateLiquidation(db, comercianteId, periodo) {
     monto_pagado: montoPagado,
     saldo,
     estado: saldo === 0 ? 'pagado' : 'pendiente',
-    vencida: saldo > 0 && periodo < new Date().toISOString().slice(0, 7),
+    vencida: saldo > 0 && periodo < currentPeriod(),
     no_devengo: false
   };
 }
@@ -1205,15 +1263,21 @@ function createTransactionHash({ comercianteId, cobradorId, monto, concepto, per
   return createHash('sha256').update(seed).digest('hex');
 }
 
-export async function insertCobro(db, payload) {
+// Comprobante, transacción, notificación y auditoría se graban juntos o no se graba nada.
+// Si db ya es una conexión dentro de una transacción (PoolClient) se reutiliza.
+export async function insertCobro(db, payload, { audit = null } = {}) {
+  if (typeof db?.release !== 'function') {
+    return withTransaction((client) => insertCobro(client, payload, { audit }));
+  }
+
   const comercianteId = Number(payload.comerciante_id);
-  const cobradorId = Number(payload.cobrador_id || 1);
+  const cobradorId = Number(payload.cobrador_id);
   const monto = Number(payload.monto);
   const metodoPago = String(payload.metodo_pago || '').trim();
   const concepto = String(payload.concepto || 'Liquidación de deuda').trim();
   const codigoOperacion = String(payload.codigo_operacion || payload.idempotency_key || '').trim();
   const observaciones = String(payload.observaciones || '').trim();
-  const allowedMethods = ['efectivo', 'yape', 'plin', 'pos', 'manual'];
+  const allowedMethods = ['efectivo', 'yape', 'plin', 'pos'];
 
   if (!comercianteId || !cobradorId || !Number.isFinite(monto) || monto <= 0 || !allowedMethods.includes(metodoPago)) {
     throw new Error('Comerciante, monto positivo y método de pago válido son obligatorios');
@@ -1228,7 +1292,7 @@ export async function insertCobro(db, payload) {
     cobradorId,
     monto,
     concepto,
-    periodo: payload.periodo || new Date().toISOString().slice(0, 7),
+    periodo: payload.periodo || currentPeriod(),
     metodoPago,
     salt: uniqueCode
   });
@@ -1243,8 +1307,6 @@ export async function insertCobro(db, payload) {
   const collector = await first(db, 'SELECT id FROM usuarios WHERE id = $1', [cobradorId]);
   if (!collector) throw new Error('El cobrador indicado no existe');
 
-  const storedMethod = metodoPago === 'manual' ? 'efectivo' : metodoPago;
-  const storedNotes = metodoPago === 'manual' ? `[manual] ${observaciones}`.trim() : observaciones;
   const sequence = await first(db, `SELECT nextval('comprobantes_recibo_seq') AS n`);
   const number = `R-${String(sequence.n).padStart(6, '0')}`;
   const comprobante = await first(db, `INSERT INTO comprobantes (numero_correlativo, tipo) VALUES ($1, 'recibo') RETURNING id`, [number]);
@@ -1255,8 +1317,8 @@ export async function insertCobro(db, payload) {
       (comerciante_id, tarifa_id, cobrador_id, comprobante_id, monto, concepto, metodo_pago, codigo_operacion,
        hash_transaccion, observaciones, estado, fecha_cobro_cliente)
     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'confirmado', $11) RETURNING id`,
-  [comercianteId, liquidation.tarifa?.id, cobradorId, comprobante.id, monto, concepto, storedMethod, uniqueCode,
-    hashTransaccion, storedNotes || null, clientDate]);
+  [comercianteId, liquidation.tarifa?.id, cobradorId, comprobante.id, monto, concepto, metodoPago, uniqueCode,
+    hashTransaccion, observaciones || null, clientDate]);
 
   await createNotification(db, {
     comerciante_id: comercianteId,
@@ -1265,10 +1327,11 @@ export async function insertCobro(db, payload) {
     mensaje: `Cobro confirmado para ${liquidation.comerciante?.nombre || 'comerciante'} por S/ ${Number(monto).toFixed(2)}. Comprobante ${number}.`
   });
 
-  return {
+  const result = {
     id: Number(cobro.id),
     comprobante: number,
     comerciante_id: comercianteId,
+    cobrador_id: cobradorId,
     monto,
     metodo_pago: metodoPago,
     codigo_operacion: uniqueCode,
@@ -1277,6 +1340,18 @@ export async function insertCobro(db, payload) {
     estado: 'confirmado',
     saldo_restante: Number((liquidation.saldo - monto).toFixed(2))
   };
+
+  if (audit) {
+    await appendAudit(db, {
+      ...audit,
+      usuarioId: audit.usuarioId ?? cobradorId,
+      entidad: 'cobros',
+      detalle: audit.detalle || `Cobro ${number} por S/ ${monto.toFixed(2)} al comerciante ${comercianteId}`,
+      recursoId: result.id,
+      payloadNuevo: result
+    });
+  }
+  return result;
 }
 
 async function logSyncQueue({ deviceId, hash, payload, estado, error }) {
@@ -1292,18 +1367,18 @@ async function logSyncQueue({ deviceId, hash, payload, estado, error }) {
   }
 }
 
-export async function syncOfflineCobro(_db, payload) {
+export async function syncOfflineCobro(_db, payload, { audit = null } = {}) {
   const normalized = {
     ...payload,
     comerciante_id: Number(payload.comerciante_id ?? payload.comercianteId ?? 0),
-    cobrador_id: Number(payload.cobrador_id ?? payload.cobradorId ?? 1),
+    cobrador_id: Number(payload.cobrador_id ?? payload.cobradorId ?? 0),
     monto: Number(payload.monto ?? 0),
     metodo_pago: String(payload.metodo_pago ?? payload.metodoPago ?? 'efectivo').trim(),
     concepto: String(payload.concepto || 'Liquidación de deuda').trim(),
     codigo_operacion: String(payload.codigo_operacion || payload.idempotency_key || payload.codigoOperacion || '').trim(),
     hash_transaccion: String(payload.hash_transaccion || payload.hashTransaccion || '').trim(),
     fecha_cobro: payload.fecha_cobro || payload.fechaCobro || new Date().toISOString(),
-    periodo: payload.periodo || new Date().toISOString().slice(0, 7)
+    periodo: payload.periodo || currentPeriod()
   };
 
   if (!normalized.comerciante_id || !normalized.cobrador_id || !Number.isFinite(normalized.monto) || normalized.monto <= 0) {
@@ -1332,7 +1407,7 @@ export async function syncOfflineCobro(_db, payload) {
         'SELECT id FROM transacciones WHERE hash_transaccion = $1 OR codigo_operacion = $2',
         [hashValue, normalized.codigo_operacion || hashValue]);
       if (duplicate) return null;
-      return insertCobro(client, { ...normalized, hash_transaccion: hashValue });
+      return insertCobro(client, { ...normalized, hash_transaccion: hashValue }, { audit });
     });
 
     if (!result) {

@@ -312,9 +312,10 @@ export class ApiService {
 }
 
 // Instancia única del servicio (singleton)
-const apiBaseUrl =
-  typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_API_URL
-    ? import.meta.env.VITE_API_URL
-    : 'http://localhost:3003';
+// VITE_API_URL es solo el origen del servidor (p. ej. https://sisrec.example.pe), sin /api;
+// si alguien lo escribe con /api o /api/v1 se recorta para no duplicar la ruta.
+const apiBaseUrl = String(
+  (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_API_URL) || 'http://localhost:3003'
+).replace(/\/+$/, '').replace(/\/api(?:\/v1)?$/, '');
 
 export const apiService = new ApiService(apiBaseUrl);

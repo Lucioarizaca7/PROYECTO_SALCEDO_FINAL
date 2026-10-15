@@ -1,14 +1,19 @@
 import express from 'express';
+import type { NextFunction, Request, Response } from 'express';
 import cors from 'cors';
-import dotenv from 'dotenv';
+import helmet from 'helmet';
 import multer from 'multer';
 import rateLimit from 'express-rate-limit';
+import type { Server } from 'node:http';
 import { pathToFileURL } from 'node:url';
 
-import { loginUser, hasRoleAccess, requireAuth, requireRoles, auditMutation } from './auth';
-import { validateLogin, handleValidationErrors, validateComerciante, validateCobro } from './validation';
+import { config } from './config.js';
+import { loginUser, hasRoleAccess, requireAuth, requireRoles, auditMutation } from './auth.js';
+import { validateLogin, handleValidationErrors, validateComerciante, validateCobro } from './validation.js';
 import {
   initializeDatabase,
+  closeDatabase,
+  currentPeriod,
   recordAudit,
   getDbStats,
   verifyAuditChain,
@@ -51,69 +56,75 @@ import {
 } from './db.js';
 import { importPadronPreview, previewPadronSheets, readPadronWorkbook } from './padronImport.js';
 
-dotenv.config();
-
 export const app = express();
-const port = process.env.PORT || 4000;
+const port = config.port;
 
-const allowedOrigins = [
+// Detrás de Caddy/Nginx, req.ip debe ser la IP real del usuario y no la del proxy;
+// si no, todos comparten el mismo contador del límite de peticiones.
+app.set('trust proxy', config.trustProxy);
+
+// Cabeceras de seguridad. HSTS solo en producción (en localhost no hay HTTPS).
+app.use(helmet({
+  strictTransportSecurity: config.isProduction ? { maxAge: 31536000, includeSubDomains: true } : false
+}));
+
+const devOrigins = [
   'http://localhost:5173',
   'http://localhost:5174',
   'http://127.0.0.1:5173',
-  'http://127.0.0.1:5174',
-  ...(process.env.FRONTEND_URL ? process.env.FRONTEND_URL.split(',') : [])
-].filter(Boolean);
+  'http://127.0.0.1:5174'
+];
+const allowedOrigins = new Set([...(config.isProduction ? [] : devOrigins), ...config.frontendOrigins]);
 
 app.use(cors({
   origin: (origin, callback) => {
-    if (!origin || allowedOrigins.includes(origin) || /^https?:\/\/(localhost|127\.0\.0\.1):\d+$/.test(origin)) {
-      callback(null, true);
-      return;
-    }
-
-    callback(new Error('Origen no permitido por CORS'));
+    const localDev = !config.isProduction && /^https?:\/\/(localhost|127\.0\.0\.1):\d+$/.test(origin || '');
+    // Un origen no permitido simplemente no recibe cabeceras CORS: el navegador bloquea la respuesta.
+    callback(null, !origin || allowedOrigins.has(origin) || localDev);
   },
   credentials: true
 }));
-// Configurar rate limiting
-const rateLimiter = rateLimit({
-  windowMs: Number(process.env.RATE_LIMIT_WINDOW_MS || 900000), // 15 minutos por defecto
-  max: Number(process.env.RATE_LIMIT_MAX_REQUESTS || 100), // límite de requests por ventana
-  // En desarrollo no se limita el tráfico local (el SPA hace ~12 peticiones por carga)
-  skip: (req) => process.env.NODE_ENV !== 'production' && /^(::1|127\.0\.0\.1|::ffff:127\.0\.0\.1)$/.test(req.ip || ''),
-  standardHeaders: true, // devolver información de rate limit en los headers
-  legacyHeaders: false, // desactivar headers X-RateLimit-*
-  message: {
-    error: 'Demasiadas requests desde esta IP, por favor intente de nuevo después de 15 minutos'
-  }
+
+const isLocalRequest = (req: Request) => /^(::1|127\.0\.0\.1|::ffff:127\.0\.0\.1)$/.test(req.ip || '');
+
+// Límite general alto: protege la API sin bloquear a una oficina que comparte IP.
+app.use(rateLimit({
+  windowMs: config.rateLimit.windowMs,
+  limit: config.rateLimit.max,
+  skip: (req) => !config.isProduction && isLocalRequest(req),
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { message: 'Demasiadas peticiones desde esta IP. Intente de nuevo en unos minutos.' }
+}));
+
+// Límite estricto solo para los accesos: frena la adivinación de claves y de DNI.
+const loginLimiter = rateLimit({
+  windowMs: config.rateLimit.windowMs,
+  limit: config.rateLimit.loginMax,
+  skipSuccessfulRequests: true,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { message: 'Demasiados intentos de acceso. Espere 15 minutos e intente de nuevo.' }
 });
 
-// Aplicar rate limiting a todas las requests
-app.use(rateLimiter);
+app.use(express.json({ limit: '1mb' }));
 
-// Headers de seguridad
-app.use((req, res, next) => {
-  // Prevenir ataques de tipo clickjacking
-  res.setHeader('X-Frame-Options', 'DENY');
+// Roles internos que pueden ver datos personales del padrón y de los cobros (Ley 29733).
+const STAFF = ['super_admin', 'cobrador', 'auditor'];
+const staffOnly = [requireAuth, requireRoles(STAFF)];
 
-  // Prevenir MIME sniffing
-  res.setHeader('X-Content-Type-Options', 'nosniff');
-
-  // Protección contra XSS (heredado pero aún útil en navegadores antiguos)
-  res.setHeader('X-XSS-Protection', '1; mode=block');
-
-  // Referrer Policy
-  res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
-
-  // HSTS en producción (descomentar si se usa HTTPS)
-  // if (process.env.NODE_ENV === 'production') {
-  //   res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
-  // }
-
-  next();
-});
-
-app.use(express.json());
+// Contexto de auditoría tomado del token, nunca del cuerpo de la petición.
+function auditContext(req: Request, accion: string) {
+  return {
+    usuarioId: Number(req.user?.id),
+    usuarioRol: req.user?.rol,
+    rolUsuario: req.user?.rol,
+    accion,
+    metodoHttp: req.method,
+    ipOrigen: req.ip || 'unknown',
+    rutaEndpoint: req.originalUrl
+  };
+}
 
 const padronUpload = multer({
   storage: multer.memoryStorage(),
@@ -145,28 +156,34 @@ app.get('/api/v1/health', (_req, res) => {
   res.json({ status: 'ok', message: 'SISREC Salcedo API funcionando' });
 });
 
-app.get('/api/v1/dashboard', async (req, res) => {
-  const period = String(req.query.periodo || new Date().toISOString().slice(0, 7));
-  const metrics = await getOperationalDashboard(db, { periodo: period });
+function dashboardStats(metrics) {
   const totalDeuda = Number(metrics.deudaPendiente || 0);
   const totalCobrado = Number(metrics.recaudacion || 0);
   const totalComerciantes = Number(metrics.comerciantesActivos || 0);
   const deudaPendiente = Number(metrics.deudaPendiente || totalDeuda || 0);
   const totaleDeuda = totalDeuda > 0 ? totalDeuda : deudaPendiente;
   const morosidad = totaleDeuda > 0 ? Number(((deudaPendiente / totaleDeuda) * 100).toFixed(1)) : 0;
+  return {
+    recaudacion: Number(metrics.recaudacion || totalCobrado || 0),
+    pagos: Number(metrics.pagos || 0),
+    deudaPendiente,
+    deudaTotal: totaleDeuda,
+    comerciantesActivos: totalComerciantes,
+    morosidad,
+    totalRecaudado: Number(metrics.recaudacion || totalCobrado || 0),
+    totalCobros: Number(metrics.pagos || 0),
+    totalComerciantes
+  };
+}
+
+app.get('/api/v1/dashboard', ...staffOnly, async (req, res) => {
+  const period = String(req.query.periodo || currentPeriod());
+  const metrics = await getOperationalDashboard(db, { periodo: period });
 
   res.json({
     stats: {
-      recaudacion: Number(metrics.recaudacion || totalCobrado || 0),
-      pagos: Number(metrics.pagos || 0),
-      deudaPendiente,
-      deudaTotal: totaleDeuda,
-      comerciantesActivos: totalComerciantes,
-      morosidad,
-      totalRecaudado: Number(metrics.recaudacion || totalCobrado || 0),
-      totalCobros: Number(metrics.pagos || 0),
-      totalComerciantes,
-      ...getDbStats(db)
+      ...(await getDbStats(db)),
+      ...dashboardStats(metrics)
     },
     operational: {
       porZona: metrics.porZona || [],
@@ -176,9 +193,40 @@ app.get('/api/v1/dashboard', async (req, res) => {
   });
 });
 
-app.get('/api/v1/analitica/prediccion', async (req, res) => {
+// Transparencia para la página de inicio: solo cifras agregadas, sin nombres ni DNI.
+// Se guarda 60 s en memoria porque calcular la deuda recorre todo el padrón.
+let publicSummaryCache: { at: number; body: unknown } | null = null;
+
+app.get('/api/v1/publico/resumen', async (_req, res) => {
+  if (publicSummaryCache && Date.now() - publicSummaryCache.at < 60_000) {
+    return res.json(publicSummaryCache.body);
+  }
+  const periodo = currentPeriod();
+  const [metrics, puestos] = await Promise.all([getOperationalDashboard(db, { periodo }), getPuestos(db)]);
+  const stats = dashboardStats(metrics);
+  const body = {
+    periodo,
+    stats: {
+      recaudacion: stats.recaudacion,
+      pagos: stats.pagos,
+      deudaPendiente: stats.deudaPendiente,
+      morosidad: stats.morosidad,
+      totalComerciantes: stats.totalComerciantes,
+      sitios: puestos.length
+    },
+    operational: {
+      porZona: (metrics.porZona || []).map(({ zona, comerciantes, recaudado }) => ({ zona, comerciantes, recaudado })),
+      porRubro: (metrics.porRubro || []).map(({ rubro, recaudado, pagos }) => ({ rubro, recaudado, pagos })),
+      porCobrador: []
+    }
+  };
+  publicSummaryCache = { at: Date.now(), body };
+  return res.json(body);
+});
+
+app.get('/api/v1/analitica/prediccion', ...staffOnly, async (req, res) => {
   try {
-    const period = String(req.query.periodo || new Date().toISOString().slice(0, 7));
+    const period = String(req.query.periodo || currentPeriod());
     const forecast = await generateForecastProjection(db, { period, horizonteDias: Number(req.query.horizonte_dias || req.query.horizon || 90) });
     return res.json({ data: forecast, message: 'Proyección de recaudación generada correctamente' });
   } catch (error) {
@@ -186,7 +234,7 @@ app.get('/api/v1/analitica/prediccion', async (req, res) => {
   }
 });
 
-app.get('/api/v1/analitica/riesgo', async (req, res) => {
+app.get('/api/v1/analitica/riesgo', ...staffOnly, async (req, res) => {
   try {
     const limit = Math.min(Math.max(Number(req.query.limit || 5), 1), 20);
     const data = await getRiskDashboard(db, { limit });
@@ -196,18 +244,18 @@ app.get('/api/v1/analitica/riesgo', async (req, res) => {
   }
 });
 
-app.get('/api/v1/roles', (_req, res) => {
+app.get('/api/v1/roles', requireAuth, (_req, res) => {
   res.json({ roles });
 });
 
-app.get('/api/v1/catalogos', async (_req, res) => {
+app.get('/api/v1/catalogos', requireAuth, async (_req, res) => {
   res.json({
     rubros: await getRubros(db),
     zonas: await getZonas(db)
   });
 });
 
-app.get('/api/v1/zonas', async (_req, res) => {
+app.get('/api/v1/zonas', requireAuth, async (_req, res) => {
   try {
     res.json({
       data: await getZonas(db),
@@ -246,7 +294,7 @@ app.delete('/api/v1/zonas/:id', requireAuth, requireRoles(['super_admin', 'audit
   }
 });
 
-app.get('/api/v1/calles', async (_req, res) => {
+app.get('/api/v1/calles', requireAuth, async (_req, res) => {
   try {
     const zonaId = Number(_req.query.zona_id || 0);
     res.json({
@@ -285,7 +333,7 @@ app.delete('/api/v1/calles/:id', requireAuth, requireRoles(['super_admin', 'audi
   }
 });
 
-app.post('/api/v1/portal/login', async (req, res) => {
+app.post('/api/v1/portal/login', loginLimiter, async (req, res) => {
   try {
     const identifier = String(req.body?.identifier || '').trim();
     if (!identifier) {
@@ -299,7 +347,7 @@ app.post('/api/v1/portal/login', async (req, res) => {
   }
 });
 
-app.get('/api/v1/portal/:comercianteId/notificaciones', async (req, res) => {
+app.get('/api/v1/portal/:comercianteId/notificaciones', ...staffOnly, async (req, res) => {
   try {
     const comercianteId = Number(req.params.comercianteId || 0);
     const data = await getNotifications(db, comercianteId);
@@ -322,7 +370,7 @@ app.post('/api/v1/notificaciones',
   }
 );
 
-app.get('/api/v1/comprobantes/:id/pdf', async (req, res) => {
+app.get('/api/v1/comprobantes/:id/pdf', ...staffOnly, async (req, res) => {
   try {
     const payment = (await getCobros(db)).find((item) => item.id === Number(req.params.id) || String(item.comprobante) === String(req.params.id) || String(item.codigo_operacion) === String(req.params.id));
     if (!payment) {
@@ -336,7 +384,7 @@ app.get('/api/v1/comprobantes/:id/pdf', async (req, res) => {
       `Concepto: ${payment.concepto || 'Liquidación de deuda'}`,
       `Monto: S/ ${Number(payment.monto || 0).toFixed(2)}`,
       `Método: ${payment.metodo_pago || 'efectivo'}`,
-      `Fecha: ${payment.fecha_cobro || new Date().toISOString()}`,
+      `Fecha: ${payment.fecha_cobro || 'N/D'}`,
       `Hash: ${payment.hash_transaccion || 'sha256:local'}`
     ];
 
@@ -382,7 +430,7 @@ app.get('/api/v1/comprobantes/:id/pdf', async (req, res) => {
   }
 });
 
-app.get('/api/v1/reportes', async (req, res) => {
+app.get('/api/v1/reportes', ...staffOnly, async (req, res) => {
   const options = {
     periodo: req.query.periodo,
     zona_id: req.query.zona_id,
@@ -402,7 +450,7 @@ app.get('/api/v1/reportes', async (req, res) => {
   return res.json({ data, total: data.length, periodo: options.periodo || null });
 });
 
-app.get('/api/v1/comerciantes', async (req, res) => {
+app.get('/api/v1/comerciantes', ...staffOnly, async (req, res) => {
   const page = Math.max(Number(req.query.page || 1), 1);
   const limit = Math.min(Math.max(Number(req.query.limit || 10), 1), 100);
   const filters = {
@@ -470,7 +518,7 @@ app.post('/api/v1/comerciantes/importar-padron',
   }
 );
 
-app.get('/api/v1/comerciantes/:id', async (req, res) => {
+app.get('/api/v1/comerciantes/:id', ...staffOnly, async (req, res) => {
   const comerciante = (await getComerciantes(db, { search: String(Number(req.params.id)), limit: 100 })).find((item) => item.id === Number(req.params.id));
 
   if (!comerciante) {
@@ -480,7 +528,7 @@ app.get('/api/v1/comerciantes/:id', async (req, res) => {
   return res.json({ data: comerciante });
 });
 
-app.get('/api/v1/comerciantes/:id/preferencias', async (req, res) => {
+app.get('/api/v1/comerciantes/:id/preferencias', ...staffOnly, async (req, res) => {
   try {
     const comercianteId = Number(req.params.id || 0);
     const data = await getComerciantePreferencias(db, comercianteId);
@@ -580,7 +628,7 @@ app.delete('/api/v1/comerciantes/:id',
   }
 );
 
-app.get('/api/v1/puestos', async (_req, res) => {
+app.get('/api/v1/puestos', ...staffOnly, async (_req, res) => {
   const data = await getPuestos(db);
   res.json({ data, total: data.length });
 });
@@ -668,7 +716,7 @@ app.delete('/api/v1/puestos-mapa/:id',
   }
 );
 
-app.get('/api/v1/tarifas', async (_req, res) => {
+app.get('/api/v1/tarifas', requireAuth, async (_req, res) => {
   const data = await getTarifas(db, { rubro_id: _req.query.rubro_id });
   res.json({ data, total: data.length });
 });
@@ -712,7 +760,7 @@ app.put('/api/v1/tarifas/:id',
   }
 );
 
-app.get('/api/v1/liquidaciones/:comercianteId', async (req, res) => {
+app.get('/api/v1/liquidaciones/:comercianteId', ...staffOnly, async (req, res) => {
   try {
     return res.json({ data: await calculateLiquidation(db, req.params.comercianteId, String(req.query.periodo || '')) });
   } catch (error) {
@@ -720,7 +768,7 @@ app.get('/api/v1/liquidaciones/:comercianteId', async (req, res) => {
   }
 });
 
-app.get('/api/v1/comerciantes/:comercianteId/saldo', async (req, res) => {
+app.get('/api/v1/comerciantes/:comercianteId/saldo', ...staffOnly, async (req, res) => {
   try {
     return res.json({ data: await calculateLiquidation(db, req.params.comercianteId, String(req.query.periodo || '')) });
   } catch (error) {
@@ -728,7 +776,7 @@ app.get('/api/v1/comerciantes/:comercianteId/saldo', async (req, res) => {
   }
 });
 
-app.get('/api/v1/cobros', async (_req, res) => {
+app.get('/api/v1/cobros', ...staffOnly, async (_req, res) => {
   const data = await getCobros(db);
   res.json({ data, total: data.length });
 });
@@ -736,27 +784,22 @@ app.get('/api/v1/cobros', async (_req, res) => {
 app.post('/api/v1/cobros/sincronizar',
   requireAuth,
   requireRoles(['super_admin', 'cobrador']),
-  auditMutation({
-    db,
-    accion: 'SINCRONIZAR_COBRO_OFFLINE',
-    entidad: 'cobros',
-    serializeResponse: (body) => body?.data ?? body
-  }),
   async (req, res) => {
     const idempotencyKey = String(req.headers['x-idempotency-key'] || req.body.hash_transaccion || req.body.hashTransaccion || '').trim();
     const payload = {
       ...req.body,
       comerciante_id: req.body.comerciante_id ?? req.body.comercianteId,
-      cobrador_id: req.body.cobrador_id ?? req.body.cobradorId ?? req.user?.id ?? 1,
+      // El cobrador es siempre quien inició sesión; el navegador no puede elegirlo.
+      cobrador_id: req.user.id,
       metodo_pago: req.body.metodo_pago ?? req.body.metodoPago ?? 'efectivo',
       hash_transaccion: idempotencyKey || req.body.hash_transaccion || req.body.hashTransaccion || undefined,
       codigo_operacion: req.body.codigo_operacion ?? req.body.codigoOperacion ?? (idempotencyKey || undefined),
       fecha_cobro: req.body.fecha_cobro || req.body.fechaCobro || new Date().toISOString(),
-      periodo: req.body.periodo || new Date().toISOString().slice(0, 7)
+      periodo: req.body.periodo || currentPeriod()
     };
 
     try {
-      const result = await syncOfflineCobro(db, payload);
+      const result = await syncOfflineCobro(db, payload, { audit: auditContext(req, 'SINCRONIZAR_COBRO_OFFLINE') });
       if (result.status === 'IGNORED') {
         return res.status(200).json(result);
       }
@@ -793,22 +836,18 @@ app.post('/api/v1/cobros',
   requireRoles(['super_admin', 'cobrador']),
   validateCobro,
   handleValidationErrors,
-  auditMutation({
-    db,
-    accion: 'REGISTRAR_COBRO',
-    entidad: 'cobros',
-    serializeResponse: (body) => body?.data ?? body
-  }),
   async (req, res) => {
     try {
-      return res.status(201).json({ data: await insertCobro(db, req.body || {}), message: 'Cobro registrado correctamente' });
+      // cobrador_id sale del token; comprobante, cobro y auditoría se graban en una sola transacción.
+      const data = await insertCobro(db, { ...(req.body || {}), cobrador_id: req.user.id }, { audit: auditContext(req, 'REGISTRAR_COBRO') });
+      return res.status(201).json({ data, message: 'Cobro registrado correctamente' });
     } catch (error) {
       return res.status(400).json({ message: error.message || 'No se pudo registrar el cobro' });
     }
   }
 );
 
-app.post('/api/v1/auth/login', validateLogin, handleValidationErrors, async (req, res) => {
+app.post('/api/v1/auth/login', loginLimiter, validateLogin, handleValidationErrors, async (req, res) => {
   try {
     const result = await loginUser(req.body, db);
     return res.json(result);
@@ -818,22 +857,58 @@ app.post('/api/v1/auth/login', validateLogin, handleValidationErrors, async (req
   }
 });
 
-app.get('/api/v1/auth/permissions/:role/:requiredRole', (req, res) => {
+app.get('/api/v1/auth/permissions/:role/:requiredRole', requireAuth, (req, res) => {
   const { role, requiredRole } = req.params;
-  res.json({ allowed: hasRoleAccess(role, requiredRole) });
+  res.json({ allowed: hasRoleAccess(String(role), String(requiredRole)) });
 });
 
-async function startServer() {
+// Rutas de la API que no existen.
+app.use('/api', (_req, res) => {
+  res.status(404).json({ message: 'Ruta no encontrada' });
+});
+
+// Manejador global: Express 5 envía aquí los errores de las rutas async en lugar de tumbar el proceso.
+app.use((error: any, req: Request, res: Response, _next: NextFunction) => {
+  const status = Number(error?.status || error?.statusCode) || 500;
+  if (status >= 500) console.error(`[${new Date().toISOString()}] ${req.method} ${req.originalUrl}`, error);
+  if (res.headersSent) return;
+  res.status(status).json({
+    message: status >= 500 ? 'Error interno del servidor' : (error?.message || 'Petición inválida')
+  });
+});
+
+async function startServer(listenPort: number = port) {
   db = await initializeDatabase();
 
-  app.listen(port, () => {
-    console.log(`SISREC API running on http://localhost:${port}`);
+  const server = await new Promise<Server>((resolve) => {
+    const instance = app.listen(listenPort, () => resolve(instance));
   });
+  const address = server.address();
+  console.log(`SISREC API (${config.nodeEnv}) escuchando en el puerto ${typeof address === 'object' && address ? address.port : listenPort}`);
+
+  const shutdown = (signal: string) => {
+    console.log(`Recibida ${signal}. Cerrando servidor...`);
+    server.close(async () => {
+      await closeDatabase();
+      process.exit(0);
+    });
+  };
+  process.on('SIGTERM', () => shutdown('SIGTERM'));
+  process.on('SIGINT', () => shutdown('SIGINT'));
+  return server;
 }
+
+// Último recurso: registrar en el log en vez de morir en silencio.
+process.on('unhandledRejection', (reason) => {
+  console.error('Promesa rechazada sin manejar:', reason);
+});
 
 // Exportar startServer para uso externo
 export { startServer };
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  startServer();
+  startServer().catch((error) => {
+    console.error('No se pudo iniciar SISREC API:', error);
+    process.exit(1);
+  });
 }
