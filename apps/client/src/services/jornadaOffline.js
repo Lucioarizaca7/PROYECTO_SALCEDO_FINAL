@@ -9,6 +9,9 @@ const limaDate = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Lima', ye
 /** Fecha AAAA-MM-DD en Salcedo (no en UTC: a las 19:30 de Lima ya es "mañana" en UTC). */
 export const hoyEnLima = (date = new Date()) => limaDate.format(date);
 
+/** Periodo AAAA-MM en Salcedo. toISOString().slice(0, 7) daría el mes siguiente desde las 19:00 del último día. */
+export const periodoEnLima = (date = new Date()) => hoyEnLima(date).slice(0, 7);
+
 const sinTildes = (value) => String(value ?? '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().trim();
 
 export function normalizarComerciante(item, descargadoEn = new Date().toISOString()) {

@@ -1025,6 +1025,13 @@ function parseComercianteId(value) {
   return id;
 }
 
+// Coordenada del puesto: vacía (null, '' o no numérica) queda null; Number(null) daría 0 (golfo de Guinea).
+function parseCoord(value) {
+  if (value === null || value === undefined || value === '') return null;
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
+}
+
 async function validatePuestoPlacement(db, { comercianteId, zonaId, direccion, estado, excludeId = null }) {
   if (!['ocupado', 'disponible', 'reservado', 'inactivo'].includes(estado)) throw new ValidationError('Estado de puesto no válido');
   if (estado === 'ocupado' && !comercianteId) throw new ValidationError('Un puesto ocupado necesita un comerciante titular');
@@ -1049,8 +1056,8 @@ export async function insertPuesto(db, payload) {
   const metros = Number(payload.metros_cuadrados);
   const estado = String(payload.estado || (comercianteId ? 'ocupado' : 'disponible')).trim();
   const codigo = String(payload.codigo_puesto || payload.codigoPuesto || '').trim() || null;
-  const latitud = Number(payload.latitud);
-  const longitud = Number(payload.longitud);
+  const latitud = parseCoord(payload.latitud);
+  const longitud = parseCoord(payload.longitud);
 
   if (!zonaId || !direccion || !Number.isFinite(metros) || metros <= 0) {
     throw new ValidationError('Zona, dirección y metros cuadrados válidos son obligatorios');
@@ -1064,8 +1071,7 @@ export async function insertPuesto(db, payload) {
     await db.query(`
       INSERT INTO puestos (id, comerciante_id, zona_id, direccion, metros_cuadrados, estado, codigo_puesto, latitud, longitud)
       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
-    [next.id, comercianteId, zonaId, direccion, metros, estado, finalCode,
-      Number.isFinite(latitud) ? latitud : null, Number.isFinite(longitud) ? longitud : null]);
+    [next.id, comercianteId, zonaId, direccion, metros, estado, finalCode, latitud, longitud]);
   } catch (error) {
     if (error.code === '23505') throw new ConflictError(`El código de puesto ${finalCode} ya está asignado`);
     throw error;
@@ -1086,8 +1092,9 @@ export async function updatePuesto(db, id, payload) {
   // Puestos del padrón ferial pueden no tener metraje todavía: se respeta mientras no se envíe uno.
   const metros = payload.metros_cuadrados === undefined ? current.metros_cuadrados : Number(payload.metros_cuadrados);
   const estado = String(payload.estado ?? (requested === undefined ? current.estado : requested ? 'ocupado' : 'disponible')).trim();
-  const latitud = Number(payload.latitud ?? current.latitud);
-  const longitud = Number(payload.longitud ?? current.longitud);
+  // Sin coordenada en el pedido se conserva la actual (también si es null).
+  const latitud = payload.latitud === undefined ? parseCoord(current.latitud) : parseCoord(payload.latitud);
+  const longitud = payload.longitud === undefined ? parseCoord(current.longitud) : parseCoord(payload.longitud);
 
   if (!zonaId || !direccion || (metros !== null && (!Number.isFinite(metros) || metros <= 0))) {
     throw new ValidationError('Zona, dirección y metros cuadrados válidos son obligatorios');
@@ -1098,7 +1105,7 @@ export async function updatePuesto(db, id, payload) {
     UPDATE puestos
     SET comerciante_id = $1, zona_id = $2, direccion = $3, metros_cuadrados = $4, estado = $5, latitud = $6, longitud = $7
     WHERE id = $8`,
-  [comercianteId, zonaId, direccion, metros, estado, Number.isFinite(latitud) ? latitud : null, Number.isFinite(longitud) ? longitud : null, puestoId]);
+  [comercianteId, zonaId, direccion, metros, estado, latitud, longitud, puestoId]);
 
   return findPuesto(db, puestoId);
 }
@@ -1306,10 +1313,12 @@ export async function calcularLiquidacion(db, comercianteId, periodo, { dia = nu
   const base = Number(tarifa.monto_fijo) * multiplier;
   const variable = Number(tarifa.monto_variable) * (tarifa.unidad_medida === 'metro_cuadrado' ? metros : 1) * multiplier;
   const montoTotal = Number((base + variable).toFixed(2));
+  // Todo lo pagado en el mes cuenta, con la tarifa que fuera: si se registra una tarifa nueva
+  // vigente desde el día 1, lo ya cobrado sigue descontando del saldo.
   const paid = await first(db, `
     SELECT COALESCE(SUM(monto), 0) AS pagado FROM transacciones
-    WHERE comerciante_id = $1 AND tarifa_id = $2 AND estado = 'confirmado'
-      AND to_char(${LOCAL('fecha_cobro_cliente')}, 'YYYY-MM') = $3`, [merchant.id, tarifa.id, periodo]);
+    WHERE comerciante_id = $1 AND estado = 'confirmado'
+      AND to_char(${LOCAL('fecha_cobro_cliente')}, 'YYYY-MM') = $2`, [merchant.id, periodo]);
   const montoPagado = Number(paid.pagado);
   const saldo = Number(Math.max(montoTotal - montoPagado, 0).toFixed(2));
 
@@ -1431,6 +1440,11 @@ export async function registrarCobro(db, payload, { audit = null, allowExcess = 
   if (['yape', 'plin', 'pos'].includes(metodoPago) && !codigoOperacion) {
     throw new ValidationError('El código de operación es obligatorio para pagos digitales');
   }
+
+  // Dos cobros a la vez del mismo comerciante (dos cobradores, doble toque, un lote offline que llega
+  // mientras se cobra en línea) se atienden uno tras otro: el segundo ve el saldo que dejó el primero.
+  // NO KEY UPDATE no bloquea a quien solo referencia al comerciante (puestos, notificaciones).
+  await db.query('SELECT id FROM comerciantes WHERE id = $1 FOR NO KEY UPDATE', [comercianteId]);
 
   const uniqueCode = codigoOperacion || `COB-${Date.now()}-${comercianteId}-${Math.random().toString(16).slice(2, 10)}`;
   const hashTransaccion = payload.hash_transaccion || payload.hashTransaccion || createTransactionHash({

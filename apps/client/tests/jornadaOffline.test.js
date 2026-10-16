@@ -4,7 +4,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { aplicarCobroLocal, aSaldoDePantalla, buscarEnPadron, hoyEnLima, jornadaVigente, normalizarComerciante } from '../src/services/jornadaOffline.js';
+import { aplicarCobroLocal, aSaldoDePantalla, buscarEnPadron, hoyEnLima, jornadaVigente, normalizarComerciante, periodoEnLima } from '../src/services/jornadaOffline.js';
 
 const paquete = [
   { id: 1, codigo: 'CM-001', dni_ruc: '40123456', nombre: 'María Quispe Mamani', rubro: 'Abarrotes', zona: 'Mercado Central', codigo_puesto: 'S-001', periodo: '2026-11', tarifa_id: 4, tarifa_monto_fijo: 1, monto_total: 30, monto_pagado: 10, saldo: 20 },
@@ -92,4 +92,12 @@ test('el padrón vale solo el día (de Lima) en que se descargó', () => {
   assert.equal(jornadaVigente(meta, new Date('2026-11-11T00:30:00Z')), true);
   assert.equal(jornadaVigente(meta, new Date('2026-11-11T13:00:00Z')), false);
   assert.equal(jornadaVigente(null), false);
+});
+
+test('el periodo es el mes de Lima, no el de UTC', () => {
+  // 19:30 del 31/10 en Lima = 00:30 del 01/11 en UTC: el cobro es de octubre.
+  const finDeMes = new Date('2026-11-01T00:30:00Z');
+  assert.equal(finDeMes.toISOString().slice(0, 7), '2026-11');
+  assert.equal(periodoEnLima(finDeMes), '2026-10');
+  assert.equal(periodoEnLima(new Date('2026-11-01T05:00:00Z')), '2026-11');
 });
