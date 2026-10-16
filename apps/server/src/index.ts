@@ -8,6 +8,7 @@ import type { Server } from 'node:http';
 import { pathToFileURL } from 'node:url';
 
 import { config } from './config.js';
+import { AppError } from './errors.js';
 import { loginUser, hasRoleAccess, requireAuth, requireRoles, auditMutation, refreshAccessToken, logoutDevice, markSessionRevoked, SessionError } from './auth.js';
 import { validateLogin, handleValidationErrors, validateComerciante, validateCobro } from './validation.js';
 import {
@@ -235,23 +236,15 @@ app.get('/api/v1/publico/resumen', async (_req, res) => {
 });
 
 app.get('/api/v1/analitica/prediccion', ...staffOnly, async (req, res) => {
-  try {
-    const period = String(req.query.periodo || currentPeriod());
-    const forecast = await generateForecastProjection(db, { period, horizonteDias: Number(req.query.horizonte_dias || req.query.horizon || 90) });
-    return res.json({ data: forecast, message: 'Proyección de recaudación generada correctamente' });
-  } catch (error) {
-    return res.status(500).json({ message: error.message || 'No se pudo generar la predicción' });
-  }
+  const period = String(req.query.periodo || currentPeriod());
+  const forecast = await generateForecastProjection(db, { period, horizonteDias: Number(req.query.horizonte_dias || req.query.horizon || 90) });
+  return res.json({ data: forecast, message: 'Proyección de recaudación generada correctamente' });
 });
 
 app.get('/api/v1/analitica/riesgo', ...staffOnly, async (req, res) => {
-  try {
-    const limit = Math.min(Math.max(Number(req.query.limit || 5), 1), 20);
-    const data = await getRiskDashboard(db, { limit });
-    return res.json({ data, message: 'Scoring de morosidad actualizado' });
-  } catch (error) {
-    return res.status(500).json({ message: error.message || 'No se pudo calcular el riesgo de morosidad' });
-  }
+  const limit = Math.min(Math.max(Number(req.query.limit || 5), 1), 20);
+  const data = await getRiskDashboard(db, { limit });
+  return res.json({ data, message: 'Scoring de morosidad actualizado' });
 });
 
 app.get('/api/v1/roles', requireAuth, (_req, res) => {
@@ -266,178 +259,130 @@ app.get('/api/v1/catalogos', requireAuth, async (_req, res) => {
 });
 
 app.get('/api/v1/zonas', requireAuth, async (_req, res) => {
-  try {
-    res.json({
-      data: await getZonas(db),
-      calles: await getCalles(db),
-      message: 'Zonas y calles consultadas correctamente'
-    });
-  } catch (error) {
-    return res.status(400).json({ message: error.message || 'No se pudieron consultar las zonas' });
-  }
+  res.json({
+    data: await getZonas(db),
+    calles: await getCalles(db),
+    message: 'Zonas y calles consultadas correctamente'
+  });
 });
 
 app.post('/api/v1/zonas', requireAuth, requireRoles(['super_admin', 'auditor']), auditMutation({ db, accion: 'CREAR_ZONA', entidad: 'zonas', serializeResponse: (body) => body?.data ?? body }), async (req, res) => {
-  try {
-    const data = await insertZona(db, req.body || {});
-    return res.status(201).json({ data, message: 'Zona creada correctamente' });
-  } catch (error) {
-    return res.status(400).json({ message: error.message || 'No se pudo crear la zona' });
-  }
+  const data = await insertZona(db, req.body || {});
+  return res.status(201).json({ data, message: 'Zona creada correctamente' });
 });
 
 app.put('/api/v1/zonas/:id', requireAuth, requireRoles(['super_admin', 'auditor']), auditMutation({ db, accion: 'ACTUALIZAR_ZONA', entidad: 'zonas', getPreviousState: async (req) => rowById('zonas', Number(req.params.id)), serializeResponse: (body) => body?.data ?? body }), async (req, res) => {
-  try {
-    const data = await updateZona(db, req.params.id, req.body || {});
-    return res.json({ data, message: 'Zona actualizada correctamente' });
-  } catch (error) {
-    return res.status(400).json({ message: error.message || 'No se pudo actualizar la zona' });
-  }
+  const data = await updateZona(db, req.params.id, req.body || {});
+  return res.json({ data, message: 'Zona actualizada correctamente' });
 });
 
 app.delete('/api/v1/zonas/:id', requireAuth, requireRoles(['super_admin', 'auditor']), auditMutation({ db, accion: 'ELIMINAR_ZONA', entidad: 'zonas', getPreviousState: async (req) => rowById('zonas', Number(req.params.id)), serializeResponse: (body) => body?.data ?? body }), async (req, res) => {
-  try {
-    const data = await deleteZona(db, req.params.id);
-    return res.json({ data, message: 'Zona eliminada correctamente' });
-  } catch (error) {
-    return res.status(400).json({ message: error.message || 'No se pudo eliminar la zona' });
-  }
+  const data = await deleteZona(db, req.params.id);
+  return res.json({ data, message: 'Zona eliminada correctamente' });
 });
 
 app.get('/api/v1/calles', requireAuth, async (_req, res) => {
-  try {
-    const zonaId = Number(_req.query.zona_id || 0);
-    res.json({
-      data: await getCalles(db, { zona_id: zonaId }),
-      message: 'Calles consultadas correctamente'
-    });
-  } catch (error) {
-    return res.status(400).json({ message: error.message || 'No se pudieron consultar las calles' });
-  }
+  const zonaId = Number(_req.query.zona_id || 0);
+  res.json({
+    data: await getCalles(db, { zona_id: zonaId }),
+    message: 'Calles consultadas correctamente'
+  });
 });
 
 app.post('/api/v1/calles', requireAuth, requireRoles(['super_admin', 'auditor']), auditMutation({ db, accion: 'CREAR_CALLE', entidad: 'calles', serializeResponse: (body) => body?.data ?? body }), async (req, res) => {
-  try {
-    const data = await insertCalle(db, req.body || {});
-    return res.status(201).json({ data, message: 'Calle creada correctamente' });
-  } catch (error) {
-    return res.status(400).json({ message: error.message || 'No se pudo crear la calle' });
-  }
+  const data = await insertCalle(db, req.body || {});
+  return res.status(201).json({ data, message: 'Calle creada correctamente' });
 });
 
 app.put('/api/v1/calles/:id', requireAuth, requireRoles(['super_admin', 'auditor']), auditMutation({ db, accion: 'ACTUALIZAR_CALLE', entidad: 'calles', getPreviousState: async (req) => rowById('calles', Number(req.params.id)), serializeResponse: (body) => body?.data ?? body }), async (req, res) => {
-  try {
-    const data = await updateCalle(db, req.params.id, req.body || {});
-    return res.json({ data, message: 'Calle actualizada correctamente' });
-  } catch (error) {
-    return res.status(400).json({ message: error.message || 'No se pudo actualizar la calle' });
-  }
+  const data = await updateCalle(db, req.params.id, req.body || {});
+  return res.json({ data, message: 'Calle actualizada correctamente' });
 });
 
 app.delete('/api/v1/calles/:id', requireAuth, requireRoles(['super_admin', 'auditor']), auditMutation({ db, accion: 'ELIMINAR_CALLE', entidad: 'calles', getPreviousState: async (req) => rowById('calles', Number(req.params.id)), serializeResponse: (body) => body?.data ?? body }), async (req, res) => {
-  try {
-    const data = await deleteCalle(db, req.params.id);
-    return res.json({ data, message: 'Calle eliminada correctamente' });
-  } catch (error) {
-    return res.status(400).json({ message: error.message || 'No se pudo eliminar la calle' });
-  }
+  const data = await deleteCalle(db, req.params.id);
+  return res.json({ data, message: 'Calle eliminada correctamente' });
 });
 
 app.post('/api/v1/portal/login', loginLimiter, async (req, res) => {
-  try {
-    const identifier = String(req.body?.identifier || '').trim();
-    if (!identifier) {
-      return res.status(400).json({ message: 'Debe ingresar su DNI o código de comerciante' });
-    }
-
-    const data = await obtenerPortalComerciante(db, identifier);
-    return res.json({ data, message: 'Portal del comerciante consultado correctamente' });
-  } catch (error) {
-    return res.status(404).json({ message: error.message || 'No se encontró el comerciante en el padrón' });
+  const identifier = String(req.body?.identifier || '').trim();
+  if (!identifier) {
+    return res.status(400).json({ message: 'Debe ingresar su DNI o código de comerciante' });
   }
+
+  const data = await obtenerPortalComerciante(db, identifier);
+  return res.json({ data, message: 'Portal del comerciante consultado correctamente' });
 });
 
 app.get('/api/v1/portal/:comercianteId/notificaciones', ...staffOnly, async (req, res) => {
-  try {
-    const comercianteId = Number(req.params.comercianteId || 0);
-    const data = await getNotifications(db, comercianteId);
-    return res.json({ data, total: data.length });
-  } catch (error) {
-    return res.status(400).json({ message: error.message || 'No se pudieron consultar las notificaciones' });
-  }
+  const comercianteId = Number(req.params.comercianteId || 0);
+  const data = await getNotifications(db, comercianteId);
+  return res.json({ data, total: data.length });
 });
 
 app.post('/api/v1/notificaciones',
   requireAuth,
   requireRoles(['super_admin', 'cobrador', 'auditor']),
   async (req, res) => {
-    try {
-      const notification = await createNotification(db, req.body || {});
-      return res.status(201).json({ data: notification, message: 'Notificación registrada correctamente' });
-    } catch (error) {
-      return res.status(400).json({ message: error.message || 'No se pudo registrar la notificación' });
-    }
+    const notification = await createNotification(db, req.body || {});
+    return res.status(201).json({ data: notification, message: 'Notificación registrada correctamente' });
   }
 );
 
 app.get('/api/v1/comprobantes/:id/pdf', ...staffOnly, async (req, res) => {
-  try {
-    const payment = (await getCobros(db)).find((item) => item.id === Number(req.params.id) || String(item.comprobante) === String(req.params.id) || String(item.codigo_operacion) === String(req.params.id));
-    if (!payment) {
-      return res.status(404).json({ message: 'Comprobante no encontrado' });
-    }
-
-    const merchant = (await getComerciantes(db, { includeInactive: true, limit: 1000 })).find((item) => item.id === Number(payment.comerciante_id));
-    const textLines = [
-      `Comerciante: ${merchant?.nombre || 'N/D'}`,
-      `Comprobante: ${payment.comprobante || payment.codigo_operacion || `COBRO-${payment.id}`}`,
-      `Concepto: ${payment.concepto || 'Liquidación de deuda'}`,
-      `Monto: S/ ${Number(payment.monto || 0).toFixed(2)}`,
-      `Método: ${payment.metodo_pago || 'efectivo'}`,
-      `Fecha: ${payment.fecha_cobro || 'N/D'}`,
-      `Hash: ${payment.hash_transaccion || 'sha256:local'}`
-    ];
-
-    const content = [
-      'BT',
-      '/F1 16 Tf',
-      '72 760 Td',
-      '(SISREC SALCEDO) Tj',
-      '0 -28 Td',
-      '(COMPROBANTE DE PAGO) Tj',
-      '0 -28 Td',
-      `(${textLines.join(' | ')}) Tj`,
-      'ET'
-    ].join('\n');
-
-    const objects = [
-      '<< /Type /Catalog /Pages 2 0 R >>',
-      '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
-      '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>',
-      `<< /Length ${Buffer.byteLength(content, 'latin1')} >>\nstream\n${content}\nendstream`,
-      '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>'
-    ];
-
-    let pdf = '%PDF-1.4\n';
-    const offsets = [0];
-    objects.forEach((object, index) => {
-      offsets.push(Buffer.byteLength(pdf, 'latin1'));
-      pdf += `${index + 1} 0 obj\n${object}\nendobj\n`;
-    });
-
-    const xrefStart = Buffer.byteLength(pdf, 'latin1');
-    pdf += `xref\n0 ${objects.length + 1}\n0000000000 65535 f\n`;
-    for (let i = 1; i <= objects.length; i += 1) {
-      pdf += `${String(offsets[i]).padStart(10, '0')} 00000 n\n`;
-    }
-    pdf += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xrefStart}\n%%EOF`;
-
-    res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader('Content-Disposition', `attachment; filename="comprobante-${req.params.id}.pdf"`);
-    return res.send(Buffer.from(pdf, 'latin1'));
-  } catch (error) {
-    return res.status(400).json({ message: error.message || 'No se pudo generar el comprobante PDF' });
+  const payment = (await getCobros(db)).find((item) => item.id === Number(req.params.id) || String(item.comprobante) === String(req.params.id) || String(item.codigo_operacion) === String(req.params.id));
+  if (!payment) {
+    return res.status(404).json({ message: 'Comprobante no encontrado' });
   }
+
+  const merchant = (await getComerciantes(db, { includeInactive: true, limit: 1000 })).find((item) => item.id === Number(payment.comerciante_id));
+  const textLines = [
+    `Comerciante: ${merchant?.nombre || 'N/D'}`,
+    `Comprobante: ${payment.comprobante || payment.codigo_operacion || `COBRO-${payment.id}`}`,
+    `Concepto: ${payment.concepto || 'Liquidación de deuda'}`,
+    `Monto: S/ ${Number(payment.monto || 0).toFixed(2)}`,
+    `Método: ${payment.metodo_pago || 'efectivo'}`,
+    `Fecha: ${payment.fecha_cobro || 'N/D'}`,
+    `Hash: ${payment.hash_transaccion || 'sha256:local'}`
+  ];
+
+  const content = [
+    'BT',
+    '/F1 16 Tf',
+    '72 760 Td',
+    '(SISREC SALCEDO) Tj',
+    '0 -28 Td',
+    '(COMPROBANTE DE PAGO) Tj',
+    '0 -28 Td',
+    `(${textLines.join(' | ')}) Tj`,
+    'ET'
+  ].join('\n');
+
+  const objects = [
+    '<< /Type /Catalog /Pages 2 0 R >>',
+    '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+    '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>',
+    `<< /Length ${Buffer.byteLength(content, 'latin1')} >>\nstream\n${content}\nendstream`,
+    '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>'
+  ];
+
+  let pdf = '%PDF-1.4\n';
+  const offsets = [0];
+  objects.forEach((object, index) => {
+    offsets.push(Buffer.byteLength(pdf, 'latin1'));
+    pdf += `${index + 1} 0 obj\n${object}\nendobj\n`;
+  });
+
+  const xrefStart = Buffer.byteLength(pdf, 'latin1');
+  pdf += `xref\n0 ${objects.length + 1}\n0000000000 65535 f\n`;
+  for (let i = 1; i <= objects.length; i += 1) {
+    pdf += `${String(offsets[i]).padStart(10, '0')} 00000 n\n`;
+  }
+  pdf += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xrefStart}\n%%EOF`;
+
+  res.setHeader('Content-Type', 'application/pdf');
+  res.setHeader('Content-Disposition', `attachment; filename="comprobante-${req.params.id}.pdf"`);
+  return res.send(Buffer.from(pdf, 'latin1'));
 });
 
 app.get('/api/v1/reportes', ...staffOnly, async (req, res) => {
@@ -523,6 +468,8 @@ app.post('/api/v1/comerciantes/importar-padron',
       });
       return res.json({ data: { ...publicPreview, result }, message: 'Padrón importado y auditado correctamente.' });
     } catch (error) {
+      // Errores de negocio o de la base van al manejador global; el resto es un libro ilegible.
+      if (error instanceof AppError || error?.code) throw error;
       return res.status(400).json({ message: error.message || 'No se pudo procesar el libro Excel' });
     }
   }
@@ -545,13 +492,9 @@ app.get('/api/v1/comerciantes/:id', ...staffOnly, async (req, res) => {
 });
 
 app.get('/api/v1/comerciantes/:id/preferencias', ...staffOnly, async (req, res) => {
-  try {
-    const comercianteId = Number(req.params.id || 0);
-    const data = await getComerciantePreferencias(db, comercianteId);
-    return res.json({ data, message: 'Preferencias del comerciante consultadas correctamente' });
-  } catch (error) {
-    return res.status(400).json({ message: error.message || 'No se pudieron consultar las preferencias' });
-  }
+  const comercianteId = Number(req.params.id || 0);
+  const data = await getComerciantePreferencias(db, comercianteId);
+  return res.json({ data, message: 'Preferencias del comerciante consultadas correctamente' });
 });
 
 app.post('/api/v1/comerciantes/:id/preferencias',
@@ -564,14 +507,10 @@ app.post('/api/v1/comerciantes/:id/preferencias',
     serializeResponse: (body) => body?.data ?? body
   }),
   async (req, res) => {
-    try {
-      const comercianteId = Number(req.params.id || 0);
-      const payload = req.body || {};
-      const data = await updateComerciantePreferencias(db, comercianteId, payload);
-      return res.status(201).json({ data, message: 'Preferencias actualizadas correctamente' });
-    } catch (error) {
-      return res.status(400).json({ message: error.message || 'No se pudieron guardar las preferencias' });
-    }
+    const comercianteId = Number(req.params.id || 0);
+    const payload = req.body || {};
+    const data = await updateComerciantePreferencias(db, comercianteId, payload);
+    return res.status(201).json({ data, message: 'Preferencias actualizadas correctamente' });
   }
 );
 
@@ -587,16 +526,12 @@ app.post('/api/v1/comerciantes',
     serializeResponse: (body) => body?.data ?? body
   }),
   async (req, res) => {
-    try {
-      const comerciante = await insertComerciante(db, {
-        ...req.body,
-        usuario_creador: req.body.usuario_creador || req.user?.id || 1
-      });
+    const comerciante = await insertComerciante(db, {
+      ...req.body,
+      usuario_creador: req.body.usuario_creador || req.user?.id || 1
+    });
 
-      return res.status(201).json({ data: comerciante, message: 'Comerciante registrado correctamente' });
-    } catch (error) {
-      return res.status(400).json({ message: error.message || 'No se pudo registrar el comerciante' });
-    }
+    return res.status(201).json({ data: comerciante, message: 'Comerciante registrado correctamente' });
   }
 );
 
@@ -613,12 +548,8 @@ app.put('/api/v1/comerciantes/:id',
     serializeResponse: (body) => body?.data ?? body
   }),
   async (req, res) => {
-    try {
-      const comerciante = await updateComerciante(db, req.params.id, req.body || {});
-      return res.json({ data: comerciante, message: 'Comerciante actualizado correctamente' });
-    } catch (error) {
-      return res.status(400).json({ message: error.message || 'No se pudo actualizar el comerciante' });
-    }
+    const comerciante = await updateComerciante(db, req.params.id, req.body || {});
+    return res.json({ data: comerciante, message: 'Comerciante actualizado correctamente' });
   }
 );
 
@@ -635,12 +566,8 @@ app.delete('/api/v1/comerciantes/:id',
     serializeResponse: (body) => body?.data ?? body
   }),
   async (req, res) => {
-    try {
-      const comerciante = await deactivateComerciante(db, req.params.id);
-      return res.json({ data: comerciante, message: 'Comerciante dado de baja correctamente' });
-    } catch (error) {
-      return res.status(404).json({ message: error.message || 'No se pudo dar de baja el comerciante' });
-    }
+    const comerciante = await deactivateComerciante(db, req.params.id);
+    return res.json({ data: comerciante, message: 'Comerciante dado de baja correctamente' });
   }
 );
 
@@ -660,12 +587,8 @@ app.post('/api/v1/puestos',
     serializeResponse: (body) => body?.data ?? body
   }),
   async (req, res) => {
-    try {
-      const puesto = await insertPuesto(db, req.body || {});
-      return res.status(201).json({ data: puesto, message: 'Puesto asignado correctamente' });
-    } catch (error) {
-      return res.status(400).json({ message: error.message || 'No se pudo asignar el puesto' });
-    }
+    const puesto = await insertPuesto(db, req.body || {});
+    return res.status(201).json({ data: puesto, message: 'Puesto asignado correctamente' });
   }
 );
 
@@ -679,19 +602,15 @@ app.post('/api/v1/puestos-mapa',
     serializeResponse: (body) => body?.data ?? body
   }),
   async (req, res) => {
-    try {
-      const puesto = await insertPuesto(db, {
-        ...req.body,
-        comerciante_id: req.body.comerciante_id ?? req.body.comercianteId,
-        zona_id: req.body.zona_id ?? req.body.zonaId,
-        direccion: req.body.direccion || req.body.sector || req.body.codigoPuesto,
-        metros_cuadrados: req.body.metros_cuadrados ?? req.body.metros ?? 1,
-        estado: req.body.estado // sin estado: ocupado si tiene titular, disponible si no
-      });
-      return res.status(201).json({ data: puesto, message: 'Puesto geolocalizado registrado correctamente' });
-    } catch (error) {
-      return res.status(400).json({ message: error.message || 'No se pudo registrar el puesto geolocalizado' });
-    }
+    const puesto = await insertPuesto(db, {
+      ...req.body,
+      comerciante_id: req.body.comerciante_id ?? req.body.comercianteId,
+      zona_id: req.body.zona_id ?? req.body.zonaId,
+      direccion: req.body.direccion || req.body.sector || req.body.codigoPuesto,
+      metros_cuadrados: req.body.metros_cuadrados ?? req.body.metros ?? 1,
+      estado: req.body.estado // sin estado: ocupado si tiene titular, disponible si no
+    });
+    return res.status(201).json({ data: puesto, message: 'Puesto geolocalizado registrado correctamente' });
   }
 );
 
@@ -706,11 +625,7 @@ app.put('/api/v1/puestos-mapa/:id',
     serializeResponse: (body) => body?.data ?? body
   }),
   async (req, res) => {
-    try {
-      return res.json({ data: await updatePuesto(db, req.params.id, req.body || {}), message: 'Puesto geolocalizado actualizado correctamente' });
-    } catch (error) {
-      return res.status(400).json({ message: error.message || 'No se pudo actualizar el puesto geolocalizado' });
-    }
+    return res.json({ data: await updatePuesto(db, req.params.id, req.body || {}), message: 'Puesto geolocalizado actualizado correctamente' });
   }
 );
 
@@ -725,11 +640,7 @@ app.post('/api/v1/puestos/:id/liberar',
     serializeResponse: (body) => body?.data ?? body
   }),
   async (req, res) => {
-    try {
-      return res.json({ data: await liberarPuesto(db, req.params.id), message: 'Puesto liberado: queda disponible para otro comerciante' });
-    } catch (error) {
-      return res.status(400).json({ message: error.message || 'No se pudo liberar el puesto' });
-    }
+    return res.json({ data: await liberarPuesto(db, req.params.id), message: 'Puesto liberado: queda disponible para otro comerciante' });
   }
 );
 
@@ -744,11 +655,7 @@ app.delete('/api/v1/puestos-mapa/:id',
     serializeResponse: (body) => body?.data ?? body
   }),
   async (req, res) => {
-    try {
-      return res.json({ data: await deactivatePuesto(db, req.params.id), message: 'Puesto dado de baja lógicamente' });
-    } catch (error) {
-      return res.status(404).json({ message: error.message || 'No se pudo dar de baja el puesto' });
-    }
+    return res.json({ data: await deactivatePuesto(db, req.params.id), message: 'Puesto dado de baja lógicamente' });
   }
 );
 
@@ -767,11 +674,7 @@ app.post('/api/v1/tarifas',
     serializeResponse: (body) => body?.data ?? body
   }),
   async (req, res) => {
-    try {
-      return res.status(201).json({ data: await insertTarifa(db, req.body || {}), message: 'Tarifa creada correctamente' });
-    } catch (error) {
-      return res.status(400).json({ message: error.message || 'No se pudo crear la tarifa' });
-    }
+    return res.status(201).json({ data: await insertTarifa(db, req.body || {}), message: 'Tarifa creada correctamente' });
   }
 );
 
@@ -788,28 +691,16 @@ app.put('/api/v1/tarifas/:id',
     serializeResponse: (body) => body?.data ?? body
   }),
   async (req, res) => {
-    try {
-      return res.json({ data: await updateTarifa(db, req.params.id, req.body || {}), message: 'Tarifa actualizada correctamente' });
-    } catch (error) {
-      return res.status(400).json({ message: error.message || 'No se pudo actualizar la tarifa' });
-    }
+    return res.json({ data: await updateTarifa(db, req.params.id, req.body || {}), message: 'Tarifa actualizada correctamente' });
   }
 );
 
 app.get('/api/v1/liquidaciones/:comercianteId', ...staffOnly, async (req, res) => {
-  try {
-    return res.json({ data: await calcularLiquidacion(db, await resolveComercianteParam(String(req.params.comercianteId)), String(req.query.periodo || '')) });
-  } catch (error) {
-    return res.status(400).json({ message: error.message || 'No se pudo calcular la liquidación' });
-  }
+  return res.json({ data: await calcularLiquidacion(db, await resolveComercianteParam(String(req.params.comercianteId)), String(req.query.periodo || '')) });
 });
 
 app.get('/api/v1/comerciantes/:comercianteId/saldo', ...staffOnly, async (req, res) => {
-  try {
-    return res.json({ data: await calcularLiquidacion(db, await resolveComercianteParam(String(req.params.comercianteId)), String(req.query.periodo || '')) });
-  } catch (error) {
-    return res.status(400).json({ message: error.message || 'No se pudo consultar el saldo' });
-  }
+  return res.json({ data: await calcularLiquidacion(db, await resolveComercianteParam(String(req.params.comercianteId)), String(req.query.periodo || '')) });
 });
 
 app.get('/api/v1/cobros', ...staffOnly, async (_req, res) => {
@@ -856,16 +747,12 @@ app.post('/api/v1/cobros/sincronizar-lote',
   async (req, res) => {
     const cobros = req.body?.cobros;
     const deviceId = String(req.body?.device_id || req.headers['x-device-id'] || '').trim().slice(0, 100) || null;
-    try {
-      const data = await syncOfflineBatch(db, cobros, {
-        cobradorId: req.user.id,
-        deviceId,
-        audit: auditContext(req, 'SINCRONIZAR_COBRO_OFFLINE')
-      });
-      return res.json({ data, message: `Lote procesado: ${data.resumen.sincronizado} sincronizados, ${data.resumen.observado} observados, ${data.resumen.duplicado} duplicados, ${data.resumen.rechazado} rechazados` });
-    } catch (error) {
-      return res.status(400).json({ message: error.message || 'No se pudo procesar el lote' });
-    }
+    const data = await syncOfflineBatch(db, cobros, {
+      cobradorId: req.user.id,
+      deviceId,
+      audit: auditContext(req, 'SINCRONIZAR_COBRO_OFFLINE')
+    });
+    return res.json({ data, message: `Lote procesado: ${data.resumen.sincronizado} sincronizados, ${data.resumen.observado} observados, ${data.resumen.duplicado} duplicados, ${data.resumen.rechazado} rechazados` });
   }
 );
 
@@ -876,17 +763,13 @@ app.get('/api/v1/cobros/observados', requireAuth, requireRoles(['super_admin', '
 });
 
 app.post('/api/v1/cobros/observados/:id/resolver', requireAuth, requireRoles(['super_admin']), async (req, res) => {
-  try {
-    const data = await resolveCobroObservado(db, Number(req.params.id), {
-      decision: String(req.body?.decision || ''),
-      resolucion: req.body?.resolucion,
-      usuarioId: req.user.id,
-      audit: auditContext(req, 'REVISAR_COBRO_OBSERVADO')
-    });
-    return res.json({ data, message: data.estado === 'anulado' ? 'Cobro anulado; registre la devolución al comerciante' : 'Cobro aceptado' });
-  } catch (error) {
-    return res.status(error.status || 400).json({ message: error.message || 'No se pudo resolver el cobro observado' });
-  }
+  const data = await resolveCobroObservado(db, Number(req.params.id), {
+    decision: String(req.body?.decision || ''),
+    resolucion: req.body?.resolucion,
+    usuarioId: req.user.id,
+    audit: auditContext(req, 'REVISAR_COBRO_OBSERVADO')
+  });
+  return res.json({ data, message: data.estado === 'anulado' ? 'Cobro anulado; registre la devolución al comerciante' : 'Cobro aceptado' });
 });
 
 app.get('/api/v1/cobros/sincronizacion/errores', requireAuth, requireRoles(['super_admin', 'auditor']), async (_req, res) => {
@@ -928,13 +811,9 @@ app.post('/api/v1/cobros',
   validateCobro,
   handleValidationErrors,
   async (req, res) => {
-    try {
-      // cobrador_id sale del token; comprobante, cobro y auditoría se graban en una sola transacción.
-      const data = await registrarCobro(db, { ...(req.body || {}), cobrador_id: req.user.id }, { audit: auditContext(req, 'REGISTRAR_COBRO') });
-      return res.status(201).json({ data, message: 'Cobro registrado correctamente' });
-    } catch (error) {
-      return res.status(400).json({ message: error.message || 'No se pudo registrar el cobro' });
-    }
+    // cobrador_id sale del token; comprobante, cobro y auditoría se graban en una sola transacción.
+    const data = await registrarCobro(db, { ...(req.body || {}), cobrador_id: req.user.id }, { audit: auditContext(req, 'REGISTRAR_COBRO') });
+    return res.status(201).json({ data, message: 'Cobro registrado correctamente' });
   }
 );
 
@@ -1012,13 +891,35 @@ app.use('/api', (_req, res) => {
 });
 
 // Manejador global: Express 5 envía aquí los errores de las rutas async en lugar de tumbar el proceso.
+// Los errores de negocio (AppError) llevan su código y un mensaje para el usuario; los de PostgreSQL
+// se traducen a un mensaje genérico (el detalle técnico queda solo en el log).
+const PG_ERRORS: Record<string, [number, string]> = {
+  '23505': [409, 'El registro ya existe'],
+  '23503': [400, 'El registro referenciado no existe o está en uso'],
+  '23514': [400, 'Datos no válidos'],
+  '22P02': [400, 'Datos no válidos']
+};
+
 app.use((error: any, req: Request, res: Response, _next: NextFunction) => {
-  const status = Number(error?.status || error?.statusCode) || 500;
+  let status = 500;
+  let message = 'Error interno del servidor';
+  if (error instanceof AppError) {
+    status = (error as any).status;
+    message = error.message;
+  } else if (PG_ERRORS[error?.code]) {
+    [status, message] = PG_ERRORS[error.code];
+    console.warn(`[${new Date().toISOString()}] ${req.method} ${req.originalUrl} PostgreSQL ${error.code}: ${error.detail || error.message}`);
+  } else if (error instanceof multer.MulterError) {
+    status = 400;
+    message = error.code === 'LIMIT_FILE_SIZE' ? 'El archivo supera el tamaño permitido' : 'No se pudo recibir el archivo';
+  } else if (Number(error?.status) >= 400 && Number(error?.status) < 500) {
+    // Errores del propio Express (JSON mal formado, cuerpo demasiado grande…).
+    status = Number(error.status);
+    message = status === 413 ? 'La petición es demasiado grande' : 'Petición inválida';
+  }
   if (status >= 500) console.error(`[${new Date().toISOString()}] ${req.method} ${req.originalUrl}`, error);
   if (res.headersSent) return;
-  res.status(status).json({
-    message: status >= 500 ? 'Error interno del servidor' : (error?.message || 'Petición inválida')
-  });
+  res.status(status).json({ message });
 });
 
 async function startServer(listenPort: number = port) {

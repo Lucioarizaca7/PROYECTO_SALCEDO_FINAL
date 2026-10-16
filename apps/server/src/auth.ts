@@ -1,4 +1,5 @@
 import bcrypt from 'bcryptjs';
+import { AppError } from './errors.js';
 import jwt from 'jsonwebtoken';
 import type { Request, Response, NextFunction } from './types.js';
 import { config } from './config.js';
@@ -52,7 +53,9 @@ export async function loginUser({ email, password }: { email: string; password: 
   };
 }
 
-export class SessionError extends Error {}
+export class SessionError extends AppError {
+  constructor(message: string) { super(message, 401); }
+}
 
 // Canjea un token de renovación vigente por un token de acceso nuevo. El de renovación no cambia:
 // así dos peticiones simultáneas del mismo celular no se invalidan entre sí.

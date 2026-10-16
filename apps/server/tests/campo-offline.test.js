@@ -265,7 +265,7 @@ test('el administrador acepta o anula un cobro observado; el anulado sale de la 
   assert.equal(voided.status, 200, voided.body?.message);
 
   const twice = await api(`/cobros/observados/${obsVoid.id}/resolver`, { method: 'POST', token: admin.token, body: { decision: 'aceptado', resolucion: 'Otra vez' } });
-  assert.equal(twice.status, 400, 'una revisión no se puede repetir');
+  assert.equal(twice.status, 409, 'una revisión no se puede repetir (conflicto)');
 
   const states = await pool.query('SELECT hash_transaccion, estado FROM transacciones WHERE hash_transaccion = ANY($1)', [[toAccept.hash_transaccion, toVoid.hash_transaccion]]);
   const byHash = Object.fromEntries(states.rows.map((row) => [row.hash_transaccion, row.estado]));
