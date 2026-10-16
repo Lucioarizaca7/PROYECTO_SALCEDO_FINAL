@@ -5,6 +5,7 @@ import { loginUser, hasRoleAccess, requireAuth, refreshAccessToken, logoutDevice
 import { validateLogin, handleValidationErrors } from '../validation.js';
 import { loginLimiter, auditContext } from '../http/comunes.js';
 import { pool as db } from '../pg.js';
+import { clearRefreshCookie, readRefreshCookie, setRefreshCookie } from '../http/sesionCookie.js';
 
 export const router = express.Router();
 
@@ -22,22 +23,29 @@ router.post('/api/v1/auth/login', loginLimiter, validateLogin, handleValidationE
     // Mensaje genérico para no revelar si el usuario existe o no
     return res.status(401).json({ message: 'Credenciales inválidas' });
   }
-  return res.json(result);
+  // El token de renovación va solo en la cookie HttpOnly; el cuerpo lleva el token de acceso corto.
+  const { refreshToken, ...body } = result;
+  setRefreshCookie(res, refreshToken, result.refreshExpiresAt);
+  return res.json(body);
 });
 
-// Canjea el token de renovación del dispositivo (12 h) por un token de acceso nuevo, sin pedir la clave.
+// Canjea el token de renovación del dispositivo (cookie, 12 h) por un token de acceso nuevo, sin pedir la clave.
 router.post('/api/v1/auth/refresh', loginLimiter, async (req, res) => {
   try {
-    return res.json(await refreshAccessToken(String(req.body?.refreshToken || ''), db));
+    return res.json(await refreshAccessToken(readRefreshCookie(req), db));
   } catch (error) {
-    if (error instanceof SessionError) return res.status(401).json({ message: error.message, sessionExpired: true });
+    if (error instanceof SessionError) {
+      clearRefreshCookie(res);
+      return res.status(401).json({ message: error.message, sessionExpired: true });
+    }
     throw error;
   }
 });
 
 router.post('/api/v1/auth/logout', async (req, res) => {
-  const refreshToken = String(req.body?.refreshToken || '').trim();
+  const refreshToken = readRefreshCookie(req).trim();
   if (refreshToken) await logoutDevice(refreshToken, db);
+  clearRefreshCookie(res);
   return res.json({ message: 'Sesión cerrada' });
 });
 

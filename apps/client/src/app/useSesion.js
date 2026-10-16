@@ -49,6 +49,7 @@ export function useSesion() {
     try {
       const response = await fetch(`${apiBase}/auth/login`, {
         method: 'POST',
+        credentials: 'include', // el servidor deja el token de renovación en una cookie HttpOnly
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ ...credentials, device_id: getDeviceId(), device_nombre: getDeviceName() })
       });
