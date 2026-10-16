@@ -1,19 +1,16 @@
 // Portal del comerciante y notificaciones.
 import express from 'express';
-import { obtenerPortalComerciante, createNotification, getNotifications } from '../db.js';
+import { createNotification, getNotifications } from '../db.js';
+import { ingresarAlPortal } from '../portalAcceso.js';
 import { requireAuth, requireRoles } from '../auth.js';
 import { staffOnly, loginLimiter } from '../http/comunes.js';
 import { pool as db } from '../pg.js';
 
 export const router = express.Router();
 
+// DNI o código + PIN del carnet. Credenciales erradas: 401 (sin decir cuál falló); 5 PIN errados: 429.
 router.post('/api/v1/portal/login', loginLimiter, async (req, res) => {
-  const identifier = String(req.body?.identifier || '').trim();
-  if (!identifier) {
-    return res.status(400).json({ message: 'Debe ingresar su DNI o código de comerciante' });
-  }
-
-  const data = await obtenerPortalComerciante(db, identifier);
+  const data = await ingresarAlPortal(db, req.body?.identifier, req.body?.pin);
   return res.json({ data, message: 'Portal del comerciante consultado correctamente' });
 });
 

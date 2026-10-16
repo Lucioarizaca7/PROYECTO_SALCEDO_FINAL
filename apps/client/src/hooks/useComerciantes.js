@@ -63,6 +63,14 @@ export function useComerciantes() {
     }
   };
 
+  // PIN del portal: el servidor lo devuelve una sola vez; el carnet QR lo muestra para imprimirlo.
+  const generatePortalPin = async (id) => {
+    const response = await authFetch(`${apiBase}/comerciantes/${id}/portal-pin`, { method: 'POST' });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.message || 'No se pudo generar el PIN del portal');
+    return data.data;
+  };
+
   const sendPadron = (file, dryRun) => {
     const body = new FormData();
     body.append('file', file);
@@ -111,6 +119,6 @@ export function useComerciantes() {
   return {
     showForm, setShowForm, message, form, setForm, editingId,
     padronPreview, padronMessage, padronLoading,
-    submit, edit, deactivate, previewPadron, importPadron
+    submit, edit, deactivate, previewPadron, importPadron, generatePortalPin
   };
 }
