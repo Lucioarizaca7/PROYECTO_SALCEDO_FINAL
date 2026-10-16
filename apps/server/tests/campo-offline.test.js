@@ -24,24 +24,32 @@ after(async () => {
   await closeDatabase();
 });
 
-async function api(path, { method = 'GET', token, body, headers = {} } = {}) {
+async function api(path, { method = 'GET', token, body, headers = {}, refreshCookie } = {}) {
   const response = await fetch(`${baseUrl}/api/v1${path}`, {
     method,
     headers: {
       ...(body ? { 'Content-Type': 'application/json' } : {}),
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      ...(refreshCookie ? { Cookie: `sisrec_refresh=${encodeURIComponent(refreshCookie)}` } : {}),
       ...headers
     },
     body: body ? JSON.stringify(body) : undefined
   });
   const text = await response.text();
-  return { status: response.status, body: text ? JSON.parse(text) : null };
+  return { status: response.status, body: text ? JSON.parse(text) : null, setCookie: response.headers.getSetCookie() };
 }
 
+// El token de renovación llega solo en la cookie HttpOnly sisrec_refresh; aquí se lee para reenviarlo.
+const refreshCookieOf = (setCookie) => {
+  const cookie = setCookie.find((item) => item.startsWith('sisrec_refresh='));
+  return cookie ? decodeURIComponent(cookie.split(';')[0].slice('sisrec_refresh='.length)) : '';
+};
+const refresh = (refreshToken) => api('/auth/refresh', { method: 'POST', refreshCookie: refreshToken });
+
 async function login(email, password, device = {}) {
-  const { status, body } = await api('/auth/login', { method: 'POST', body: { email, password, ...device } });
+  const { status, body, setCookie } = await api('/auth/login', { method: 'POST', body: { email, password, ...device } });
   assert.equal(status, 200, body?.message);
-  return body;
+  return { ...body, refreshToken: refreshCookieOf(setCookie), setCookie };
 }
 
 const cobradorLogin = (device) => login('cobrador@salcedo.gob.pe', 'cobro123', device);
@@ -67,9 +75,15 @@ const inPeriod = (periodo, minute = 0) => new Date(Date.parse(`${periodo}-15T15:
 // Token de renovación por dispositivo
 // ---------------------------------------------------------------------------
 
-test('el login entrega un token de renovación de 12 h ligado al dispositivo', async () => {
+test('el login entrega el token de renovación de 12 h solo en una cookie HttpOnly', async () => {
   const result = await cobradorLogin({ device_id: 'android-cobrador-1', device_nombre: 'Moto G (Cobrador 1)' });
   assert.ok(result.refreshToken.length >= 40);
+  const cookie = result.setCookie.find((item) => item.startsWith('sisrec_refresh='));
+  assert.match(cookie, /HttpOnly/i);
+  assert.match(cookie, /SameSite=Strict/i);
+  assert.match(cookie, /Path=\/api\/v1\/auth/i);
+  const { body } = await api('/auth/login', { method: 'POST', body: { email: 'cobrador@salcedo.gob.pe', password: 'cobro123', device_id: 'android-cobrador-1b' } });
+  assert.equal(body.refreshToken, undefined, 'el JavaScript de la página no recibe el token de renovación');
   assert.equal(result.deviceId, 'android-cobrador-1');
 
   const hours = (Date.parse(result.refreshExpiresAt) - Date.now()) / 3_600_000;
@@ -86,30 +100,34 @@ test('el login entrega un token de renovación de 12 h ligado al dispositivo', a
 
 test('POST /auth/refresh renueva el token de acceso sin pedir la clave', async () => {
   const { refreshToken, user } = await cobradorLogin({ device_id: 'android-refresh' });
-  const { status, body } = await api('/auth/refresh', { method: 'POST', body: { refreshToken } });
+  const { status, body } = await refresh(refreshToken);
   assert.equal(status, 200, body?.message);
   assert.equal(body.user.id, user.id);
 
   const cobros = await api('/cobros', { token: body.token });
   assert.equal(cobros.status, 200, 'el token renovado sirve para la API');
 
-  const invalid = await api('/auth/refresh', { method: 'POST', body: { refreshToken: 'no-existe' } });
+  const invalid = await refresh('no-existe');
   assert.equal(invalid.status, 401);
   assert.equal(invalid.body.sessionExpired, true);
+  assert.ok(invalid.setCookie.some((item) => item.startsWith('sisrec_refresh=;')), 'una cookie que ya no sirve se borra');
+
+  // El token en el cuerpo (como antes) ya no se acepta: solo la cookie.
+  assert.equal((await api('/auth/refresh', { method: 'POST', body: { refreshToken } })).status, 401);
 });
 
 test('un token de renovación vencido ya no sirve', async () => {
   const { refreshToken, token } = await cobradorLogin({ device_id: 'android-vencido' });
   await pool.query(`UPDATE sesiones_dispositivo SET expira_en = now() - interval '1 minute' WHERE id = $1`, [jwt.decode(token).sid]);
-  const { status } = await api('/auth/refresh', { method: 'POST', body: { refreshToken } });
+  const { status } = await refresh(refreshToken);
   assert.equal(status, 401);
 });
 
 test('volver a ingresar en el mismo dispositivo cierra la sesión anterior de ese dispositivo', async () => {
   const first = await cobradorLogin({ device_id: 'android-reingreso' });
   const second = await cobradorLogin({ device_id: 'android-reingreso' });
-  assert.equal((await api('/auth/refresh', { method: 'POST', body: { refreshToken: first.refreshToken } })).status, 401);
-  assert.equal((await api('/auth/refresh', { method: 'POST', body: { refreshToken: second.refreshToken } })).status, 200);
+  assert.equal((await refresh(first.refreshToken)).status, 401);
+  assert.equal((await refresh(second.refreshToken)).status, 200);
 });
 
 test('el administrador revoca la sesión de un celular desde el panel y queda auditado', async () => {
@@ -128,7 +146,7 @@ test('el administrador revoca la sesión de un celular desde el panel y queda au
   const revoked = await api(`/auth/sesiones/${sid}`, { method: 'DELETE', token: admin.token });
   assert.equal(revoked.status, 200, revoked.body?.message);
 
-  assert.equal((await api('/auth/refresh', { method: 'POST', body: { refreshToken: cobrador.refreshToken } })).status, 401);
+  assert.equal((await refresh(cobrador.refreshToken)).status, 401);
   assert.equal((await api('/cobros', { token: cobrador.token })).status, 401, 'el token de acceso de la sesión revocada deja de valer al instante');
 
   const audit = await getAuditTrail(pool, { entidad: 'sesiones_dispositivo' });
@@ -140,13 +158,15 @@ test('un cobrador no puede revocar la sesión de otro usuario', async () => {
   const cobrador = await cobradorLogin({ device_id: 'android-intruso' });
   const { status } = await api(`/auth/sesiones/${jwt.decode(admin.token).sid}`, { method: 'DELETE', token: cobrador.token });
   assert.equal(status, 404);
-  assert.equal((await api('/auth/refresh', { method: 'POST', body: { refreshToken: admin.refreshToken } })).status, 200);
+  assert.equal((await refresh(admin.refreshToken)).status, 200);
 });
 
 test('POST /auth/logout revoca el token de renovación del dispositivo', async () => {
   const { refreshToken } = await cobradorLogin({ device_id: 'android-logout' });
-  assert.equal((await api('/auth/logout', { method: 'POST', body: { refreshToken } })).status, 200);
-  assert.equal((await api('/auth/refresh', { method: 'POST', body: { refreshToken } })).status, 401);
+  const logout = await api('/auth/logout', { method: 'POST', refreshCookie: refreshToken });
+  assert.equal(logout.status, 200);
+  assert.ok(logout.setCookie.some((item) => item.startsWith('sisrec_refresh=;')), 'el cierre borra la cookie');
+  assert.equal((await refresh(refreshToken)).status, 401);
 });
 
 // ---------------------------------------------------------------------------

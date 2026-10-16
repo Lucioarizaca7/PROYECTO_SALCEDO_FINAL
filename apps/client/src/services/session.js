@@ -1,18 +1,22 @@
 /**
  * Sesión del dispositivo: token de acceso corto + token de renovación de 12 h.
  *
- * authFetch agrega el token de acceso y, si la API responde 401, lo renueva una sola vez
- * con el token de renovación y repite la petición. Si la renovación también falla con 401
- * (sesión vencida o revocada desde el panel) avisa con el evento "sisrec:session-expired".
+ * Ningún token se guarda en localStorage (un XSS podría leerlo):
+ * - el de renovación lo guarda el navegador en la cookie HttpOnly sisrec_refresh, que este código no ve;
+ * - el de acceso vive solo en memoria. Al recargar la página se pide uno nuevo con la cookie.
+ *
+ * authFetch agrega el token de acceso y, si no hay o la API responde 401, lo renueva una sola vez
+ * y repite la petición. Si la renovación también falla con 401 (sesión vencida o revocada desde el
+ * panel) avisa con el evento "sisrec:session-expired".
  * Sin red no se cierra la sesión: el cobrador sigue trabajando offline.
  */
 
 const KEYS = {
-  access: 'sisrec-token',
-  refresh: 'sisrec-refresh-token',
-  refreshExpiresAt: 'sisrec-refresh-expira',
   device: 'sisrec-device-id'
 };
+
+// Claves de versiones anteriores, que guardaban los tokens en localStorage: se borran al cargar.
+const LEGACY_TOKEN_KEYS = ['sisrec-token', 'sisrec-refresh-token', 'sisrec-refresh-expira'];
 
 export const SESSION_EXPIRED_EVENT = 'sisrec:session-expired';
 
@@ -27,9 +31,11 @@ function write(key, value) {
     if (value === null || value === undefined || value === '') localStorage.removeItem(key);
     else localStorage.setItem(key, value);
   } catch {
-    // almacenamiento bloqueado: la sesión dura lo que la pestaña
+    // almacenamiento bloqueado: el id del dispositivo dura lo que la pestaña
   }
 }
+
+LEGACY_TOKEN_KEYS.forEach((key) => write(key, null));
 
 function randomId() {
   if (globalThis.crypto?.randomUUID) return globalThis.crypto.randomUUID();
@@ -54,19 +60,17 @@ export function getDeviceName() {
   return `${system} · ${browser}`;
 }
 
-export const getAccessToken = () => read(KEYS.access);
-export const getRefreshToken = () => read(KEYS.refresh);
+let accessToken = null;
 
-export function saveSession({ token, refreshToken, refreshExpiresAt } = {}) {
-  if (token) write(KEYS.access, token);
-  if (refreshToken) write(KEYS.refresh, refreshToken);
-  if (refreshExpiresAt) write(KEYS.refreshExpiresAt, String(refreshExpiresAt));
+export const getAccessToken = () => accessToken;
+
+/** Guarda el token de acceso de la respuesta de login o de renovación (solo en memoria). */
+export function saveSession({ token } = {}) {
+  if (token) accessToken = token;
 }
 
 export function clearSession() {
-  write(KEYS.access, null);
-  write(KEYS.refresh, null);
-  write(KEYS.refreshExpiresAt, null);
+  accessToken = null;
 }
 
 function notifyExpired(message) {
@@ -85,18 +89,13 @@ export class SessionExpiredError extends Error {
 
 let refreshing = null;
 
-/** Renueva el token de acceso. Varias peticiones a la vez comparten una sola renovación. */
+/** Renueva el token de acceso con la cookie. Varias peticiones a la vez comparten una sola renovación. */
 export function refreshSession() {
   if (refreshing) return refreshing;
-  const refreshToken = getRefreshToken();
-  if (!refreshToken) return Promise.reject(new SessionExpiredError());
 
   refreshing = (async () => {
-    const response = await fetch(`${apiBase}/auth/refresh`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ refreshToken })
-    });
+    // credentials: 'include' envía la cookie HttpOnly aunque la API esté en otro puerto u origen permitido.
+    const response = await fetch(`${apiBase}/auth/refresh`, { method: 'POST', credentials: 'include' });
     const body = await response.json().catch(() => ({}));
     if (response.status === 401) {
       const error = new SessionExpiredError(body.message ? `${body.message} Los cobros sin enviar se conservan.` : undefined);
@@ -104,7 +103,7 @@ export function refreshSession() {
       throw error;
     }
     if (!response.ok) throw new Error(body.message || `No se pudo renovar la sesión (${response.status})`);
-    saveSession({ token: body.token, refreshExpiresAt: body.refreshExpiresAt });
+    saveSession({ token: body.token });
     return body.token;
   })().finally(() => {
     refreshing = null;
@@ -113,25 +112,36 @@ export function refreshSession() {
 }
 
 function withAuth(options) {
-  const token = getAccessToken();
   return {
     ...options,
-    headers: { ...(options.headers || {}), ...(token ? { Authorization: `Bearer ${token}` } : {}) }
+    headers: { ...(options.headers || {}), ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}) }
   };
 }
+
+// Respuesta 401 para quien llama cuando la sesión venció antes de poder hacer la petición.
+const expiredResponse = (error) => new Response(JSON.stringify({ message: error.message, sessionExpired: true }), {
+  status: 401,
+  headers: { 'Content-Type': 'application/json' }
+});
 
 /**
  * fetch autenticado con renovación transparente del token. Los errores de red se propagan tal cual
  * (TypeError), para que quien llama pueda pasar al modo sin señal.
  */
 export async function authFetch(url, options = {}) {
+  // Página recién abierta: aún no hay token de acceso en memoria; se pide con la cookie.
+  if (!accessToken) {
+    try {
+      await refreshSession();
+    } catch (error) {
+      if (error.sessionExpired) return expiredResponse(error);
+      throw error;
+    }
+  }
+
   let response = await fetch(url, withAuth(options));
   if (response.status !== 401) return response;
 
-  if (!getRefreshToken()) {
-    notifyExpired();
-    return response;
-  }
   try {
     await refreshSession();
   } catch (error) {
@@ -143,17 +153,11 @@ export async function authFetch(url, options = {}) {
   return response;
 }
 
-/** Cierra la sesión del dispositivo en el servidor (revoca el token de renovación). No falla sin red. */
+/** Cierra la sesión del dispositivo en el servidor (revoca el token y borra la cookie). No falla sin red. */
 export async function logoutSession() {
-  const refreshToken = getRefreshToken();
   clearSession();
-  if (!refreshToken) return;
   try {
-    await fetch(`${apiBase}/auth/logout`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ refreshToken })
-    });
+    await fetch(`${apiBase}/auth/logout`, { method: 'POST', credentials: 'include' });
   } catch {
     // sin señal: el token vence solo en 12 h o se revoca desde el panel
   }

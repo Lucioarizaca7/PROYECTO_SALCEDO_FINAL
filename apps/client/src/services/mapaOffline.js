@@ -1,5 +1,5 @@
 import { openOfflineDatabase } from './offlineStore';
-import { apiBase, authFetch, getAccessToken } from './session';
+import { apiBase, authFetch } from './session';
 
 // Copia del mapa en IndexedDB para verlo sin señal, y cola de cambios del mapa hechos sin señal.
 
@@ -53,7 +53,7 @@ export async function mapFetch(url, options) {
 }
 
 export async function syncPendingMapMutations() {
-  if (!navigator.onLine || !getAccessToken()) return;
+  if (!navigator.onLine) return;
 
   const db = await openOfflineDatabase();
   const readTx = db.transaction('mapa_pendientes', 'readonly');
