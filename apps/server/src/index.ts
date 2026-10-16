@@ -8,7 +8,7 @@ import type { Server } from 'node:http';
 import { pathToFileURL } from 'node:url';
 
 import { config } from './config.js';
-import { loginUser, hasRoleAccess, requireAuth, requireRoles, auditMutation } from './auth.js';
+import { loginUser, hasRoleAccess, requireAuth, requireRoles, auditMutation, refreshAccessToken, logoutDevice, markSessionRevoked, SessionError } from './auth.js';
 import { validateLogin, handleValidationErrors, validateComerciante, validateCobro } from './validation.js';
 import {
   initializeDatabase,
@@ -27,6 +27,8 @@ import {
   updateCalle,
   deleteCalle,
   getComerciantes,
+  findComerciante,
+  buscarComerciantePorCodigo,
   countComerciantes,
   insertComerciante,
   updateComerciante,
@@ -34,21 +36,29 @@ import {
   getPuestos,
   insertPuesto,
   updatePuesto,
+  liberarPuesto,
   deactivatePuesto,
   getTarifas,
   insertTarifa,
   updateTarifa,
-  calculateLiquidation,
+  calcularLiquidacion,
   getCobros,
-  insertCobro,
+  registrarCobro,
   syncOfflineCobro,
+  syncOfflineBatch,
+  getCobrosObservados,
+  resolveCobroObservado,
+  getSyncErrors,
+  getJornadaPackage,
+  getDeviceSessions,
+  revokeDeviceSession,
   getComerciantePreferencias,
   updateComerciantePreferencias,
   getAuditTrail,
   getOperationalDashboard,
   getReportRows,
   buildReportCsv,
-  getMerchantPortal,
+  obtenerPortalComerciante,
   createNotification,
   getNotifications,
   generateForecastProjection,
@@ -202,7 +212,7 @@ app.get('/api/v1/publico/resumen', async (_req, res) => {
     return res.json(publicSummaryCache.body);
   }
   const periodo = currentPeriod();
-  const [metrics, puestos] = await Promise.all([getOperationalDashboard(db, { periodo }), getPuestos(db)]);
+  const [metrics, puestos] = await Promise.all([getOperationalDashboard(db, { periodo }), getPuestos(db, { conPagos: false })]);
   const stats = dashboardStats(metrics);
   const body = {
     periodo,
@@ -340,7 +350,7 @@ app.post('/api/v1/portal/login', loginLimiter, async (req, res) => {
       return res.status(400).json({ message: 'Debe ingresar su DNI o código de comerciante' });
     }
 
-    const data = await getMerchantPortal(db, identifier);
+    const data = await obtenerPortalComerciante(db, identifier);
     return res.json({ data, message: 'Portal del comerciante consultado correctamente' });
   } catch (error) {
     return res.status(404).json({ message: error.message || 'No se encontró el comerciante en el padrón' });
@@ -518,8 +528,14 @@ app.post('/api/v1/comerciantes/importar-padron',
   }
 );
 
+// Un número es el id interno (lo que manda la app); cualquier otra cosa es el código de negocio (COM-0004-…, CM-004).
+async function resolveComercianteParam(value: string) {
+  return /^\d+$/.test(value) ? Number(value) : await buscarComerciantePorCodigo(db, value);
+}
+
 app.get('/api/v1/comerciantes/:id', ...staffOnly, async (req, res) => {
-  const comerciante = (await getComerciantes(db, { search: String(Number(req.params.id)), limit: 100 })).find((item) => item.id === Number(req.params.id));
+  const id = await resolveComercianteParam(String(req.params.id));
+  const comerciante = id ? await findComerciante(db, id) : null;
 
   if (!comerciante) {
     return res.status(404).json({ message: 'Comerciante no encontrado' });
@@ -628,8 +644,9 @@ app.delete('/api/v1/comerciantes/:id',
   }
 );
 
-app.get('/api/v1/puestos', ...staffOnly, async (_req, res) => {
-  const data = await getPuestos(db);
+// Cada puesto trae su estado de pago del mes (saldo_pendiente, monto_total, monto_pagado, estado_pago).
+app.get('/api/v1/puestos', ...staffOnly, async (req, res) => {
+  const data = await getPuestos(db, { incluirInactivos: req.query.incluirInactivos === '1' });
   res.json({ data, total: data.length });
 });
 
@@ -669,7 +686,7 @@ app.post('/api/v1/puestos-mapa',
         zona_id: req.body.zona_id ?? req.body.zonaId,
         direccion: req.body.direccion || req.body.sector || req.body.codigoPuesto,
         metros_cuadrados: req.body.metros_cuadrados ?? req.body.metros ?? 1,
-        estado: req.body.estado || 'ocupado'
+        estado: req.body.estado // sin estado: ocupado si tiene titular, disponible si no
       });
       return res.status(201).json({ data: puesto, message: 'Puesto geolocalizado registrado correctamente' });
     } catch (error) {
@@ -693,6 +710,25 @@ app.put('/api/v1/puestos-mapa/:id',
       return res.json({ data: await updatePuesto(db, req.params.id, req.body || {}), message: 'Puesto geolocalizado actualizado correctamente' });
     } catch (error) {
       return res.status(400).json({ message: error.message || 'No se pudo actualizar el puesto geolocalizado' });
+    }
+  }
+);
+
+app.post('/api/v1/puestos/:id/liberar',
+  requireAuth,
+  requireRoles(['super_admin', 'cobrador']),
+  auditMutation({
+    db,
+    accion: 'LIBERAR_PUESTO',
+    entidad: 'puestos',
+    getPreviousState: async (req) => rowById('puestos', Number(req.params.id)),
+    serializeResponse: (body) => body?.data ?? body
+  }),
+  async (req, res) => {
+    try {
+      return res.json({ data: await liberarPuesto(db, req.params.id), message: 'Puesto liberado: queda disponible para otro comerciante' });
+    } catch (error) {
+      return res.status(400).json({ message: error.message || 'No se pudo liberar el puesto' });
     }
   }
 );
@@ -762,7 +798,7 @@ app.put('/api/v1/tarifas/:id',
 
 app.get('/api/v1/liquidaciones/:comercianteId', ...staffOnly, async (req, res) => {
   try {
-    return res.json({ data: await calculateLiquidation(db, req.params.comercianteId, String(req.query.periodo || '')) });
+    return res.json({ data: await calcularLiquidacion(db, await resolveComercianteParam(String(req.params.comercianteId)), String(req.query.periodo || '')) });
   } catch (error) {
     return res.status(400).json({ message: error.message || 'No se pudo calcular la liquidación' });
   }
@@ -770,7 +806,7 @@ app.get('/api/v1/liquidaciones/:comercianteId', ...staffOnly, async (req, res) =
 
 app.get('/api/v1/comerciantes/:comercianteId/saldo', ...staffOnly, async (req, res) => {
   try {
-    return res.json({ data: await calculateLiquidation(db, req.params.comercianteId, String(req.query.periodo || '')) });
+    return res.json({ data: await calcularLiquidacion(db, await resolveComercianteParam(String(req.params.comercianteId)), String(req.query.periodo || '')) });
   } catch (error) {
     return res.status(400).json({ message: error.message || 'No se pudo consultar el saldo' });
   }
@@ -805,10 +841,65 @@ app.post('/api/v1/cobros/sincronizar',
       }
       return res.status(201).json(result);
     } catch (error) {
-      return res.status(400).json({ message: error.message || 'No se pudo sincronizar el cobro offline' });
+      // 400: dato inválido (no sirve reintentar); 503: fallo temporal, el celular debe reintentar.
+      const status = error.permanent === false ? 503 : 400;
+      return res.status(status).json({ message: error.message || 'No se pudo sincronizar el cobro offline' });
     }
   }
 );
+
+// Sube hasta 100 cobros offline en una petición. Responde 200 con el resultado de cada uno
+// (sincronizado, duplicado, observado, rechazado o error temporal); uno que falla no detiene al resto.
+app.post('/api/v1/cobros/sincronizar-lote',
+  requireAuth,
+  requireRoles(['super_admin', 'cobrador']),
+  async (req, res) => {
+    const cobros = req.body?.cobros;
+    const deviceId = String(req.body?.device_id || req.headers['x-device-id'] || '').trim().slice(0, 100) || null;
+    try {
+      const data = await syncOfflineBatch(db, cobros, {
+        cobradorId: req.user.id,
+        deviceId,
+        audit: auditContext(req, 'SINCRONIZAR_COBRO_OFFLINE')
+      });
+      return res.json({ data, message: `Lote procesado: ${data.resumen.sincronizado} sincronizados, ${data.resumen.observado} observados, ${data.resumen.duplicado} duplicados, ${data.resumen.rechazado} rechazados` });
+    } catch (error) {
+      return res.status(400).json({ message: error.message || 'No se pudo procesar el lote' });
+    }
+  }
+);
+
+// Panel de revisión manual: cobros offline observados y cobros rechazados por el servidor.
+app.get('/api/v1/cobros/observados', requireAuth, requireRoles(['super_admin', 'auditor']), async (req, res) => {
+  const data = await getCobrosObservados(db, { estado: String(req.query.estado || 'pendiente') });
+  return res.json({ data, total: data.length });
+});
+
+app.post('/api/v1/cobros/observados/:id/resolver', requireAuth, requireRoles(['super_admin']), async (req, res) => {
+  try {
+    const data = await resolveCobroObservado(db, Number(req.params.id), {
+      decision: String(req.body?.decision || ''),
+      resolucion: req.body?.resolucion,
+      usuarioId: req.user.id,
+      audit: auditContext(req, 'REVISAR_COBRO_OBSERVADO')
+    });
+    return res.json({ data, message: data.estado === 'anulado' ? 'Cobro anulado; registre la devolución al comerciante' : 'Cobro aceptado' });
+  } catch (error) {
+    return res.status(error.status || 400).json({ message: error.message || 'No se pudo resolver el cobro observado' });
+  }
+});
+
+app.get('/api/v1/cobros/sincronizacion/errores', requireAuth, requireRoles(['super_admin', 'auditor']), async (_req, res) => {
+  const data = await getSyncErrors(db);
+  return res.json({ data, total: data.length });
+});
+
+// Paquete de inicio de jornada: padrón activo con saldos del periodo y tarifas, para buscar sin señal.
+app.get('/api/v1/jornada/paquete', requireAuth, requireRoles(['super_admin', 'cobrador']), async (req, res) => {
+  const periodo = /^\d{4}-\d{2}$/.test(String(req.query.periodo || '')) ? String(req.query.periodo) : currentPeriod();
+  const data = await getJornadaPackage(db, { periodo });
+  return res.json({ data, total: data.comerciantes.length });
+});
 
 app.get('/api/v1/auditoria',
   requireAuth,
@@ -839,7 +930,7 @@ app.post('/api/v1/cobros',
   async (req, res) => {
     try {
       // cobrador_id sale del token; comprobante, cobro y auditoría se graban en una sola transacción.
-      const data = await insertCobro(db, { ...(req.body || {}), cobrador_id: req.user.id }, { audit: auditContext(req, 'REGISTRAR_COBRO') });
+      const data = await registrarCobro(db, { ...(req.body || {}), cobrador_id: req.user.id }, { audit: auditContext(req, 'REGISTRAR_COBRO') });
       return res.status(201).json({ data, message: 'Cobro registrado correctamente' });
     } catch (error) {
       return res.status(400).json({ message: error.message || 'No se pudo registrar el cobro' });
@@ -848,13 +939,66 @@ app.post('/api/v1/cobros',
 );
 
 app.post('/api/v1/auth/login', loginLimiter, validateLogin, handleValidationErrors, async (req, res) => {
+  let result;
   try {
-    const result = await loginUser(req.body, db);
-    return res.json(result);
+    result = await loginUser(req.body, db, {
+      deviceId: req.body?.device_id,
+      deviceNombre: req.body?.device_nombre,
+      ip: req.ip,
+      userAgent: String(req.headers['user-agent'] || '')
+    });
   } catch (error) {
+    if (error?.code) throw error; // fallo de la base: lo atiende el manejador global (500)
     // Mensaje genérico para no revelar si el usuario existe o no
     return res.status(401).json({ message: 'Credenciales inválidas' });
   }
+  return res.json(result);
+});
+
+// Canjea el token de renovación del dispositivo (12 h) por un token de acceso nuevo, sin pedir la clave.
+app.post('/api/v1/auth/refresh', loginLimiter, async (req, res) => {
+  try {
+    return res.json(await refreshAccessToken(String(req.body?.refreshToken || ''), db));
+  } catch (error) {
+    if (error instanceof SessionError) return res.status(401).json({ message: error.message, sessionExpired: true });
+    throw error;
+  }
+});
+
+app.post('/api/v1/auth/logout', async (req, res) => {
+  const refreshToken = String(req.body?.refreshToken || '').trim();
+  if (refreshToken) await logoutDevice(refreshToken, db);
+  return res.json({ message: 'Sesión cerrada' });
+});
+
+// Sesiones de dispositivo vigentes: el administrador ve todas; los demás, solo las suyas.
+app.get('/api/v1/auth/sesiones', requireAuth, async (req, res) => {
+  const isAdmin = req.user.rol === 'super_admin';
+  const data = await getDeviceSessions(db, {
+    usuarioId: isAdmin ? Number(req.query.usuario_id || 0) || null : req.user.id,
+    soloActivas: req.query.todas !== 'true'
+  });
+  return res.json({ data: data.map((item) => ({ ...item, actual: Number(item.id) === Number(req.user.sid) })), total: data.length });
+});
+
+app.delete('/api/v1/auth/sesiones/:id', requireAuth, async (req, res) => {
+  const isAdmin = req.user.rol === 'super_admin';
+  const revoked = await revokeDeviceSession(db, {
+    sessionId: Number(req.params.id),
+    revocadoPor: req.user.id,
+    motivo: String(req.body?.motivo || (isAdmin ? 'Revocada por el administrador' : 'Revocada por el usuario')),
+    usuarioId: isAdmin ? null : req.user.id
+  });
+  if (!revoked) return res.status(404).json({ message: 'Sesión no encontrada o ya revocada' });
+  markSessionRevoked(revoked.id);
+  await recordAudit(db, {
+    ...auditContext(req, 'REVOCAR_SESION_DISPOSITIVO'),
+    entidad: 'sesiones_dispositivo',
+    detalle: `Sesión ${revoked.id} del usuario ${revoked.usuario_id} (${revoked.device_nombre || revoked.device_id}) revocada`,
+    recursoId: revoked.id,
+    payloadNuevo: revoked
+  });
+  return res.json({ data: revoked, message: 'Sesión revocada: el dispositivo deberá ingresar de nuevo' });
 });
 
 app.get('/api/v1/auth/permissions/:role/:requiredRole', requireAuth, (req, res) => {

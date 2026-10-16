@@ -1,0 +1,8 @@
+/* Código de negocio del comerciante (COM-0004-LAC-COMI-75163744-MCEN-ACT-20261016): largo, se parte en los guiones. */
+.merchant-code {
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 0.78rem;
+  max-width: 15rem;
+  overflow-wrap: anywhere;
+  line-height: 1.35;
+}

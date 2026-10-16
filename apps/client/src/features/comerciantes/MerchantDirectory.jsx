@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useMerchantDirectory } from '../../hooks/useMerchantDirectory';
 import { MerchantQrDialog } from './MerchantQrDialog';
+import './comerciantes.css';
 
 export function MerchantDirectory({
   merchants,
@@ -170,11 +171,12 @@ export function MerchantDirectory({
             </thead>
             <tbody>
               {directory.visibleMerchants.map((row) => {
-                const [code, name, category, document, zone, state, date] = row;
+                // code es el id interno (para editar y dar de baja); businessCode es el código que ve la gente.
+                const [code, name, category, document, zone, state, date, , businessCode] = row;
                 const statusClass = state === 'Pendiente' ? 'pending' : state === 'Inactivo' ? 'neutral' : 'paid';
                 return (
                   <tr key={code}>
-                    <td>CM-{String(code).padStart(3, '0')}</td>
+                    <td className="merchant-code">{businessCode}</td>
                     <td>{name}</td>
                     <td>{category}</td>
                     <td>{document}</td>
@@ -183,7 +185,7 @@ export function MerchantDirectory({
                     <td>{date}</td>
                     <td>
                       <div className="table-actions">
-                        <button className="table-action qr-table-action" type="button" aria-label={`Ver código QR de ${name}`} onClick={() => setQrMerchant({ id: code, codigo: `CM-${String(code).padStart(3, '0')}`, nombre: name, qr_code: `SISREC://comerciante/${code}` })}>Ver QR</button>
+                        <button className="table-action qr-table-action" type="button" aria-label={`Ver código QR de ${name}`} onClick={() => setQrMerchant({ id: code, codigo: businessCode, nombre: name, qr_code: `SISREC://comerciante/${businessCode}` })}>Ver QR</button>
                         <button className="table-action" type="button" aria-label={`Editar ${name}`} onClick={() => onEdit(row)}>Editar</button>
                         <button className="table-action" type="button" aria-label={`Dar de baja a ${name}`} onClick={() => onDeactivate(code)}>Dar de baja</button>
                       </div>

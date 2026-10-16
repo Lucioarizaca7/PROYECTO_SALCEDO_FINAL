@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { calculateLiquidation, getComerciantes, getPuestos, initializeDatabase } from '../src/db.js';
+import { calcularLiquidacion, getComerciantes, getPuestos, initializeDatabase } from '../src/db.js';
 import { importPadronPreview, previewPadronSheets } from '../src/padronImport.js';
 
 const workbook = [{
@@ -37,7 +37,7 @@ test('previsualiza e importa hojas por bloque, reimporta sin duplicar y no deven
   assert.equal(absentMerchant.tipo_comerciante, 'ferial');
   assert.equal(absentPost.metros_cuadrados, 4.5);
   assert.equal(absentPost.estado, 'disponible');
-  assert.equal((await calculateLiquidation(db, absentMerchant.id, '2026-09')).no_devengo, true);
+  assert.equal((await calcularLiquidacion(db, absentMerchant.id, '2026-09')).no_devengo, true);
 
   const secondPreview = await previewPadronSheets(workbook, { filename: 'FERIA ZAPATILLAS 2026.xlsx', db });
   assert.equal(secondPreview.validRows, 2);

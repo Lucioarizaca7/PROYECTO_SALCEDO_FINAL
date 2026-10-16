@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { loginUser, hasRoleAccess, requireAuth, requireRoles } from '../src/auth.ts';
-import { initializeDatabase, recordAudit, getAuditTrail, syncOfflineCobro, createNotification, getNotifications, getMerchantPortal, generateForecastProjection, scoreMorosidadComerciante, verifyAuditChain } from '../src/db.js';
+import { initializeDatabase, recordAudit, getAuditTrail, syncOfflineCobro, createNotification, getNotifications, obtenerPortalComerciante, generateForecastProjection, scoreMorosidadComerciante, verifyAuditChain } from '../src/db.js';
 
 test('loginUser acepta credenciales válidas y devuelve usuario', async () => {
   const db = await initializeDatabase();
@@ -128,9 +128,9 @@ test('syncOfflineCobro detecta duplicados por hash idempotente y evita reinserta
   assert.equal(Number(totalCobros), 1);
 });
 
-test('getMerchantPortal y createNotification exponen el portal del comerciante y su historial de avisos', async () => {
+test('obtenerPortalComerciante y createNotification exponen el portal del comerciante y su historial de avisos', async () => {
   const db = await initializeDatabase();
-  const portal = await getMerchantPortal(db, '20123456780');
+  const portal = await obtenerPortalComerciante(db, '20123456780');
 
   assert.equal(portal.comerciante.nombre, 'Comerciante Demo');
   assert.ok(Array.isArray(portal.pagos));

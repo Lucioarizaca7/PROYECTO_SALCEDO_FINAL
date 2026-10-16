@@ -8,7 +8,7 @@ import assert from 'node:assert/strict';
 
 import { app, startServer } from '../src/index.ts';
 import { loginUser } from '../src/auth.ts';
-import { closeDatabase, currentPeriod, findUserByEmail, getAuditTrail, getComerciantes, getReportRows, insertCobro } from '../src/db.js';
+import { closeDatabase, currentPeriod, findUserByEmail, getAuditTrail, getComerciantes, getReportRows, registrarCobro } from '../src/db.js';
 import { pool } from '../src/pg.js';
 
 // Únicas rutas GET que se pueden consultar sin iniciar sesión.
@@ -113,7 +113,7 @@ test('un cobro fallido no deja comprobante ni auditoría a medias', async () => 
   const before = { comprobantes: await count('comprobantes'), auditoria: await count('auditoria_logs') };
 
   await assert.rejects(
-    insertCobro(pool, { comerciante_id: merchant.id, cobrador_id: cobrador.id, monto: 999999, metodo_pago: 'efectivo' },
+    registrarCobro(pool, { comerciante_id: merchant.id, cobrador_id: cobrador.id, monto: 999999, metodo_pago: 'efectivo' },
       { audit: { accion: 'REGISTRAR_COBRO' } }),
     /excede el saldo/
   );
@@ -128,7 +128,7 @@ test('un cobro de las 19:30 del 31 de octubre en Salcedo cuenta para octubre', a
 
   const cobrador = await findUserByEmail(pool, 'cobrador@salcedo.gob.pe');
   const [merchant] = await getComerciantes(pool, { search: 'Comerciante Demo', limit: 1 });
-  const cobro = await insertCobro(pool, {
+  const cobro = await registrarCobro(pool, {
     comerciante_id: merchant.id, cobrador_id: cobrador.id, monto: 2, metodo_pago: 'efectivo',
     periodo: '2026-10', fecha_cobro: fechaCobro, codigo_operacion: `TZ-${Date.now()}`
   });

@@ -1,20 +1,28 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useBluetoothPrint } from './utils/bluetoothPrint';
 
 import { KpiCard } from './components/ui/KpiCard';
 import { DashboardSkeleton } from './components/ui/DashboardSkeleton';
 import { ScrollSnapContainer, ScrollSnapSection } from './components/layout/ScrollSnapContainer';
-import { MerchantDirectory } from './features/merchants/MerchantDirectory';
+import { MerchantDirectory } from './features/comerciantes/MerchantDirectory';
 import { QrScanner } from './features/payments/QrScanner';
 import { SitesMap } from './components/features/map/SitesMap';
+import { paymentStatusText, SERVER_PAYMENT_STATUS } from './components/features/map/sitesGeo';
 import { SyncStatusBadge } from './components/ui/SyncStatusBadge';
 import { TariffCalculator } from './components/landing/TariffCalculator';
 import { TransparencySection, LandingFooter } from './components/landing/TransparencySection';
 import { useNetworkStatus } from './hooks/useNetworkStatus';
+import { FieldWorkPanel } from './features/offline/FieldWorkPanel';
+import { ReviewPanel } from './features/offline/ReviewPanel';
+import { DeviceSessions } from './features/offline/DeviceSessions';
+import { useOfflineQueue } from './features/offline/useOfflineQueue';
+import { useJornada } from './features/offline/useJornada';
+import { aComercianteDePantalla, aSaldoDePantalla } from './services/jornadaOffline';
+import { crearHashCobro } from './services/offlineQueue';
+import { openOfflineDatabase } from './services/offlineStore';
+import { apiBase, authFetch, getAccessToken, getDeviceId, getDeviceName, logoutSession, saveSession, SESSION_EXPIRED_EVENT } from './services/session';
 
-// VITE_API_URL: origen del servidor sin /api (p. ej. https://sisrec.example.pe).
-const configuredApiBase = import.meta.env.VITE_API_URL || 'http://localhost:3003';
-const apiBase = `${configuredApiBase.replace(/\/+$/, '').replace(/\/api(?:\/v1)?$/, '')}/api/v1`;
+// apiBase (VITE_API_URL sin /api + /api/v1) y la renovación del token viven en services/session.js.
 const formatPEN = (value) => new Intl.NumberFormat('es-PE', { style: 'currency', currency: 'PEN', minimumFractionDigits: 2 }).format(Number(value) || 0);
 
 const navItems = [
@@ -26,9 +34,26 @@ const navItems = [
   { key: 'mapa', label: 'Mapa de sitios', roles: ['super_admin', 'cobrador'] },
   { key: 'reportes', label: 'Reportes' },
   { key: 'auditoria', label: 'Auditoría' },
+  { key: 'revision', label: 'Revisión de cobros', roles: ['super_admin', 'auditor'] },
+  { key: 'dispositivos', label: 'Dispositivos', roles: ['super_admin'] },
   { key: 'ia', label: 'Analítica de recaudación' },
   { key: 'tarifas', label: 'Tarifas', roles: ['super_admin'] }
 ];
+
+const roleLabels = { super_admin: 'Super administrador', cobrador: 'Cobrador', auditor: 'Auditor' };
+
+const formatRole = (rol) => {
+  if (!rol) return 'Super administrador';
+  if (roleLabels[rol]) return roleLabels[rol];
+  const text = String(rol).replace(/_/g, ' ');
+  return text.charAt(0).toUpperCase() + text.slice(1);
+};
+
+const getInitials = (nombre) => {
+  const words = String(nombre || '').trim().split(/\s+/).filter(Boolean);
+  if (!words.length) return 'U';
+  return words.slice(0, 2).map((word) => word.charAt(0)).join('').toUpperCase();
+};
 
 // Memoization cache for buildExpressSuggestion to avoid recalculations
 const suggestionCache = new Map();
@@ -64,22 +89,7 @@ function hashHistory(history) {
   const last = history[history.length - 1] || {};
   return `${history.length}_${first.comercianteId || first.comercianteId || '0'}_${last.comercianteId || last.comercianteId || '0'}`;
 }
-const getStoredToken = () => localStorage.getItem('sisrec-token');
-
-const getAuthHeaders = (extraHeaders = {}) => {
-  const token = getStoredToken();
-  return {
-    ...extraHeaders,
-    ...(token ? { Authorization: `Bearer ${token}` } : {})
-  };
-};
-
-async function createOfflineHash(payload) {
-  const encoder = new TextEncoder();
-  const source = `${payload.cobradorId}|${payload.comercianteId}|${payload.puestoId || ''}|${payload.fechaCobro}|${payload.monto}|${payload.salt || Date.now()}`;
-  const digest = await crypto.subtle.digest('SHA-256', encoder.encode(source));
-  return Array.from(new Uint8Array(digest)).map((byte) => byte.toString(16).padStart(2, '0')).join('');
-}
+const getStoredToken = () => getAccessToken();
 
 async function createReceiptHash(payload) {
   const encoder = new TextEncoder();
@@ -111,7 +121,7 @@ function buildEscPosReceipt(receipt) {
 }
 
 // Enhanced printThermalReceipt function with offline queuing
-async function printThermalReceipt(receipt) {
+async function printThermalReceipt(receipt, setPrintStatus = () => {}) {
   if (!receipt) return;
 
   if (!('bluetooth' in navigator)) {
@@ -193,60 +203,7 @@ function shareViaWhatsAppDebtReminder(portalData) {
   }
 }
 
-async function openOfflineDatabase() {
-  return new Promise((resolve, reject) => {
-    const request = indexedDB.open('sisrec-offline-db', 4);
-
-    request.onupgradeneeded = () => {
-      const db = request.result;
-
-      if (!db.objectStoreNames.contains('padron')) {
-        const padronStore = db.createObjectStore('padron', { keyPath: 'id' });
-        padronStore.createIndex('numeroDocumento', 'numeroDocumento', { unique: false });
-        padronStore.createIndex('codigoPuesto', 'codigoPuesto', { unique: false });
-        padronStore.createIndex('nombresRazonSocial', 'nombresRazonSocial', { unique: false });
-        padronStore.createIndex('estadoPagoHoy', 'estadoPagoHoy', { unique: false });
-      }
-
-      if (!db.objectStoreNames.contains('cobros')) {
-        const cobrosStore = db.createObjectStore('cobros', { keyPath: 'id', autoIncrement: true });
-        cobrosStore.createIndex('hashTransaccion', 'hashTransaccion', { unique: true });
-        cobrosStore.createIndex('sincronizado', 'sincronizado', { unique: false });
-        cobrosStore.createIndex('fechaCobro', 'fechaCobro', { unique: false });
-      }
-
-      if (!db.objectStoreNames.contains('mapa')) {
-        db.createObjectStore('mapa', { keyPath: 'id' });
-      }
-
-      if (!db.objectStoreNames.contains('mapa_pendientes')) {
-        db.createObjectStore('mapa_pendientes', { keyPath: 'id', autoIncrement: true });
-      }
-    };
-
-    request.onsuccess = () => resolve(request.result);
-    request.onerror = () => reject(request.error);
-  });
-}
-
-function normalizeLocalMerchant(item) {
-  const id = String(item.id ?? item.comercianteId ?? item.comerciante_id ?? '');
-  return {
-    id,
-    numeroDocumento: String(item.dni_ruc ?? item.numeroDocumento ?? '').trim(),
-    nombresRazonSocial: String(item.nombre ?? item.nombresRazonSocial ?? '').trim(),
-    puestoId: String(item.puesto_id ?? item.puestoId ?? item.id ?? '').trim(),
-    codigoPuesto: String(item.codigo_puesto ?? item.codigoPuesto ?? `S-${String(item.id ?? '').padStart(3, '0')}`),
-    categoriaRubro: String(item.rubro ?? item.categoriaRubro ?? 'general').trim(),
-    montoTasaDiaria: Number(item.monto_tasa_diaria ?? item.montoTasaDiaria ?? item.monto ?? 0),
-    estadoPagoHoy: Boolean(item.estado_pago_hoy ?? item.estadoPagoHoy ?? false),
-    updatedAt: new Date().toISOString(),
-    zona: item.zona ?? item.zona_id ?? null,
-    estado: item.estado ?? 'activo'
-  };
-}
-
-async function savePadronSnapshot(merchantList = []) {
+// Sugerencia del modo express (monto y método habituales del comerciante).
 function buildExpressSuggestion(merchant, balance, history = []) {
   // Create cache key from inputs
   const merchantId = merchant?.id || 'unknown';
@@ -325,53 +282,6 @@ function buildExpressSuggestion(merchant, balance, history = []) {
   setSuggestionInCache(merchantId, balanceAmount, historyHash, result);
   return result;
 }
-  if (!merchantList.length || !('indexedDB' in window)) return;
-
-  const db = await openOfflineDatabase();
-  const tx = db.transaction('padron', 'readwrite');
-  const store = tx.objectStore('padron');
-
-  for (const item of merchantList) {
-    const payload = normalizeLocalMerchant(item);
-    if (payload.id) {
-      store.put(payload);
-    }
-  }
-
-  return new Promise((resolve, reject) => {
-    tx.oncomplete = () => resolve();
-    tx.onerror = () => reject(tx.error);
-  });
-}
-
-async function searchLocalMerchant(query) {
-  if (!('indexedDB' in window)) return null;
-
-  const db = await openOfflineDatabase();
-  const tx = db.transaction('padron', 'readonly');
-  const store = tx.objectStore('padron');
-  const records = await new Promise((resolve, reject) => {
-    const request = store.getAll();
-    request.onsuccess = () => resolve(request.result || []);
-    request.onerror = () => reject(request.error);
-  });
-
-  const normalizedQuery = String(query || '').trim().toLowerCase();
-  if (!normalizedQuery) return null;
-
-  return records.find((item) => {
-    const hayCoincidencia = [
-      item.numeroDocumento,
-      item.nombresRazonSocial,
-      item.codigoPuesto,
-      item.puestoId,
-      item.zona,
-      item.id
-    ].some((value) => String(value || '').toLowerCase().includes(normalizedQuery));
-
-    return hayCoincidencia;
-  }) || null;
-}
 
 async function saveMapSnapshot(puestos = []) {
   if (!puestos.length || !('indexedDB' in window)) return;
@@ -411,6 +321,17 @@ async function queueMapMutation(operation, payload) {
   });
 }
 
+// fetch del mapa: si el servidor no responde, fetch lanza un TypeError ("Failed to fetch");
+// se cambia por un mensaje que el cobrador entienda.
+async function mapFetch(url, options) {
+  try {
+    return await authFetch(url, options);
+  } catch (error) {
+    if (error instanceof TypeError) throw new Error('No se pudo conectar con el servidor. Revisa tu conexión o intenta más tarde.');
+    throw error;
+  }
+}
+
 async function syncPendingMapMutations() {
   if (!navigator.onLine || !getStoredToken()) return;
 
@@ -427,9 +348,9 @@ async function syncPendingMapMutations() {
     const endpoint = operation === 'create'
       ? `${apiBase}/puestos-mapa`
       : `${apiBase}/puestos-mapa/${payload.id}`;
-    const response = await fetch(endpoint, {
+    const response = await authFetch(endpoint, {
       method: operation === 'create' ? 'POST' : operation === 'update' ? 'PUT' : 'DELETE',
-      headers: getAuthHeaders({ 'Content-Type': 'application/json' }),
+      headers: { 'Content-Type': 'application/json' },
       body: operation === 'delete' ? undefined : JSON.stringify(payload)
     });
 
@@ -442,87 +363,6 @@ async function syncPendingMapMutations() {
       deleteTx.onerror = () => reject(deleteTx.error);
     });
   }
-}
-
-async function queueOfflinePayment(payload) {
-  const db = await openOfflineDatabase();
-  const hashTransaccion = await createOfflineHash({
-    cobradorId: payload.cobrador_id || payload.cobradorId,
-    comercianteId: payload.comerciante_id || payload.comercianteId,
-    puestoId: payload.puesto_id || payload.puestoId || 'offline',
-    fechaCobro: payload.fecha_cobro || payload.fechaCobro || new Date().toISOString(),
-    monto: payload.monto,
-    salt: payload.codigo_operacion || payload.codigoOperacion || Date.now()
-  });
-
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction('cobros', 'readwrite');
-    const store = tx.objectStore('cobros');
-    const request = store.put({
-      ...payload,
-      hashTransaccion,
-      sincronizado: 0,
-      intentos: 0,
-      createdAt: new Date().toISOString()
-    });
-    request.onsuccess = () => resolve({ ok: true, hashTransaccion });
-    request.onerror = () => reject(request.error);
-  });
-}
-
-async function syncPendingOfflinePayments() {
-  if (!navigator.onLine || !getStoredToken()) return;
-
-  const db = await openOfflineDatabase();
-  const tx = db.transaction('cobros', 'readonly');
-  const store = tx.objectStore('cobros');
-  const request = store.getAll();
-
-  return new Promise((resolve, reject) => {
-    request.onsuccess = async () => {
-      const pendings = (request.result || []).filter((item) => item.sincronizado === 0);
-      try {
-        for (const cobro of pendings) {
-          const response = await fetch(`${apiBase}/cobros/sincronizar`, {
-            method: 'POST',
-            headers: getAuthHeaders({
-              'Content-Type': 'application/json',
-              'X-Idempotency-Key': cobro.hashTransaccion
-            }),
-            body: JSON.stringify({
-              ...cobro,
-              comerciante_id: cobro.comerciante_id ?? cobro.comercianteId,
-              cobrador_id: cobro.cobrador_id ?? cobro.cobradorId,
-              metodo_pago: cobro.metodo_pago ?? cobro.metodoPago ?? 'efectivo',
-              fecha_cobro: cobro.fecha_cobro || cobro.fechaCobro || new Date().toISOString(),
-              hash_transaccion: cobro.hashTransaccion
-            })
-          });
-
-          if (response.ok || response.status === 409) {
-            const deleteTx = db.transaction('cobros', 'readwrite');
-            deleteTx.objectStore('cobros').delete(cobro.id);
-            await new Promise((done, fail) => {
-              deleteTx.oncomplete = done;
-              deleteTx.onerror = () => fail(deleteTx.error);
-            });
-          } else {
-            const updateTx = db.transaction('cobros', 'readwrite');
-            const updateRequest = updateTx.objectStore('cobros').put({ ...cobro, intentos: Number(cobro.intentos || 0) + 1, sincronizado: 0 });
-            await new Promise((done, fail) => {
-              updateRequest.onsuccess = done;
-              updateRequest.onerror = () => fail(updateRequest.error);
-            });
-            break;
-          }
-        }
-        resolve();
-      } catch (error) {
-        reject(error);
-      }
-    };
-    request.onerror = () => reject(request.error);
-  });
 }
 
 const merchants = [];
@@ -578,6 +418,8 @@ function App() {
   const [cobros, setCobros] = useState([]);
   const [mapPuestos, setMapPuestos] = useState([]);
   const [mapMessage, setMapMessage] = useState('');
+  const [siteFilters, setSiteFilters] = useState({ estado: 'todos', zona: 'todas', bajas: false });
+  const [sitesWithInactive, setSitesWithInactive] = useState(null);
   const [reportRows, setReportRows] = useState([]);
   const [auditRecords, setAuditRecords] = useState([]);
   const [catalogos, setCatalogos] = useState({ rubros: [], zonas: [] });
@@ -622,6 +464,9 @@ function App() {
   const [paymentMessage, setPaymentMessage] = useState('');
   const [showQrScanner, setShowQrScanner] = useState(false);
   const [receipt, setReceipt] = useState(null);
+  // Fase 2: padrón de la jornada en el celular y cola de cobros sin señal.
+  const jornada = useJornada({ user });
+  const offlineQueue = useOfflineQueue({ user, onSynced: () => fetchData() });
 
   // Process the offline print queue while the app is open.
   useEffect(() => {
@@ -683,9 +528,9 @@ function App() {
   const saveMerchantPreferences = async (merchantId, payload) => {
     if (!merchantId) return null;
     try {
-      const response = await fetch(`${apiBase}/comerciantes/${merchantId}/preferencias`, {
+      const response = await authFetch(`${apiBase}/comerciantes/${merchantId}/preferencias`, {
         method: 'POST',
-        headers: getAuthHeaders({ 'Content-Type': 'application/json' }),
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
       });
       const data = await response.json();
@@ -713,7 +558,7 @@ function App() {
     try {
       const period = new Date().toISOString().slice(0, 7);
       const request = async (path) => {
-        const response = await fetch(path, { headers: getAuthHeaders() });
+        const response = await authFetch(path);
         // Un módulo que el rol no puede ver queda vacío en vez de vaciar todo el panel.
         if (response.status === 403) return { data: [], total: 0 };
         if (response.status === 401) throw Object.assign(new Error('Tu sesión expiró. Ingresa de nuevo.'), { sessionExpired: true });
@@ -746,7 +591,7 @@ function App() {
       });
       setOperational(dashboard.operational || { porZona: [], porRubro: [], porCobrador: [] });
 
-      setComerciantes((comerciantes.data || []).map((item) => [item.id, item.nombre, item.rubro, item.dni_ruc, item.zona, item.estado, new Date(item.fecha_registro).toLocaleDateString('es-PE'), item.tipo_comerciante || item.categoria]))
+      setComerciantes((comerciantes.data || []).map((item) => [item.id, item.nombre, item.rubro, item.dni_ruc, item.zona, item.estado, new Date(item.fecha_registro).toLocaleDateString('es-PE'), item.tipo_comerciante || item.categoria, item.codigo, item.correlativo]))
       setTarifas((tarifas.data || []).map((item) => [item.rubro, `S/ ${Number(item.monto_fijo || 0).toFixed(2)} · ${item.tipo_tarifa}`, item.estado === 1 ? 'Activo' : 'Inactivo']))
       setTariffRecords(tarifas.data || []);
       setCobros(cobros.data || []);
@@ -760,9 +605,6 @@ function App() {
       setPredictiveData(forecast.data || { totalProyectado: 0, promedioDiario: 0, porZona: [], porRubro: [] });
       setRiskData(risk.data || { summary: { total: 0, bajo: 0, medio: 0, alto: 0, critico: 0 }, records: [] });
 
-      if (Array.isArray(comerciantes.data)) {
-        await savePadronSnapshot(comerciantes.data);
-      }
       await saveMapSnapshot(puestos.data || []);
     } catch (err) {
       if (err.sessionExpired) {
@@ -790,7 +632,7 @@ function App() {
 
   const refreshZoneCatalog = async () => {
     try {
-      const response = await fetch(`${apiBase}/zonas`, { headers: getAuthHeaders() });
+      const response = await authFetch(`${apiBase}/zonas`);
       const data = await response.json();
       if (!response.ok) throw new Error(data.message || 'No se pudieron cargar las zonas');
       const zonas = Array.isArray(data.data) ? data.data : [];
@@ -809,11 +651,12 @@ function App() {
 
   useEffect(() => {
     if (user) {
-      localStorage.setItem('sisrec-user', JSON.stringify(user));
-      localStorage.setItem('sisrec-token', user.token || getStoredToken() || '');
+      // Los tokens los guarda services/session.js; aquí solo los datos visibles del usuario.
+      const { token: _legacyToken, ...storedUser } = user;
+      localStorage.setItem('sisrec-user', JSON.stringify(storedUser));
       fetchData();
+      // La cola de cobros offline se sincroniza sola (useOfflineQueue); aquí, los cambios del mapa.
       const syncAllPending = () => {
-        syncPendingOfflinePayments().catch(() => undefined);
         syncPendingMapMutations().then(() => fetchData()).catch(() => undefined);
       };
       syncAllPending();
@@ -821,38 +664,24 @@ function App() {
       return () => window.removeEventListener('online', syncAllPending);
     } else {
       localStorage.removeItem('sisrec-user');
-      localStorage.removeItem('sisrec-token');
       setLoading(false);
     }
   }, [user]);
 
+  // La sesión del dispositivo venció o fue revocada: se pide ingresar de nuevo sin borrar la cola offline.
   useEffect(() => {
-    let cancelled = false;
-    if (isOnline) {
-      setPendingSyncCount(0);
-      return undefined;
-    }
-    const loadQueueCount = async () => {
-      try {
-        const db = await openOfflineDatabase();
-        const count = (storeName, isPending = () => true) => new Promise((resolve, reject) => {
-          const tx = db.transaction(storeName, 'readonly');
-          const request = tx.objectStore(storeName).getAll();
-          request.onsuccess = () => resolve((request.result || []).filter(isPending).length);
-          request.onerror = () => reject(request.error);
-        });
-        const [paymentsCount, mapCount] = await Promise.all([
-          count('cobros', (item) => item.sincronizado === 0),
-          count('mapa_pendientes')
-        ]);
-        if (!cancelled) setPendingSyncCount(paymentsCount + mapCount);
-      } catch {
-        if (!cancelled) setPendingSyncCount(0);
-      }
+    const onExpired = (event) => {
+      setUser(null);
+      setShowLogin(true);
+      setError(event.detail?.message || 'Tu sesión venció. Ingresa de nuevo; los cobros sin enviar se conservan en el celular.');
     };
-    loadQueueCount();
-    return () => { cancelled = true; };
-  }, [isOnline]);
+    window.addEventListener(SESSION_EXPIRED_EVENT, onExpired);
+    return () => window.removeEventListener(SESSION_EXPIRED_EVENT, onExpired);
+  }, []);
+
+  useEffect(() => {
+    setPendingSyncCount(offlineQueue.counts.pendiente + offlineQueue.counts.error);
+  }, [offlineQueue.counts]);
 
   const handleLogin = async (event) => {
     event.preventDefault();
@@ -862,7 +691,7 @@ function App() {
       const apiResponse = await fetch(`${apiBase}/auth/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(loginForm)
+        body: JSON.stringify({ ...loginForm, device_id: getDeviceId(), device_nombre: getDeviceName() })
       });
 
       const data = await apiResponse.json();
@@ -870,7 +699,8 @@ function App() {
         throw new Error(data.message || 'Credenciales inválidas');
       }
 
-      setUser({ ...data.user, token: data.token });
+      saveSession(data);
+      setUser(data.user);
     } catch (loginError) {
       setError(loginError.message || 'No se pudo iniciar sesión');
     }
@@ -881,7 +711,7 @@ function App() {
     setShowLogin(false);
     setError('');
     setCurrentPage('dashboard');
-    localStorage.removeItem('sisrec-token');
+    logoutSession();
   };
 
   const handlePortalLogin = async (event) => {
@@ -903,9 +733,9 @@ function App() {
     setMerchantMessage('');
 
     try {
-      const response = await fetch(`${apiBase}/comerciantes${editingMerchantId ? `/${editingMerchantId}` : ''}`, {
+      const response = await authFetch(`${apiBase}/comerciantes${editingMerchantId ? `/${editingMerchantId}` : ''}`, {
         method: editingMerchantId ? 'PUT' : 'POST',
-        headers: getAuthHeaders({ 'Content-Type': 'application/json' }),
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ ...merchantForm, usuario_creador: user?.id || 1 })
       });
       const data = await response.json();
@@ -935,7 +765,7 @@ function App() {
 
   const handleMerchantDeactivate = async (id) => {
     try {
-      const response = await fetch(`${apiBase}/comerciantes/${id}`, { method: 'DELETE', headers: getAuthHeaders() });
+      const response = await authFetch(`${apiBase}/comerciantes/${id}`, { method: 'DELETE' });
       const data = await response.json();
       if (!response.ok) throw new Error(data.message || 'No se pudo dar de baja');
       setMerchantMessage(data.message);
@@ -955,7 +785,7 @@ function App() {
       const body = new FormData();
       body.append('file', file);
       body.append('dryRun', 'true');
-      const response = await fetch(`${apiBase}/comerciantes/importar-padron`, { method: 'POST', headers: getAuthHeaders(), body });
+      const response = await authFetch(`${apiBase}/comerciantes/importar-padron`, { method: 'POST', body });
       const data = await response.json();
       if (!response.ok) throw new Error(data.message || 'No se pudo leer el padrón');
       setPadronPreview(data.data);
@@ -975,7 +805,7 @@ function App() {
       const body = new FormData();
       body.append('file', padronFile);
       body.append('dryRun', 'false');
-      const response = await fetch(`${apiBase}/comerciantes/importar-padron`, { method: 'POST', headers: getAuthHeaders(), body });
+      const response = await authFetch(`${apiBase}/comerciantes/importar-padron`, { method: 'POST', body });
       const data = await response.json();
       if (!response.ok) throw new Error(data.message || 'No se pudo importar el padrón');
       setPadronPreview(data.data);
@@ -993,9 +823,9 @@ function App() {
     event.preventDefault();
     setTariffMessage('');
     try {
-      const response = await fetch(`${apiBase}/tarifas${editingTariffId ? `/${editingTariffId}` : ''}`, {
+      const response = await authFetch(`${apiBase}/tarifas${editingTariffId ? `/${editingTariffId}` : ''}`, {
         method: editingTariffId ? 'PUT' : 'POST',
-        headers: getAuthHeaders({ 'Content-Type': 'application/json' }),
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(tariffForm)
       });
       const data = await response.json();
@@ -1016,9 +846,9 @@ function App() {
     try {
       const endpoint = editingZoneId ? `${apiBase}/zonas/${editingZoneId}` : `${apiBase}/zonas`;
       const method = editingZoneId ? 'PUT' : 'POST';
-      const response = await fetch(endpoint, {
+      const response = await authFetch(endpoint, {
         method,
-        headers: getAuthHeaders({ 'Content-Type': 'application/json' }),
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(zoneForm)
       });
       const data = await response.json();
@@ -1040,9 +870,9 @@ function App() {
     try {
       const endpoint = editingCalleId ? `${apiBase}/calles/${editingCalleId}` : `${apiBase}/calles`;
       const method = editingCalleId ? 'PUT' : 'POST';
-      const response = await fetch(endpoint, {
+      const response = await authFetch(endpoint, {
         method,
-        headers: getAuthHeaders({ 'Content-Type': 'application/json' }),
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(calleForm)
       });
       const data = await response.json();
@@ -1059,7 +889,7 @@ function App() {
 
   const handleDeleteZone = async (id) => {
     try {
-      const response = await fetch(`${apiBase}/zonas/${id}`, { method: 'DELETE', headers: getAuthHeaders() });
+      const response = await authFetch(`${apiBase}/zonas/${id}`, { method: 'DELETE' });
       const data = await response.json();
       if (!response.ok) throw new Error(data.message || 'No se pudo eliminar la zona');
       setZoneMessage(data.message);
@@ -1072,7 +902,7 @@ function App() {
 
   const handleDeleteCalle = async (id) => {
     try {
-      const response = await fetch(`${apiBase}/calles/${id}`, { method: 'DELETE', headers: getAuthHeaders() });
+      const response = await authFetch(`${apiBase}/calles/${id}`, { method: 'DELETE' });
       const data = await response.json();
       if (!response.ok) throw new Error(data.message || 'No se pudo eliminar la calle');
       setZoneMessage(data.message);
@@ -1088,63 +918,75 @@ function App() {
     const query = String(typeof queryOverride === 'string' ? queryOverride : paymentForm.search).trim();
     if (!query) return setPaymentMessage('Ingresa DNI, RUC, nombre, puesto o código.');
 
-    if (!navigator.onLine) {
-      const localMerchant = await searchLocalMerchant(query)
-        || (/^CM-\d+$/i.test(query) ? await searchLocalMerchant(query.replace(/^CM-/i, '')) : null);
-      if (!localMerchant) return setPaymentMessage('No se encontró un comerciante en la caché local del dispositivo.');
+    // Sin señal se busca en el padrón descargado al iniciar la jornada.
+    const searchOffline = async (reason) => {
+      const [localMerchant] = await jornada.search(query).catch(() => []);
+      if (!localMerchant) {
+        return setPaymentMessage(jornada.meta
+          ? `${reason} no se encontró el comerciante en el padrón guardado en el celular.`
+          : `${reason} no hay padrón descargado. Descárgalo al iniciar la jornada, con señal.`);
+      }
+      const merchant = aComercianteDePantalla(localMerchant);
+      const balance = aSaldoDePantalla(localMerchant, paymentForm.periodo);
+      setPaymentMerchant(merchant);
+      setPaymentBalance(balance);
+      setExpressSuggestion(buildExpressSuggestion(merchant, balance, []));
+      setPaymentForm((current) => ({ ...current, comercianteId: String(merchant.id), periodo: balance.periodo || current.periodo, monto: balance.saldo > 0 ? String(balance.saldo) : '' }));
+      setPaymentMessage(`${reason} saldo según el padrón guardado el ${new Date(localMerchant.actualizadoEn).toLocaleString('es-PE', { dateStyle: 'short', timeStyle: 'short' })}`);
+    };
+    if (!navigator.onLine) return searchOffline('Sin señal:');
 
-      setPaymentMerchant(localMerchant);
-      setPaymentBalance({ saldo: Number(localMerchant.montoTasaDiaria || 0), periodo: paymentForm.periodo });
-      const suggestion = buildExpressSuggestion(localMerchant, { saldo: Number(localMerchant.montoTasaDiaria || 0) }, []);
-      setExpressSuggestion(suggestion);
-      setPaymentForm((current) => ({ ...current, comercianteId: String(localMerchant.id), monto: String(suggestion.suggestedAmount || localMerchant.montoTasaDiaria || 0), metodo_pago: suggestion.preferredMethod || current.metodo_pago }));
-      return;
-    }
-
-    let merchant = null;
-    const merchantCodeMatch = query.match(/^CM-(\d+)$/i);
-    if (merchantCodeMatch) {
-      const merchantResponse = await fetch(`${apiBase}/comerciantes/${Number(merchantCodeMatch[1])}`, { headers: getAuthHeaders() });
-      const merchantData = await merchantResponse.json();
-      if (merchantResponse.ok) merchant = merchantData.data;
-    }
-    if (!merchant) {
-      const response = await fetch(`${apiBase}/comerciantes?search=${encodeURIComponent(query)}&limit=10`, { headers: getAuthHeaders() });
-      const data = await response.json();
-      merchant = data.data?.[0] || null;
-    }
-    if (!merchant) {
-      const puestosResponse = await fetch(`${apiBase}/puestos`, { headers: getAuthHeaders() });
-      const puestosData = await puestosResponse.json();
-      const puesto = puestosData.data?.find((item) => String(item.codigo || item.codigo_puesto || '').trim().toLowerCase() === query.toLowerCase());
-      if (puesto) {
-        const merchantResponse = await fetch(`${apiBase}/comerciantes/${puesto.comerciante_id}`, { headers: getAuthHeaders() });
+    try {
+      let merchant = null;
+      // Código de comerciante (COM-0004-…, CM-004 o un código anterior): el servidor lo resuelve.
+      if (/^(?:COM|CM)-/i.test(query)) {
+        const merchantResponse = await authFetch(`${apiBase}/comerciantes/${encodeURIComponent(query)}`);
         const merchantData = await merchantResponse.json();
         if (merchantResponse.ok) merchant = merchantData.data;
       }
+      if (!merchant) {
+        const response = await authFetch(`${apiBase}/comerciantes?search=${encodeURIComponent(query)}&limit=10`);
+        const data = await response.json();
+        merchant = data.data?.[0] || null;
+      }
+      if (!merchant) {
+        const puestosResponse = await authFetch(`${apiBase}/puestos`);
+        const puestosData = await puestosResponse.json();
+        const puesto = puestosData.data?.find((item) => String(item.codigo || item.codigo_puesto || '').trim().toLowerCase() === query.toLowerCase());
+        if (puesto && !puesto.comerciante_id) return setPaymentMessage(`El puesto ${puesto.codigo} está libre: no tiene titular a quien cobrar.`);
+        if (puesto) {
+          const merchantResponse = await authFetch(`${apiBase}/comerciantes/${puesto.comerciante_id}`);
+          const merchantData = await merchantResponse.json();
+          if (merchantResponse.ok) merchant = merchantData.data;
+        }
+      }
+      if (!merchant) return setPaymentMessage('No se encontró un comerciante con ese dato.');
+      const balanceResponse = await authFetch(`${apiBase}/comerciantes/${merchant.id}/saldo?periodo=${paymentForm.periodo}`);
+      const balanceData = await balanceResponse.json();
+      if (!balanceResponse.ok) return setPaymentMessage(balanceData.message || 'No se pudo calcular el saldo.');
+
+      const historyResponse = await authFetch(`${apiBase}/reportes?periodo=${paymentForm.periodo}`);
+      const historyData = await historyResponse.json();
+      const history = (historyData.data || []).filter((item) => Number(item.comerciante_id ?? item.comercianteId ?? 0) === Number(merchant.id) || String(item.comerciante || '').toLowerCase() === String(merchant.nombre || '').toLowerCase());
+      const suggestion = buildExpressSuggestion(merchant, balanceData.data, history.length ? history : cobros.filter((item) => Number(item.comerciante_id || item.comercianteId || 0) === Number(merchant.id) || String(item.comerciante || '').toLowerCase() === String(merchant.nombre || '').toLowerCase()));
+
+      setPaymentMerchant(merchant);
+      setPaymentBalance(balanceData.data);
+      setExpressSuggestion(suggestion);
+      setPaymentForm((current) => ({ ...current, comercianteId: String(merchant.id), monto: String(suggestion.suggestedAmount || balanceData.data.saldo), metodo_pago: suggestion.preferredMethod || current.metodo_pago }));
+    } catch (searchError) {
+      // Hay "señal" pero el servidor no responde (Wi-Fi sin internet, API caída): se usa el padrón local.
+      if (searchError instanceof TypeError) return searchOffline('Sin conexión con el servidor:');
+      setPaymentMessage(searchError.message || 'No se pudo buscar el comerciante.');
     }
-    if (!merchant) return setPaymentMessage('No se encontró un comerciante con ese dato.');
-    const balanceResponse = await fetch(`${apiBase}/comerciantes/${merchant.id}/saldo?periodo=${paymentForm.periodo}`, { headers: getAuthHeaders() });
-    const balanceData = await balanceResponse.json();
-    if (!balanceResponse.ok) return setPaymentMessage(balanceData.message || 'No se pudo calcular el saldo.');
-
-    const historyResponse = await fetch(`${apiBase}/reportes?periodo=${paymentForm.periodo}`, { headers: getAuthHeaders() });
-    const historyData = await historyResponse.json();
-    const history = (historyData.data || []).filter((item) => Number(item.comerciante_id ?? item.comercianteId ?? 0) === Number(merchant.id) || String(item.comerciante || '').toLowerCase() === String(merchant.nombre || '').toLowerCase());
-    const suggestion = buildExpressSuggestion(merchant, balanceData.data, history.length ? history : cobros.filter((item) => Number(item.comerciante_id || item.comercianteId || 0) === Number(merchant.id) || String(item.comerciante || '').toLowerCase() === String(merchant.nombre || '').toLowerCase()));
-
-    setPaymentMerchant(merchant);
-    setPaymentBalance(balanceData.data);
-    setExpressSuggestion(suggestion);
-    setPaymentForm((current) => ({ ...current, comercianteId: String(merchant.id), monto: String(suggestion.suggestedAmount || balanceData.data.saldo), metodo_pago: suggestion.preferredMethod || current.metodo_pago }));
   };
 
   const handleQrScan = async (rawValue) => {
     const scannedValue = String(rawValue || '').trim();
-    const merchantMatch = scannedValue.match(/^(?:SISREC:\/\/comerciante\/|CM-)(\d+)$/i);
-    const query = merchantMatch
-      ? `CM-${String(Number(merchantMatch[1])).padStart(3, '0')}`
-      : scannedValue;
+    // QR nuevo: SISREC://comerciante/COM-0004-…; QR antiguo: SISREC://comerciante/4 (= CM-004).
+    const merchantMatch = scannedValue.match(/^SISREC:\/\/comerciante\/(.+)$/i);
+    const scannedCode = merchantMatch ? merchantMatch[1] : scannedValue;
+    const query = /^\d+$/.test(scannedCode) ? `CM-${scannedCode.padStart(3, '0')}` : scannedCode;
 
     setShowQrScanner(false);
     setPaymentForm((current) => ({ ...current, search: query }));
@@ -1155,28 +997,62 @@ function App() {
     event.preventDefault();
     setPaymentMessage('');
 
+    const fechaCobro = new Date().toISOString();
     const payload = {
       ...paymentForm,
       comerciante_id: paymentForm.comercianteId,
       cobrador_id: user?.id || 2,
       metodo_pago: paymentForm.metodo_pago,
-      fecha_cobro: new Date().toISOString(),
-      periodo: paymentForm.periodo || new Date().toISOString().slice(0, 7)
+      fecha_cobro: fechaCobro,
+      periodo: paymentForm.periodo || new Date().toISOString().slice(0, 7),
+      // El mismo hash viaja en línea y, si la red falla, en la cola: el servidor nunca lo registra dos veces.
+      hash_transaccion: await crearHashCobro({ cobradorId: user?.id, comercianteId: paymentForm.comercianteId, monto: paymentForm.monto, fechaCobro, salt: `${Date.now()}-${Math.random()}` })
+    };
+
+    const saveOfflinePayment = async (reason) => {
+      const item = await offlineQueue.enqueue({ ...payload, comerciante: paymentMerchant?.nombre });
+      const local = await jornada.applyLocalPayment(payload.comerciante_id, payload.monto).catch(() => null);
+      setPaymentBalance((current) => current ? {
+        ...current,
+        saldo: local ? local.saldo : Math.max(Number(current.saldo || 0) - Number(payload.monto || 0), 0),
+        monto_pagado: local ? local.montoPagado : Number(current.monto_pagado || 0) + Number(payload.monto || 0)
+      } : current);
+      setReceipt({
+        comprobante: `PROV-${item.hashTransaccion.slice(0, 8).toUpperCase()}`,
+        provisional: true,
+        monto: Number(payload.monto),
+        metodo_pago: payload.metodo_pago,
+        codigo_operacion: payload.codigo_operacion,
+        comerciante: paymentMerchant?.nombre || 'Comerciante',
+        concepto: 'Liquidación de deuda',
+        cobrador: user?.nombre || 'Cobrador',
+        hash_idempotencia: item.hashTransaccion.slice(0, 16).toUpperCase(),
+        fecha: item.fechaCobro
+      });
+      setPaymentForm((current) => ({ ...current, monto: '' }));
+      setPaymentMessage(`${reason} el cobro quedó guardado en el celular y se enviará al volver la señal. Entrega el recibo provisional.`);
     };
 
     try {
       if (!navigator.onLine) {
-        await queueOfflinePayment(payload);
-        setPaymentMessage('Cobro guardado en cola offline y pendiente de sincronización.');
-        setPaymentForm((current) => ({ ...current, monto: '' }));
+        await saveOfflinePayment('Sin señal:');
         return;
       }
 
-      const response = await fetch(`${apiBase}/cobros`, {
-        method: 'POST',
-        headers: getAuthHeaders({ 'Content-Type': 'application/json' }),
-        body: JSON.stringify(payload)
-      });
+      let response;
+      try {
+        response = await authFetch(`${apiBase}/cobros`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+      } catch (networkError) {
+        if (networkError instanceof TypeError) {
+          await saveOfflinePayment('Sin conexión con el servidor:');
+          return;
+        }
+        throw networkError;
+      }
       const data = await response.json();
       if (!response.ok) throw new Error(data.message || 'No se pudo registrar el cobro');
 
@@ -1222,9 +1098,9 @@ function App() {
       return;
     }
 
-    const response = await fetch(`${apiBase}/puestos-mapa`, {
+    const response = await mapFetch(`${apiBase}/puestos-mapa`, {
       method: 'POST',
-      headers: getAuthHeaders({ 'Content-Type': 'application/json' }),
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload)
     });
     const data = await response.json();
@@ -1241,9 +1117,9 @@ function App() {
       return;
     }
 
-    const response = await fetch(`${apiBase}/puestos-mapa/${id}`, {
+    const response = await mapFetch(`${apiBase}/puestos-mapa/${id}`, {
       method: 'PUT',
-      headers: getAuthHeaders({ 'Content-Type': 'application/json' }),
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload)
     });
     const data = await response.json();
@@ -1261,14 +1137,137 @@ function App() {
       return;
     }
 
-    const response = await fetch(`${apiBase}/puestos-mapa/${site.id}`, {
-      method: 'DELETE',
-      headers: getAuthHeaders()
-    });
+    const response = await mapFetch(`${apiBase}/puestos-mapa/${site.id}`, { method: 'DELETE' });
     const data = await response.json();
     if (!response.ok) throw new Error(data.message || 'No se pudo dar de baja el puesto');
     setMapMessage(data.message);
     await fetchData();
+  };
+
+  const assignMapSite = (site, comercianteId) => updateMapSite(site.id, { comerciante_id: comercianteId });
+
+  // Sin señal se encola como actualización con comerciante_id null (el servidor lo deja disponible).
+  const releaseMapSite = async (site) => {
+    if (!window.confirm(`¿Liberar el puesto ${site.codigo}? Quedará sin titular y disponible para otro comerciante.`)) return;
+    setMapMessage('');
+    if (!navigator.onLine) {
+      await queueMapMutation('update', { id: site.id, comerciante_id: null });
+      setMapMessage('Liberación guardada localmente; pendiente de sincronización.');
+      return;
+    }
+    const response = await mapFetch(`${apiBase}/puestos/${site.id}/liberar`, { method: 'POST' });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.message || 'No se pudo liberar el puesto');
+    setMapMessage(data.message);
+    await fetchData();
+  };
+
+  const searchMerchantsForMap = useCallback(async (query) => {
+    const response = await mapFetch(`${apiBase}/comerciantes?limit=10&search=${encodeURIComponent(query)}`);
+    const data = await response.json();
+    return (data.data || []).filter((merchant) => merchant.estado !== 'inactivo');
+  }, []);
+
+  // Lleva al cobro del titular del puesto, con su saldo del mes ya sugerido.
+  const collectFromSite = (site) => {
+    if (!site.comerciante_id) {
+      setMapMessage(`El puesto ${site.codigo} está libre: no tiene titular a quien cobrar.`);
+      return;
+    }
+    setPaymentMerchant({ id: site.comerciante_id, nombre: site.comerciante, codigo: site.codigo, rubro: site.categoria, zona: site.zona });
+    setPaymentForm((current) => ({ ...current, search: site.comerciante, comercianteId: String(site.comerciante_id), monto: String(site.saldo_pendiente || '') }));
+    setCurrentPage('pagos');
+  };
+
+  const toggleInactiveSites = async (bajas) => {
+    setSiteFilters((current) => ({ ...current, bajas }));
+    if (!bajas) return setSitesWithInactive(null);
+    try {
+      const response = await mapFetch(`${apiBase}/puestos?incluirInactivos=1`);
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.message || 'No se pudieron cargar los puestos dados de baja');
+      setSitesWithInactive(data.data || []);
+    } catch (error) {
+      setMapMessage(error.message);
+      setSiteFilters((current) => ({ ...current, bajas: false }));
+    }
+  };
+
+  const sitesPage = () => {
+    const source = siteFilters.bajas && sitesWithInactive ? sitesWithInactive : mapPuestos;
+    const rows = source.filter((site) => (
+      (siteFilters.estado === 'todos' || site.estado_pago === siteFilters.estado)
+      && (siteFilters.zona === 'todas' || String(site.zona_id) === siteFilters.zona)
+    ));
+    const totalSaldo = rows.reduce((sum, site) => sum + Number(site.saldo_pendiente || 0), 0);
+    return (
+      <section className="page">
+        <div className="page-heading">
+          <div>
+            <div className="eyebrow">GESTIÓN / SITIOS</div>
+            <h1>Sitios de venta</h1>
+            <p>Puestos, titulares y estado de pago del mes. La deuda es la misma que calcula Pagos.</p>
+          </div>
+        </div>
+        {mapMessage && <div className="form-message">{mapMessage}</div>}
+        <div className="map-toolbar">
+          <div>
+            <strong>{rows.length} puestos</strong>
+            <span>Saldo pendiente del mes: {formatPEN(totalSaldo)}</span>
+          </div>
+          <div className="map-filters" aria-label="Filtros de sitios">
+            <select value={siteFilters.estado} onChange={(event) => setSiteFilters((current) => ({ ...current, estado: event.target.value }))} aria-label="Filtrar por estado de pago">
+              <option value="todos">Todos los estados</option>
+              {Object.entries(SERVER_PAYMENT_STATUS).filter(([key]) => key !== 'inactivo' || siteFilters.bajas).map(([key, item]) => <option key={key} value={key}>{item.label}</option>)}
+            </select>
+            <select value={siteFilters.zona} onChange={(event) => setSiteFilters((current) => ({ ...current, zona: event.target.value }))} aria-label="Filtrar por zona">
+              <option value="todas">Todas las zonas</option>
+              {catalogos.zonas.map((zona) => <option key={zona.id} value={String(zona.id)}>{zona.nombre}</option>)}
+            </select>
+            <label className="checkbox-inline">
+              <input type="checkbox" checked={siteFilters.bajas} onChange={(event) => toggleInactiveSites(event.target.checked)} /> Mostrar dados de baja
+            </label>
+          </div>
+        </div>
+        <div className="table-card">
+          <table>
+            <thead>
+              <tr>
+                <th>Código</th>
+                <th>Dirección</th>
+                <th>Zona</th>
+                <th>Titular</th>
+                <th>Cuota del mes</th>
+                <th>Pagado</th>
+                <th>Saldo</th>
+                <th>Estado de pago</th>
+                <th aria-label="Acciones" />
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((site) => {
+                const status = SERVER_PAYMENT_STATUS[site.estado_pago] || { label: site.estado || 'Sin estado', tone: 'neutral' };
+                const conMontos = site.monto_total > 0 || site.monto_pagado > 0;
+                return (
+                  <tr key={site.id}>
+                    <td>{site.codigo || `P-${site.id}`}</td>
+                    <td>{site.direccion || 'Sin dirección registrada'}</td>
+                    <td>{site.zona || 'Sin zona'}</td>
+                    <td>{site.comerciante || 'Libre'}</td>
+                    <td>{conMontos ? formatPEN(site.monto_total) : '—'}</td>
+                    <td>{conMontos ? formatPEN(site.monto_pagado) : '—'}</td>
+                    <td>{conMontos ? formatPEN(site.saldo_pendiente) : '—'}</td>
+                    <td><span className={`status ${status.tone}`} title={paymentStatusText(site)}>{status.label}</span></td>
+                    <td>{site.estado_pago === 'pendiente' && <button type="button" className="table-action" onClick={() => collectFromSite(site)}>Cobrar</button>}</td>
+                  </tr>
+                );
+              })}
+              {!rows.length && <tr><td colSpan="9">{source.length ? 'Ningún puesto coincide con los filtros.' : 'No hay puestos registrados todavía.'}</td></tr>}
+            </tbody>
+          </table>
+        </div>
+      </section>
+    );
   };
 
   const mapPage = () => (
@@ -1281,11 +1280,17 @@ function App() {
         </div>
       </div>
       {mapMessage && <div className="form-message">{mapMessage}</div>}
-      <SitesMap sites={mapPuestos.filter((site) => site.estado !== 'inactivo')} onCreate={saveMapSite} onUpdate={updateMapSite} onDelete={deleteMapSite} onCollect={(site) => {
-        setPaymentMerchant({ id: site.comerciante_id, nombre: site.comerciante, codigo: site.codigo, rubro: site.categoria, zona: site.zona });
-        setPaymentForm((current) => ({ ...current, search: site.comerciante, comercianteId: String(site.comerciante_id), monto: String(site.saldo_pendiente || '') }));
-        setCurrentPage('pagos');
-      }} />
+      <SitesMap
+        sites={mapPuestos.filter((site) => site.estado !== 'inactivo')}
+        zonas={catalogos.zonas}
+        searchMerchants={searchMerchantsForMap}
+        onCreate={saveMapSite}
+        onUpdate={updateMapSite}
+        onDelete={deleteMapSite}
+        onAssign={assignMapSite}
+        onRelease={releaseMapSite}
+        onCollect={collectFromSite}
+      />
     </section>
   );
 
@@ -1502,44 +1507,7 @@ function App() {
           onDeactivate={handleMerchantDeactivate}
         />;
       case 'sitios':
-        return (
-          <section className="page">
-            <div className="page-heading">
-              <div>
-                <div className="eyebrow">GESTIÓN / SITIOS</div>
-                <h1>Sitios de venta</h1>
-                <p>Control de ubicaciones, disponibilidad y pagos.</p>
-              </div>
-            </div>
-            <div className="table-card">
-              <table>
-                <thead>
-                  <tr>
-                    <th>Código</th>
-                    <th>Dirección</th>
-                    <th>Zona</th>
-                    <th>Responsable</th>
-                    <th>Cuota</th>
-                    <th>Estado</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {mapPuestos.map((site) => (
-                    <tr key={site.id}>
-                      <td>{site.codigo || `P-${site.id}`}</td>
-                      <td>{site.direccion || 'Sin dirección registrada'}</td>
-                      <td>{site.zona || 'Sin zona'}</td>
-                      <td>{site.comerciante || 'Sin asignar'}</td>
-                      <td>{formatPEN(site.saldo_pendiente)}</td>
-                      <td><span className={`status ${site.estado === 'disponible' ? 'neutral' : site.saldo_pendiente > 0 ? 'pending' : 'paid'}`}>{site.estado || 'sin estado'}</span></td>
-                    </tr>
-                  ))}
-                  {!mapPuestos.length && <tr><td colSpan="6">No hay puestos registrados todavía.</td></tr>}
-                </tbody>
-              </table>
-            </div>
-          </section>
-        );
+        return sitesPage();
       case 'pagos':
         return (
           <section className="page">
@@ -1550,6 +1518,7 @@ function App() {
                 <p>Localiza al comerciante, revisa su saldo y confirma el pago.</p>
               </div>
             </div>
+            {!isOnline && <div className="offline-banner">Sin señal: la búsqueda usa el padrón guardado y los cobros se guardan en el celular.</div>}
             <div className="payment-workspace">
               <form className="panel payment-form" onSubmit={handlePaymentSubmit}>
                 <div className="step-label">01 · Localizar comerciante</div>
@@ -1565,28 +1534,34 @@ function App() {
                       <button className="primary-button" type="button" onClick={() => setPaymentForm((current) => ({ ...current, monto: String(expressSuggestion.suggestedAmount || paymentBalance.saldo || 0), metodo_pago: expressSuggestion.preferredMethod || current.metodo_pago }))}>Cobrar sugerido</button>
                     </div>
                     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: '12px', marginTop: '14px' }}>
-                      <div><span style={{ display: 'block', fontSize: '12px', color: '#64748b' }}>Saldo pendiente</span><strong>S/ {Number(paymentBalance.saldo || 0).toFixed(2)}</strong></div>
-                      <div><span style={{ display: 'block', fontSize: '12px', color: '#64748b' }}>Sugerencia</span><strong>S/ {Number(expressSuggestion.suggestedAmount || 0).toFixed(2)}</strong></div>
-                      <div><span style={{ display: 'block', fontSize: '12px', color: '#64748b' }}>Método preferido</span><strong>{String(expressSuggestion.preferredMethod || 'efectivo').toUpperCase()}</strong></div>
+                      <div><span style={{ display: 'block', fontSize: '12px', color: 'var(--civic-muted)' }}>Saldo pendiente</span><strong>S/ {Number(paymentBalance.saldo || 0).toFixed(2)}</strong></div>
+                      <div><span style={{ display: 'block', fontSize: '12px', color: 'var(--civic-muted)' }}>Sugerencia</span><strong>S/ {Number(expressSuggestion.suggestedAmount || 0).toFixed(2)}</strong></div>
+                      <div><span style={{ display: 'block', fontSize: '12px', color: 'var(--civic-muted)' }}>Método preferido</span><strong>{String(expressSuggestion.preferredMethod || 'efectivo').toUpperCase()}</strong></div>
                     </div>
                     <div style={{ marginTop: '12px', fontWeight: 600, color: '#0f172a' }}>{expressSuggestion.lastLabel}</div>
                   </div>
                 )}
                 <div className="step-label">02 · Revisar deuda</div>
-                {paymentBalance ? <div className="debt-breakdown"><div><span>Tarifa</span><strong>S/ {(paymentBalance.tarifa?.monto_fijo ?? 0)}</strong></div><div><span>Periodo</span><strong>{paymentBalance.periodo}</strong></div><div><span>Pagado</span><strong>S/ {Number(paymentBalance.monto_pagado || 0).toFixed(2)}</strong></div><div className="debt-total"><span>Saldo pendiente</span><strong>S/ {paymentBalance.saldo.toFixed(2)}</strong></div></div> : <div className="empty-state">Busca un comerciante para mostrar su liquidación.</div>}
+                {paymentBalance ? <div className="debt-breakdown">{paymentBalance.cobro_diario ? <><div><span>Cobro del día (eventual)</span><strong>S/ {Number(paymentBalance.monto_total || 0).toFixed(2)}</strong></div><div><span>Día</span><strong>{paymentBalance.dia}</strong></div></> : <><div><span>Tarifa</span><strong>S/ {(paymentBalance.tarifa?.monto_fijo ?? 0)}</strong></div><div><span>Periodo</span><strong>{paymentBalance.periodo}</strong></div></>}<div><span>Pagado</span><strong>S/ {Number(paymentBalance.monto_pagado || 0).toFixed(2)}</strong></div><div className="debt-total"><span>Saldo pendiente</span><strong>S/ {paymentBalance.saldo.toFixed(2)}</strong></div></div> : <div className="empty-state">Busca un comerciante para mostrar su liquidación.</div>}
                 <div className="step-label">03 · Confirmar cobro</div>
                 <div className="payment-fields"><input required min="0.01" max={paymentBalance?.saldo || undefined} step="0.01" type="number" placeholder="Monto a cobrar" value={paymentForm.monto} onChange={(event) => setPaymentForm({ ...paymentForm, monto: event.target.value })} /><select value={paymentForm.metodo_pago} onChange={(event) => setPaymentForm({ ...paymentForm, metodo_pago: event.target.value })}><option value="efectivo">Efectivo</option><option value="yape">Yape</option><option value="plin">Plin</option><option value="pos">POS</option></select></div>
                 {paymentForm.metodo_pago !== 'efectivo' && <input required placeholder="Código de operación digital" value={paymentForm.codigo_operacion} onChange={(event) => setPaymentForm({ ...paymentForm, codigo_operacion: event.target.value })} />}
                 <input placeholder="Observaciones (opcional)" value={paymentForm.observaciones} onChange={(event) => setPaymentForm({ ...paymentForm, observaciones: event.target.value })} />
                 {paymentMessage && <div className="form-message">{paymentMessage}</div>}
                 <button className="primary-button payment-submit" disabled={!paymentMerchant || !paymentBalance || paymentBalance.saldo <= 0} type="submit">Confirmar y emitir comprobante</button>
-                {receipt && <div className="receipt-card" id="receiptCard"><div className="receipt-header"><strong>SISREC SALCEDO</strong><span>RECIBO DE PAGO</span></div><div className="receipt-number">{receipt.comprobante}</div><div className="receipt-lines"><div><span>Comerciante</span><strong>{receipt.comerciante}</strong></div><div><span>Fecha</span><strong>{new Date().toLocaleString('es-PE')}</strong></div><div><span>Concepto</span><strong>{receipt.concepto}</strong></div><div><span>Método</span><strong>{receipt.metodo_pago}</strong></div><div><span>Cobrador</span><strong>{receipt.cobrador}</strong></div><div><span>Operación</span><strong>{receipt.codigo_operacion || 'No aplica'}</strong></div><div><span>Hash</span><strong>{receipt.hash_idempotencia || 'N/A'}</strong></div><div className="receipt-total"><span>Total pagado</span><strong>S/ {receipt.monto.toFixed(2)}</strong></div></div><div className="receipt-actions"><button className="secondary-button" type="button" onClick={() => printThermalReceipt(receipt)}>{printStatus.isPrinting ? 'Imprimiendo...' : 'Imprimir térmica / PDF'}</button><button className="secondary-button" type="button" onClick={() => shareViaWhatsApp(receipt)}>WhatsApp</button><button className="secondary-button" type="button" onClick={() => navigator.share ? navigator.share({ title: `Recibo ${receipt.comprobante}`, text: `Recibo ${receipt.comprobante} por S/ ${receipt.monto.toFixed(2)}` }) : navigator.clipboard?.writeText(`Recibo ${receipt.comprobante} - S/ ${receipt.monto.toFixed(2)}`)}>Compartir</button></div></div>}
+                {receipt && <div className="receipt-card" id="receiptCard"><div className="receipt-header"><strong>SISREC SALCEDO</strong><span>RECIBO DE PAGO</span></div><div className="receipt-number">{receipt.comprobante}</div>{receipt.provisional && <div className="receipt-provisional">Recibo provisional: el número oficial se asigna al sincronizar.</div>}<div className="receipt-lines"><div><span>Comerciante</span><strong>{receipt.comerciante}</strong></div><div><span>Fecha</span><strong>{new Date().toLocaleString('es-PE')}</strong></div><div><span>Concepto</span><strong>{receipt.concepto}</strong></div><div><span>Método</span><strong>{receipt.metodo_pago}</strong></div><div><span>Cobrador</span><strong>{receipt.cobrador}</strong></div><div><span>Operación</span><strong>{receipt.codigo_operacion || 'No aplica'}</strong></div><div><span>Hash</span><strong>{receipt.hash_idempotencia || 'N/A'}</strong></div><div className="receipt-total"><span>Total pagado</span><strong>S/ {receipt.monto.toFixed(2)}</strong></div></div><div className="receipt-actions"><button className="secondary-button" type="button" onClick={() => printThermalReceipt(receipt, setPrintStatus)}>{printStatus.isPrinting ? 'Imprimiendo...' : 'Imprimir térmica / PDF'}</button><button className="secondary-button" type="button" onClick={() => shareViaWhatsApp(receipt)}>WhatsApp</button><button className="secondary-button" type="button" onClick={() => navigator.share ? navigator.share({ title: `Recibo ${receipt.comprobante}`, text: `Recibo ${receipt.comprobante} por S/ ${receipt.monto.toFixed(2)}` }) : navigator.clipboard?.writeText(`Recibo ${receipt.comprobante} - S/ ${receipt.monto.toFixed(2)}`)}>Compartir</button></div></div>}
               </form>
-              <div className="panel payment-history"><div className="panel-heading"><div><div className="panel-title">Cobros recientes</div><div className="panel-subtitle">Estado actualizado al instante</div></div></div>{(cobros.length ? cobros : payments).slice(0, 6).map((row, index) => { const item = Array.isArray(row) ? { comprobante: row[0], comerciante: row[2], monto: row[6], metodo_pago: row[7], estado: row[8] } : row; return <div className="payment-row" key={item.comprobante || index}><div><strong>{item.comprobante || `#${item.id}`}</strong><span>{item.comerciante} · {item.metodo_pago}</span></div><div><strong>{typeof item.monto === 'number' ? `S/ ${item.monto.toFixed(2)}` : item.monto}</strong><span className="status paid">{item.estado}</span></div></div>; })}</div>
+              <div className="payment-side"><FieldWorkPanel isOnline={isOnline} jornada={jornada} queue={offlineQueue} />
+              <div className="panel payment-history"><div className="panel-heading"><div><div className="panel-title">Cobros recientes</div><div className="panel-subtitle">Estado actualizado al instante</div></div></div>{(cobros.length ? cobros : payments).slice(0, 6).map((row, index) => { const item = Array.isArray(row) ? { comprobante: row[0], comerciante: row[2], monto: row[6], metodo_pago: row[7], estado: row[8] } : row; return <div className="payment-row" key={item.comprobante || index}><div><strong>{item.comprobante || `#${item.id}`}</strong><span>{item.comerciante} · {item.metodo_pago}</span></div><div><strong>{typeof item.monto === 'number' ? `S/ ${item.monto.toFixed(2)}` : item.monto}</strong><span className={`status ${item.estado === 'observado' ? 'pending' : item.estado === 'anulado' ? 'danger' : 'paid'}`}>{item.estado}</span></div></div>; })}</div>
+              </div>
             </div>
             {showQrScanner && <QrScanner onScan={handleQrScan} onClose={() => setShowQrScanner(false)} />}
           </section>
         );
+      case 'revision':
+        return <ReviewPanel canResolve={user?.rol === 'super_admin'} onResolved={fetchData} />;
+      case 'dispositivos':
+        return <DeviceSessions />;
       case 'mapa':
         return mapPage();
       case 'ia':
@@ -1843,7 +1818,7 @@ function App() {
       return (
         <section className="portal-screen">
           <div className="portal-header"><a className="landing-brand" href="#portal"><span className="brand-mark">S</span><span><strong>SISREC</strong><small>Portal del comerciante</small></span></a><button className="login-back" type="button" onClick={() => { setShowPortal(false); setPortalData(null); }}>← Volver a inicio</button></div>
-          {!portalData ? <form className="portal-login panel" onSubmit={handlePortalLogin}><div className="eyebrow">PORTAL DEL COMERCIANTE</div><h1>Consulta tus pagos</h1><p>Ingresa tu DNI o código de comerciante para revisar tu información.</p><input required placeholder="DNI o código CM-001" value={portalIdentifier} onChange={(event) => setPortalIdentifier(event.target.value)} />{portalError && <div className="form-error">{portalError}</div>}<button className="primary-button" type="submit">Consultar información →</button></form> : <div className="portal-content"><div className="page-heading"><div><div className="eyebrow">MI CUENTA / INFORMACIÓN MUNICIPAL</div><h1>Hola, {portalData.comerciante.nombre}</h1><p>{portalData.comerciante.codigo} · {portalData.comerciante.rubro} · {portalData.comerciante.zona}</p></div><span className="status pending">{portalData.deuda.saldo > 0 ? `Saldo: S/ ${portalData.deuda.saldo.toFixed(2)}` : 'Cuenta al día'}</span></div><div className="portal-debt panel"><div><span>Periodo</span><strong>{portalData.deuda.periodo}</strong></div><div><span>Total</span><strong>S/ {portalData.deuda.monto_total.toFixed(2)}</strong></div><div><span>Pagado</span><strong>S/ {portalData.deuda.monto_pagado.toFixed(2)}</strong></div><div><span>Saldo pendiente</span><strong>S/ {portalData.deuda.saldo.toFixed(2)}</strong></div></div><div className="table-card"><table><thead><tr><th>Fecha</th><th>Concepto</th><th>Monto</th><th>Método</th><th>Comprobante</th><th>Acción</th></tr></thead><tbody>{portalData.pagos.length ? portalData.pagos.map((payment) => <tr key={payment.id}><td>{payment.fecha}</td><td>{payment.concepto}</td><td>S/ {Number(payment.monto).toFixed(2)}</td><td>{payment.metodo_pago}</td><td>{payment.comprobante}</td><td><button className="table-action" type="button" onClick={() => window.print()}>Descargar PDF</button></td></tr>) : <tr><td colSpan="6">Aún no tienes pagos registrados.</td></tr>}</tbody></table></div>{portalData.deuda.saldo > 0 && <div className="portal-reminder"><strong>Recordatorio de deuda</strong><span>Tu saldo pendiente es de S/ {portalData.deuda.saldo.toFixed(2)}.</span><button className="secondary-button" type="button" onClick={() => window.open(`https://wa.me/?text=${encodeURIComponent(`Recordatorio SISREC: saldo pendiente S/ ${portalData.deuda.saldo.toFixed(2)}`)}`, '_blank')}>Enviar recordatorio por WhatsApp</button></div>}</div>}
+          {!portalData ? <form className="portal-login panel" onSubmit={handlePortalLogin}><div className="eyebrow">PORTAL DEL COMERCIANTE</div><h1>Consulta tus pagos</h1><p>Ingresa tu DNI o código de comerciante para revisar tu información.</p><input required placeholder="DNI o código COM-0001" value={portalIdentifier} onChange={(event) => setPortalIdentifier(event.target.value)} />{portalError && <div className="form-error">{portalError}</div>}<button className="primary-button" type="submit">Consultar información →</button></form> : <div className="portal-content"><div className="page-heading"><div><div className="eyebrow">MI CUENTA / INFORMACIÓN MUNICIPAL</div><h1>Hola, {portalData.comerciante.nombre}</h1><p>{portalData.comerciante.codigo} · {portalData.comerciante.rubro} · {portalData.comerciante.zona}</p></div><span className="status pending">{portalData.deuda.saldo > 0 ? `Saldo: S/ ${portalData.deuda.saldo.toFixed(2)}` : 'Cuenta al día'}</span></div><div className="portal-debt panel"><div><span>Periodo</span><strong>{portalData.deuda.periodo}</strong></div><div><span>Total</span><strong>S/ {portalData.deuda.monto_total.toFixed(2)}</strong></div><div><span>Pagado</span><strong>S/ {portalData.deuda.monto_pagado.toFixed(2)}</strong></div><div><span>Saldo pendiente</span><strong>S/ {portalData.deuda.saldo.toFixed(2)}</strong></div></div><div className="table-card"><table><thead><tr><th>Fecha</th><th>Concepto</th><th>Monto</th><th>Método</th><th>Comprobante</th><th>Acción</th></tr></thead><tbody>{portalData.pagos.length ? portalData.pagos.map((payment) => <tr key={payment.id}><td>{payment.fecha}</td><td>{payment.concepto}</td><td>S/ {Number(payment.monto).toFixed(2)}</td><td>{payment.metodo_pago}</td><td>{payment.comprobante}</td><td><button className="table-action" type="button" onClick={() => window.print()}>Descargar PDF</button></td></tr>) : <tr><td colSpan="6">Aún no tienes pagos registrados.</td></tr>}</tbody></table></div>{portalData.deuda.saldo > 0 && <div className="portal-reminder"><strong>Recordatorio de deuda</strong><span>Tu saldo pendiente es de S/ {portalData.deuda.saldo.toFixed(2)}.</span><button className="secondary-button" type="button" onClick={() => window.open(`https://wa.me/?text=${encodeURIComponent(`Recordatorio SISREC: saldo pendiente S/ ${portalData.deuda.saldo.toFixed(2)}`)}`, '_blank')}>Enviar recordatorio por WhatsApp</button></div>}</div>}
         </section>
       );
     }
@@ -2001,12 +1976,17 @@ function App() {
               <span>⌕</span>
               <input type="text" placeholder="Buscar registro" />
             </div>
-            <button type="button" className="notification-button">🔔</button>
-            <div className="user-badge">
-              <span>{user?.nombre?.split(' ')[0] || 'A'}</span>
-              <div>
+            <button type="button" className="notification-button" aria-label="Notificaciones" title="Notificaciones">
+              <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9" />
+                <path d="M10.3 21a1.94 1.94 0 0 0 3.4 0" />
+              </svg>
+            </button>
+            <div className="user-badge" title={`${user?.nombre || 'Usuario'} · ${formatRole(user?.rol)}`}>
+              <span className="user-avatar" aria-hidden="true">{getInitials(user?.nombre)}</span>
+              <div className="user-meta">
                 <strong>{user?.nombre || 'Usuario'}</strong>
-                <small>{user?.rol || 'Super Admin'}</small>
+                <small>{formatRole(user?.rol)}</small>
               </div>
             </div>
             <button type="button" className="primary-button compact" onClick={handleLogout}>Cerrar sesión</button>
