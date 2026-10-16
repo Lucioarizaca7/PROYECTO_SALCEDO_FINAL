@@ -883,6 +883,9 @@ a:focus-visible {
 }
 
 .nav-item {
+  /* El menú usa enlaces (NavLink): sin subrayado y en bloque, como los botones de antes. */
+  display: block;
+  text-decoration: none;
   background: transparent;
   border: 1px solid transparent;
   color: rgba(255,255,255,0.8);
@@ -1402,6 +1405,7 @@ tbody td {
 }
 
 .view-all {
+  text-decoration: none;
   border: none;
   background: transparent;
   color: var(--primary-2);
@@ -2730,8 +2734,9 @@ tbody td {
   backdrop-filter: blur(12px);
 }
 
-.mobile-bottom-nav button {
+.mobile-bottom-nav a {
   display: grid;
+  text-decoration: none;
   justify-items: center;
   gap: 3px;
   min-height: 48px;
@@ -2743,12 +2748,12 @@ tbody td {
   font-weight: 800;
 }
 
-.mobile-bottom-nav button span {
+.mobile-bottom-nav a span {
   font-size: 1.2rem;
   line-height: 1;
 }
 
-.mobile-bottom-nav button.active {
+.mobile-bottom-nav a.active {
   background: linear-gradient(180deg, #edf6ff 0%, #dfeeff 100%);
   color: var(--primary-2);
   box-shadow: inset 0 0 0 1px rgba(27, 94, 168, 0.1);
