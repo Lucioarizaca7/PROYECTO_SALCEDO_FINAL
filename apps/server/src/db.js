@@ -6,6 +6,7 @@ import bcrypt from 'bcryptjs';
 
 import { pool, withTransaction, closePool, testSchema } from './pg.js';
 import { config } from './config.js';
+import { ValidationError, NotFoundError, ConflictError } from './errors.js';
 
 const migrationsDir = join(dirname(fileURLToPath(import.meta.url)), '..', 'migrations');
 
@@ -194,16 +195,16 @@ export async function initializeDatabase({ seed = true } = {}) {
 export async function createAdminUser({ nombre, email, password }) {
   const cleanEmail = String(email || '').trim().toLowerCase();
   const cleanName = String(nombre || '').trim();
-  if (!cleanName) throw new Error('El nombre es obligatorio');
-  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)) throw new Error('Correo no válido');
-  if (String(password || '').length < 10) throw new Error('La contraseña debe tener al menos 10 caracteres');
+  if (!cleanName) throw new ValidationError('El nombre es obligatorio');
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)) throw new ValidationError('Correo no válido');
+  if (String(password || '').length < 10) throw new ValidationError('La contraseña debe tener al menos 10 caracteres');
 
   const created = await first(pool, `
     INSERT INTO usuarios (nombre, email, password_hash, rol_id)
     SELECT $1, $2, $3, r.id FROM roles r WHERE r.codigo = 'super_admin'
     ON CONFLICT (email) DO NOTHING
     RETURNING id`, [cleanName, cleanEmail, bcrypt.hashSync(String(password), config.bcryptSaltRounds)]);
-  if (!created) throw new Error(`Ya existe un usuario con el correo ${cleanEmail}`);
+  if (!created) throw new ConflictError(`Ya existe un usuario con el correo ${cleanEmail}`);
   return { id: Number(created.id), nombre: cleanName, email: cleanEmail, rol: 'super_admin' };
 }
 
@@ -513,7 +514,7 @@ export async function generateForecastProjection(db, options = {}) {
 
 export async function scoreMorosidadComerciante(db, comercianteId) {
   const merchant = await findComerciante(db, comercianteId);
-  if (!merchant) throw new Error('Comerciante no encontrado');
+  if (!merchant) throw new NotFoundError('Comerciante no encontrado');
 
   let deudaTotal = 0;
   try {
@@ -669,24 +670,24 @@ export async function getZonas(db) {
 export async function insertZona(db, payload) {
   const nombre = String(payload.nombre || '').trim();
   const descripcion = String(payload.descripcion || '').trim();
-  if (!nombre) throw new Error('El nombre de la zona es obligatorio');
+  if (!nombre) throw new ValidationError('El nombre de la zona es obligatorio');
 
   const duplicate = await first(db, 'SELECT id FROM zonas WHERE lower(btrim(nombre)) = lower(btrim($1))', [nombre]);
-  if (duplicate) throw new Error('Ya existe una zona con ese nombre');
+  if (duplicate) throw new ConflictError('Ya existe una zona con ese nombre');
 
   return first(db, 'INSERT INTO zonas (nombre, descripcion) VALUES ($1, $2) RETURNING id, codigo, nombre, descripcion', [nombre, descripcion]);
 }
 
 export async function updateZona(db, id, payload) {
   const current = await first(db, 'SELECT id, nombre, descripcion FROM zonas WHERE id = $1', [Number(id)]);
-  if (!current) throw new Error('Zona no encontrada');
+  if (!current) throw new NotFoundError('Zona no encontrada');
 
   const nombre = payload.nombre === undefined ? current.nombre : String(payload.nombre).trim();
   const descripcion = payload.descripcion === undefined ? current.descripcion : String(payload.descripcion).trim();
-  if (!nombre) throw new Error('El nombre de la zona es obligatorio');
+  if (!nombre) throw new ValidationError('El nombre de la zona es obligatorio');
 
   const duplicate = await first(db, 'SELECT id FROM zonas WHERE lower(btrim(nombre)) = lower(btrim($1)) AND id <> $2', [nombre, Number(id)]);
-  if (duplicate) throw new Error('Ya existe una zona con ese nombre');
+  if (duplicate) throw new ConflictError('Ya existe una zona con ese nombre');
 
   return first(db, 'UPDATE zonas SET nombre = $1, descripcion = $2 WHERE id = $3 RETURNING id, codigo, nombre, descripcion', [nombre, descripcion, Number(id)]);
 }
@@ -694,11 +695,11 @@ export async function updateZona(db, id, payload) {
 export async function deleteZona(db, id) {
   const zonaId = Number(id);
   const existing = await first(db, 'SELECT id FROM zonas WHERE id = $1', [zonaId]);
-  if (!existing) throw new Error('Zona no encontrada');
+  if (!existing) throw new NotFoundError('Zona no encontrada');
   try {
     await db.query('DELETE FROM zonas WHERE id = $1', [zonaId]);
   } catch (error) {
-    if (error.code === '23503') throw new Error('No se puede eliminar la zona: tiene comerciantes, puestos o tarifas asociados');
+    if (error.code === '23503') throw new ConflictError('No se puede eliminar la zona: tiene comerciantes, puestos o tarifas asociados');
     throw error;
   }
   return { id: zonaId, eliminado: true };
@@ -723,11 +724,11 @@ export async function insertCalle(db, payload) {
   const nombre = String(payload.nombre || '').trim();
   const descripcion = String(payload.descripcion || '').trim();
   const zonaId = Number(payload.zona_id);
-  if (!nombre || !zonaId) throw new Error('Nombre y zona son obligatorios');
+  if (!nombre || !zonaId) throw new ValidationError('Nombre y zona son obligatorios');
 
-  if (!(await first(db, 'SELECT id FROM zonas WHERE id = $1', [zonaId]))) throw new Error('La zona especificada no existe');
+  if (!(await first(db, 'SELECT id FROM zonas WHERE id = $1', [zonaId]))) throw new ValidationError('La zona especificada no existe');
   const duplicate = await first(db, 'SELECT id FROM calles WHERE lower(btrim(nombre)) = lower(btrim($1)) AND zona_id = $2', [nombre, zonaId]);
-  if (duplicate) throw new Error('Ya existe una calle con ese nombre en la zona especificada');
+  if (duplicate) throw new ConflictError('Ya existe una calle con ese nombre en la zona especificada');
 
   const created = await first(db, 'INSERT INTO calles (nombre, descripcion, zona_id) VALUES ($1, $2, $3) RETURNING id', [nombre, descripcion, zonaId]);
   return findCalle(db, created.id);
@@ -735,16 +736,16 @@ export async function insertCalle(db, payload) {
 
 export async function updateCalle(db, id, payload) {
   const current = await findCalle(db, id);
-  if (!current) throw new Error('Calle no encontrada');
+  if (!current) throw new NotFoundError('Calle no encontrada');
 
   const nombre = payload.nombre === undefined ? current.nombre : String(payload.nombre).trim();
   const descripcion = payload.descripcion === undefined ? current.descripcion : String(payload.descripcion).trim();
   const zonaId = payload.zona_id === undefined ? current.zona_id : Number(payload.zona_id);
-  if (!nombre || !zonaId) throw new Error('Nombre y zona son obligatorios');
+  if (!nombre || !zonaId) throw new ValidationError('Nombre y zona son obligatorios');
 
-  if (!(await first(db, 'SELECT id FROM zonas WHERE id = $1', [zonaId]))) throw new Error('La zona especificada no existe');
+  if (!(await first(db, 'SELECT id FROM zonas WHERE id = $1', [zonaId]))) throw new ValidationError('La zona especificada no existe');
   const duplicate = await first(db, 'SELECT id FROM calles WHERE lower(btrim(nombre)) = lower(btrim($1)) AND zona_id = $2 AND id <> $3', [nombre, zonaId, Number(id)]);
-  if (duplicate) throw new Error('Ya existe una calle con ese nombre en la zona especificada');
+  if (duplicate) throw new ConflictError('Ya existe una calle con ese nombre en la zona especificada');
 
   await db.query('UPDATE calles SET nombre = $1, descripcion = $2, zona_id = $3 WHERE id = $4', [nombre, descripcion, zonaId, Number(id)]);
   return findCalle(db, id);
@@ -752,7 +753,7 @@ export async function updateCalle(db, id, payload) {
 
 export async function deleteCalle(db, id) {
   const calleId = Number(id);
-  if (!(await first(db, 'SELECT id FROM calles WHERE id = $1', [calleId]))) throw new Error('Calle no encontrada');
+  if (!(await first(db, 'SELECT id FROM calles WHERE id = $1', [calleId]))) throw new NotFoundError('Calle no encontrada');
   await db.query('DELETE FROM calles WHERE id = $1', [calleId]);
   return { id: calleId, eliminado: true };
 }
@@ -839,7 +840,7 @@ export function validateDocument(value) {
   const isDni = /^\d{8}$/.test(document);
   const isRuc = /^(10|15|17|20)\d{9}$/.test(document);
   if (!isDni && !isRuc) {
-    throw new Error('DNI debe tener 8 dígitos o RUC debe tener 11 dígitos válido');
+    throw new ValidationError('DNI debe tener 8 dígitos o RUC debe tener 11 dígitos válido');
   }
   return document;
 }
@@ -848,7 +849,7 @@ async function ensureUniqueActiveDocument(db, dniRuc, excludeId = null) {
   const result = excludeId
     ? await first(db, `SELECT id FROM comerciantes WHERE dni_ruc = $1 AND id <> $2 AND estado IN ('activo', 'pendiente')`, [dniRuc, Number(excludeId)])
     : await first(db, `SELECT id FROM comerciantes WHERE dni_ruc = $1 AND estado IN ('activo', 'pendiente')`, [dniRuc]);
-  if (result) throw new Error('Ya existe un comerciante activo con ese DNI/RUC');
+  if (result) throw new ConflictError('Ya existe un comerciante activo con ese DNI/RUC');
 }
 
 const TIPOS_COMERCIANTE = ['eventual', 'permanente', 'ferial'];
@@ -864,9 +865,9 @@ export async function insertComerciante(db, payload) {
   const estado = String(payload.estado || 'activo').trim();
   const usuarioCreador = Number(payload.usuario_creador || 1);
 
-  if (!dniRuc || !nombre || !rubroId || !zonaId) throw new Error('DNI/RUC, nombre, rubro y zona son obligatorios');
-  if (!TIPOS_COMERCIANTE.includes(tipoComerciante)) throw new Error('Tipo de comerciante no válido');
-  if (!ESTADOS_COMERCIANTE.includes(estado)) throw new Error('Estado de comerciante no válido');
+  if (!dniRuc || !nombre || !rubroId || !zonaId) throw new ValidationError('DNI/RUC, nombre, rubro y zona son obligatorios');
+  if (!TIPOS_COMERCIANTE.includes(tipoComerciante)) throw new ValidationError('Tipo de comerciante no válido');
+  if (!ESTADOS_COMERCIANTE.includes(estado)) throw new ValidationError('Estado de comerciante no válido');
 
   await ensureUniqueActiveDocument(db, dniRuc);
 
@@ -909,7 +910,7 @@ export async function insertComerciante(db, payload) {
 
 export async function updateComerciante(db, id, payload) {
   const current = await findComerciante(db, id);
-  if (!current) throw new Error('Comerciante no encontrado');
+  if (!current) throw new NotFoundError('Comerciante no encontrado');
 
   const dniRuc = payload.dni_ruc === undefined ? current.dni_ruc : validateDocument(payload.dni_ruc);
   const nombre = payload.nombre === undefined ? current.nombre : String(payload.nombre).trim();
@@ -920,9 +921,9 @@ export async function updateComerciante(db, id, payload) {
     : String(payload.tipo_comerciante).trim();
   const estado = payload.estado === undefined ? current.estado : String(payload.estado).trim();
 
-  if (!nombre || !rubroId || !zonaId) throw new Error('Nombre, rubro y zona son obligatorios');
-  if (!TIPOS_COMERCIANTE.includes(tipoComerciante)) throw new Error('Tipo de comerciante no válido');
-  if (!ESTADOS_COMERCIANTE.includes(estado)) throw new Error('Estado de comerciante no válido');
+  if (!nombre || !rubroId || !zonaId) throw new ValidationError('Nombre, rubro y zona son obligatorios');
+  if (!TIPOS_COMERCIANTE.includes(tipoComerciante)) throw new ValidationError('Tipo de comerciante no válido');
+  if (!ESTADOS_COMERCIANTE.includes(estado)) throw new ValidationError('Estado de comerciante no válido');
 
   await ensureUniqueActiveDocument(db, dniRuc, Number(id));
 
@@ -937,7 +938,7 @@ export async function updateComerciante(db, id, payload) {
 // Baja lógica: se conserva el historial de cobros y notificaciones.
 export async function deactivateComerciante(db, id) {
   const merchantId = Number(id);
-  if (!(await first(db, 'SELECT id FROM comerciantes WHERE id = $1', [merchantId]))) throw new Error('Comerciante no encontrado');
+  if (!(await first(db, 'SELECT id FROM comerciantes WHERE id = $1', [merchantId]))) throw new NotFoundError('Comerciante no encontrado');
   await db.query(`UPDATE puestos SET estado = 'inactivo' WHERE comerciante_id = $1`, [merchantId]);
   await db.query(`UPDATE comerciantes SET estado = 'inactivo', fecha_baja = now() WHERE id = $1`, [merchantId]);
   return { id: merchantId, eliminado: true };
@@ -1020,17 +1021,17 @@ function parseComercianteId(value) {
   if (value === undefined) return undefined;
   if (value === null || value === '' || Number(value) === 0) return null;
   const id = Number(value);
-  if (!Number.isInteger(id) || id < 0) throw new Error('Comerciante no válido');
+  if (!Number.isInteger(id) || id < 0) throw new ValidationError('Comerciante no válido');
   return id;
 }
 
 async function validatePuestoPlacement(db, { comercianteId, zonaId, direccion, estado, excludeId = null }) {
-  if (!['ocupado', 'disponible', 'reservado', 'inactivo'].includes(estado)) throw new Error('Estado de puesto no válido');
-  if (estado === 'ocupado' && !comercianteId) throw new Error('Un puesto ocupado necesita un comerciante titular');
-  if (!(await first(db, 'SELECT id FROM zonas WHERE id = $1', [zonaId]))) throw new Error('La zona elegida no existe');
+  if (!['ocupado', 'disponible', 'reservado', 'inactivo'].includes(estado)) throw new ValidationError('Estado de puesto no válido');
+  if (estado === 'ocupado' && !comercianteId) throw new ValidationError('Un puesto ocupado necesita un comerciante titular');
+  if (!(await first(db, 'SELECT id FROM zonas WHERE id = $1', [zonaId]))) throw new ValidationError('La zona elegida no existe');
   if (comercianteId) {
     const merchant = await first(db, `SELECT id FROM comerciantes WHERE id = $1 AND estado <> 'inactivo'`, [comercianteId]);
-    if (!merchant) throw new Error('El comerciante no existe o está inactivo');
+    if (!merchant) throw new ValidationError('El comerciante no existe o está inactivo');
   }
   // Un mismo lugar (zona + dirección) no puede tener puestos activos de titulares distintos.
   const duplicate = await first(db, `
@@ -1038,7 +1039,7 @@ async function validatePuestoPlacement(db, { comercianteId, zonaId, direccion, e
     WHERE zona_id = $1 AND lower(btrim(direccion)) = lower(btrim($2)) AND estado <> 'inactivo'
       AND comerciante_id IS DISTINCT FROM $3 AND ($4::bigint IS NULL OR id <> $4)`,
   [zonaId, direccion, comercianteId, excludeId]);
-  if (duplicate) throw new Error('El puesto físico ya está asignado a otro comerciante');
+  if (duplicate) throw new ConflictError('El puesto físico ya está asignado a otro comerciante');
 }
 
 export async function insertPuesto(db, payload) {
@@ -1052,9 +1053,9 @@ export async function insertPuesto(db, payload) {
   const longitud = Number(payload.longitud);
 
   if (!zonaId || !direccion || !Number.isFinite(metros) || metros <= 0) {
-    throw new Error('Zona, dirección y metros cuadrados válidos son obligatorios');
+    throw new ValidationError('Zona, dirección y metros cuadrados válidos son obligatorios');
   }
-  if (estado === 'inactivo') throw new Error('Estado de puesto no válido');
+  if (estado === 'inactivo') throw new ValidationError('Estado de puesto no válido');
   await validatePuestoPlacement(db, { comercianteId, zonaId, direccion, estado });
 
   const next = await first(db, `SELECT nextval(pg_get_serial_sequence('puestos', 'id')) AS id`);
@@ -1066,7 +1067,7 @@ export async function insertPuesto(db, payload) {
     [next.id, comercianteId, zonaId, direccion, metros, estado, finalCode,
       Number.isFinite(latitud) ? latitud : null, Number.isFinite(longitud) ? longitud : null]);
   } catch (error) {
-    if (error.code === '23505') throw new Error(`El código de puesto ${finalCode} ya está asignado`);
+    if (error.code === '23505') throw new ConflictError(`El código de puesto ${finalCode} ya está asignado`);
     throw error;
   }
   return findPuesto(db, next.id);
@@ -1076,7 +1077,7 @@ export async function insertPuesto(db, payload) {
 export async function updatePuesto(db, id, payload) {
   const puestoId = Number(id);
   const current = await first(db, 'SELECT * FROM puestos WHERE id = $1', [puestoId]);
-  if (!current) throw new Error('Puesto no encontrado');
+  if (!current) throw new NotFoundError('Puesto no encontrado');
 
   const requested = parseComercianteId(payload.comerciante_id);
   const comercianteId = requested === undefined ? current.comerciante_id : requested;
@@ -1089,7 +1090,7 @@ export async function updatePuesto(db, id, payload) {
   const longitud = Number(payload.longitud ?? current.longitud);
 
   if (!zonaId || !direccion || (metros !== null && (!Number.isFinite(metros) || metros <= 0))) {
-    throw new Error('Zona, dirección y metros cuadrados válidos son obligatorios');
+    throw new ValidationError('Zona, dirección y metros cuadrados válidos son obligatorios');
   }
   await validatePuestoPlacement(db, { comercianteId, zonaId, direccion, estado, excludeId: puestoId });
 
@@ -1106,15 +1107,15 @@ export async function updatePuesto(db, id, payload) {
 export async function liberarPuesto(db, id) {
   const puestoId = Number(id);
   const current = await first(db, 'SELECT estado FROM puestos WHERE id = $1', [puestoId]);
-  if (!current) throw new Error('Puesto no encontrado');
-  if (current.estado === 'inactivo') throw new Error('El puesto está dado de baja');
+  if (!current) throw new NotFoundError('Puesto no encontrado');
+  if (current.estado === 'inactivo') throw new ValidationError('El puesto está dado de baja');
   await db.query(`UPDATE puestos SET comerciante_id = NULL, estado = 'disponible' WHERE id = $1`, [puestoId]);
   return findPuesto(db, puestoId);
 }
 
 export async function deactivatePuesto(db, id) {
   const puestoId = Number(id);
-  if (!(await first(db, 'SELECT id FROM puestos WHERE id = $1', [puestoId]))) throw new Error('Puesto no encontrado');
+  if (!(await first(db, 'SELECT id FROM puestos WHERE id = $1', [puestoId]))) throw new NotFoundError('Puesto no encontrado');
   await db.query(`UPDATE puestos SET estado = 'inactivo' WHERE id = $1`, [puestoId]);
   return findPuesto(db, puestoId);
 }
@@ -1149,12 +1150,12 @@ function validateTariff(payload) {
   const vigenciaFin = payload.vigencia_fin ? String(payload.vigencia_fin).trim() : null;
   const version = Number(payload.version ?? 1);
 
-  if (!rubroId || !['fija', 'variable', 'mixta'].includes(tipoTarifa)) throw new Error('Rubro y tipo de tarifa son obligatorios');
-  if (!['diaria', 'semanal', 'mensual', 'metro_cuadrado'].includes(unidadMedida)) throw new Error('Unidad de medida no válida');
-  if (montoFijo < 0 || montoVariable < 0 || (montoFijo === 0 && montoVariable === 0)) throw new Error('La tarifa debe tener un monto mayor que cero');
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(vigenciaInicio)) throw new Error('La vigencia inicial debe usar formato AAAA-MM-DD');
-  if (vigenciaFin && vigenciaFin < vigenciaInicio) throw new Error('La vigencia final no puede ser anterior a la inicial');
-  if (!Number.isFinite(version) || version < 1) throw new Error('La versión de la tarifa no es válida');
+  if (!rubroId || !['fija', 'variable', 'mixta'].includes(tipoTarifa)) throw new ValidationError('Rubro y tipo de tarifa son obligatorios');
+  if (!['diaria', 'semanal', 'mensual', 'metro_cuadrado'].includes(unidadMedida)) throw new ValidationError('Unidad de medida no válida');
+  if (montoFijo < 0 || montoVariable < 0 || (montoFijo === 0 && montoVariable === 0)) throw new ValidationError('La tarifa debe tener un monto mayor que cero');
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(vigenciaInicio)) throw new ValidationError('La vigencia inicial debe usar formato AAAA-MM-DD');
+  if (vigenciaFin && vigenciaFin < vigenciaInicio) throw new ValidationError('La vigencia final no puede ser anterior a la inicial');
+  if (!Number.isFinite(version) || version < 1) throw new ValidationError('La versión de la tarifa no es válida');
 
   return { rubroId, zonaId, tipoTarifa, montoFijo, montoVariable, unidadMedida, vigenciaInicio, vigenciaFin, version };
 }
@@ -1170,11 +1171,11 @@ export async function insertTarifa(db, payload) {
 
 export async function updateTarifa(db, id, payload) {
   const current = await findTarifa(db, id);
-  if (!current) throw new Error('Tarifa no encontrada');
+  if (!current) throw new NotFoundError('Tarifa no encontrada');
 
   const receivedVersion = payload.version === undefined ? current.version : Number(payload.version);
   if (!Number.isFinite(receivedVersion) || receivedVersion !== current.version) {
-    throw new Error('La tarifa fue actualizada por otro usuario; recargue la versión antes de continuar');
+    throw new ConflictError('La tarifa fue actualizada por otro usuario; recargue la versión antes de continuar');
   }
 
   const tariff = validateTariff({
@@ -1196,7 +1197,7 @@ export async function updateTarifa(db, id, payload) {
     WHERE id = $10 AND version = $11`,
   [tariff.rubroId, tariff.zonaId, tariff.tipoTarifa, tariff.montoFijo, tariff.montoVariable, tariff.unidadMedida,
     tariff.vigenciaInicio, tariff.vigenciaFin, tariff.version, Number(id), current.version]);
-  if (!updated.rowCount) throw new Error('La tarifa fue actualizada por otro usuario; recargue la versión antes de continuar');
+  if (!updated.rowCount) throw new ConflictError('La tarifa fue actualizada por otro usuario; recargue la versión antes de continuar');
 
   return findTarifa(db, id);
 }
@@ -1242,7 +1243,7 @@ async function findApplicableTariff(db, merchant, periodo) {
 export async function calcularLiquidacion(db, comercianteId, periodo, { dia = null } = {}) {
   periodo = periodo || (dia ? dia.slice(0, 7) : currentPeriod());
   const merchant = await findComerciante(db, comercianteId);
-  if (!merchant) throw new Error('Comerciante no encontrado');
+  if (!merchant) throw new NotFoundError('Comerciante no encontrado');
 
   const merchantType = String(merchant.tipo_comerciante || '').trim().toLowerCase();
   const pendingRegularization = String(merchant.estado_empadronamiento || '').toUpperCase() === 'PENDIENTE_REGULARIZACION';
@@ -1270,7 +1271,7 @@ export async function calcularLiquidacion(db, comercianteId, periodo, { dia = nu
     const day = dia || todayInLima();
     if (day.slice(0, 7) !== periodo) return noDevengo('eventual');
     const tarifa = await findApplicableTariff(db, merchant, periodo);
-    if (!tarifa) throw new Error('No existe una tarifa vigente para el rubro y periodo indicado');
+    if (!tarifa) throw new ValidationError('No existe una tarifa vigente para el rubro y periodo indicado');
     const montoDia = dailyTariffAmount(tarifa, day, Number(puesto?.metros_cuadrados || 1));
     const paidToday = await first(db, `
       SELECT COALESCE(SUM(monto), 0) AS pagado FROM transacciones
@@ -1298,7 +1299,7 @@ export async function calcularLiquidacion(db, comercianteId, periodo, { dia = nu
   }
 
   const tarifa = await findApplicableTariff(db, merchant, periodo);
-  if (!tarifa) throw new Error('No existe una tarifa vigente para el rubro y periodo indicado');
+  if (!tarifa) throw new ValidationError('No existe una tarifa vigente para el rubro y periodo indicado');
 
   const metros = Number(puesto?.metros_cuadrados || 1);
   const multiplier = periodMultiplier(periodo, tarifa.unidad_medida);
@@ -1368,7 +1369,7 @@ export async function obtenerPortalComerciante(db, identifier) {
            ${TS('c.creado_en')} AS fecha_registro, r.nombre AS rubro, z.nombre AS zona
     FROM comerciantes c JOIN rubros r ON r.id = c.rubro_id JOIN zonas z ON z.id = c.zona_id
     WHERE c.id = $1 AND c.estado <> 'inactivo'`, [id]);
-  if (!merchant) throw new Error('DNI o código de comerciante no encontrado');
+  if (!merchant) throw new NotFoundError('DNI o código de comerciante no encontrado');
 
   const payments = await rows(db, `
     SELECT co.id, ${PAYMENT_DAY} AS fecha, co.concepto, co.monto, co.metodo_pago, co.estado,
@@ -1385,9 +1386,9 @@ export async function createNotification(db, payload) {
   const canal = String(payload.canal || 'whatsapp');
   const mensaje = String(payload.mensaje || '').trim();
   if (!merchantId || !mensaje || !['whatsapp', 'sms', 'email'].includes(canal)) {
-    throw new Error('Comerciante, canal y mensaje son obligatorios');
+    throw new ValidationError('Comerciante, canal y mensaje son obligatorios');
   }
-  if (!(await first(db, 'SELECT id FROM comerciantes WHERE id = $1', [merchantId]))) throw new Error('Comerciante no encontrado');
+  if (!(await first(db, 'SELECT id FROM comerciantes WHERE id = $1', [merchantId]))) throw new ValidationError('Comerciante no encontrado');
   const created = await first(db,
     `INSERT INTO notificaciones (comerciante_id, tipo, canal, mensaje, estado) VALUES ($1, $2, $3, $4, 'preparada') RETURNING id`,
     [merchantId, tipo, canal, mensaje]);
@@ -1425,10 +1426,10 @@ export async function registrarCobro(db, payload, { audit = null, allowExcess = 
   const allowedMethods = ['efectivo', 'yape', 'plin', 'pos'];
 
   if (!comercianteId || !cobradorId || !Number.isFinite(monto) || monto <= 0 || !allowedMethods.includes(metodoPago)) {
-    throw new Error('Comerciante, monto positivo y método de pago válido son obligatorios');
+    throw new ValidationError('Comerciante, monto positivo y método de pago válido son obligatorios');
   }
   if (['yape', 'plin', 'pos'].includes(metodoPago) && !codigoOperacion) {
-    throw new Error('El código de operación es obligatorio para pagos digitales');
+    throw new ValidationError('El código de operación es obligatorio para pagos digitales');
   }
 
   const uniqueCode = codigoOperacion || `COB-${Date.now()}-${comercianteId}-${Math.random().toString(16).slice(2, 10)}`;
@@ -1444,26 +1445,26 @@ export async function registrarCobro(db, payload, { audit = null, allowExcess = 
 
   const duplicate = await first(db,
     'SELECT id FROM transacciones WHERE codigo_operacion = $1 OR hash_transaccion = $2', [uniqueCode, hashTransaccion]);
-  if (duplicate) throw new Error('Ya existe un cobro registrado con ese código de operación o hash transaccional');
+  if (duplicate) throw new ConflictError('Ya existe un cobro registrado con ese código de operación o hash transaccional');
 
   const clientDate = payload.fecha_cobro && !Number.isNaN(Date.parse(payload.fecha_cobro)) ? new Date(payload.fecha_cobro) : new Date();
   const liquidation = await calcularLiquidacion(db, comercianteId, payload.periodo, { dia: todayInLima(clientDate) });
   let observacion = null;
   let tarifaId = liquidation.tarifa?.id;
   if (monto > liquidation.saldo) {
-    if (!allowExcess) throw new Error(`El monto excede el saldo pendiente de S/ ${liquidation.saldo.toFixed(2)}`);
+    if (!allowExcess) throw new ValidationError(`El monto excede el saldo pendiente de S/ ${liquidation.saldo.toFixed(2)}`);
     observacion = liquidation.no_devengo
       ? `Cobro offline en un periodo sin devengo (${liquidation.motivo})`
       : `Cobro offline de S/ ${monto.toFixed(2)} excede el saldo pendiente de S/ ${liquidation.saldo.toFixed(2)}`;
     if (!tarifaId) {
       const tarifa = await findApplicableTariff(db, liquidation.comerciante, liquidation.periodo);
-      if (!tarifa) throw new Error('No existe una tarifa vigente para el rubro y periodo indicado');
+      if (!tarifa) throw new ValidationError('No existe una tarifa vigente para el rubro y periodo indicado');
       tarifaId = tarifa.id;
     }
   }
 
   const collector = await first(db, 'SELECT id FROM usuarios WHERE id = $1', [cobradorId]);
-  if (!collector) throw new Error('El cobrador indicado no existe');
+  if (!collector) throw new ValidationError('El cobrador indicado no existe');
 
   const sequence = await first(db, `SELECT nextval('comprobantes_recibo_seq') AS n`);
   const number = `R-${String(sequence.n).padStart(6, '0')}`;
@@ -1615,8 +1616,8 @@ export const MAX_LOTE_COBROS = 100;
 // Sube varios cobros offline en una petición. Cada cobro va en su propia transacción: uno que falla
 // no detiene ni deshace a los demás. Se procesan en el orden en que se cobraron (hora del celular).
 export async function syncOfflineBatch(db, cobros, { cobradorId = null, deviceId = null, audit = null } = {}) {
-  if (!Array.isArray(cobros) || !cobros.length) throw new Error('El lote no contiene cobros');
-  if (cobros.length > MAX_LOTE_COBROS) throw new Error(`El lote admite como máximo ${MAX_LOTE_COBROS} cobros`);
+  if (!Array.isArray(cobros) || !cobros.length) throw new ValidationError('El lote no contiene cobros');
+  if (cobros.length > MAX_LOTE_COBROS) throw new ValidationError(`El lote admite como máximo ${MAX_LOTE_COBROS} cobros`);
 
   const when = (cobro) => Date.parse(cobro.fecha_cobro || cobro.fechaCobro) || 0;
   const ordered = cobros
@@ -1685,14 +1686,14 @@ export async function getCobrosObservados(db, { estado = 'pendiente' } = {}) {
 // Aceptar deja el cobro como pago válido (p. ej. un adelanto); anular lo saca de la recaudación
 // (se devuelve el dinero). La decisión y la auditoría se graban en la misma transacción.
 export async function resolveCobroObservado(_db, id, { decision, resolucion, usuarioId, audit = null }) {
-  if (!['aceptado', 'anulado'].includes(decision)) throw new Error('La decisión debe ser "aceptado" o "anulado"');
+  if (!['aceptado', 'anulado'].includes(decision)) throw new ValidationError('La decisión debe ser "aceptado" o "anulado"');
   const nota = String(resolucion || '').trim();
-  if (nota.length < 5) throw new Error('Explique la decisión (al menos 5 caracteres)');
+  if (nota.length < 5) throw new ValidationError('Explique la decisión (al menos 5 caracteres)');
 
   return withTransaction(async (client) => {
     const previous = await first(client, 'SELECT * FROM cobros_observados WHERE id = $1 FOR UPDATE', [Number(id)]);
     if (!previous) throw Object.assign(new Error('Cobro observado no encontrado'), { status: 404 });
-    if (previous.estado !== 'pendiente') throw new Error(`El cobro ya fue revisado (${previous.estado})`);
+    if (previous.estado !== 'pendiente') throw new ConflictError(`El cobro ya fue revisado (${previous.estado})`);
 
     const updated = await first(client, `
       UPDATE cobros_observados SET estado = $2, resolucion = $3, revisado_por = $4, revisado_en = now()
