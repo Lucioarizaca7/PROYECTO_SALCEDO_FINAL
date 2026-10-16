@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { readFileSync, readdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -14,10 +14,10 @@ const migrationsDir = join(dirname(fileURLToPath(import.meta.url)), '..', 'migra
 const LOCAL = (column) => `(${column} AT TIME ZONE '${config.timeZone}')`;
 const TS = (column) => `to_char(${LOCAL(column)}, 'YYYY-MM-DD HH24:MI:SS')`;
 const DAY = (column) => `to_char(${column}, 'YYYY-MM-DD')`; // solo para columnas DATE
-const CODE = (column) => `'CM-' || lpad(${column}::text, 3, '0')`;
 
 const rows = async (db, text, params = []) => (await db.query(text, params)).rows;
 const first = async (db, text, params = []) => (await rows(db, text, params))[0] ?? null;
+const cleanText = (value, max) => String(value ?? '').trim().slice(0, max) || null;
 
 function toJson(value) {
   if (value === null || value === undefined || value === '') return null;
@@ -157,8 +157,8 @@ async function seedDemoData() {
 
     const admin = await first(client, `SELECT id FROM usuarios WHERE email = 'admin@salcedo.gob.pe'`);
     const demo = await first(client, `
-      INSERT INTO comerciantes (dni_ruc, nombre, rubro_id, zona_id, categoria, tipo_comerciante, estado, usuario_creador_id)
-      VALUES ('20123456780', 'Comerciante Demo', $1, $2, 'permanente', 'permanente', 'activo', $3) RETURNING id`,
+      INSERT INTO comerciantes (dni_ruc, nombre, rubro_id, zona_id, tipo_comerciante, estado, usuario_creador_id)
+      VALUES ('20123456780', 'Comerciante Demo', $1, $2, 'permanente', 'activo', $3) RETURNING id`,
     [await rubroId('comida'), await zonaId('Mercado Central'), admin.id]);
     await client.query(
       `INSERT INTO puestos (comerciante_id, zona_id, codigo_puesto, direccion, metros_cuadrados, estado, latitud, longitud)
@@ -385,8 +385,8 @@ export async function getPendingDebt(db, period = currentPeriod(), maxMerchants 
   let total = 0;
   for (const merchant of merchants) {
     try {
-      const liquidation = await calculateLiquidation(db, merchant.id, period);
-      total += Number(liquidation.saldo || 0);
+      const liquidation = await calcularLiquidacion(db, merchant.id, period);
+      if (!liquidation.cobro_diario) total += Number(liquidation.saldo || 0);
     } catch {
       // sin tarifa vigente: no devenga
     }
@@ -517,7 +517,8 @@ export async function scoreMorosidadComerciante(db, comercianteId) {
 
   let deudaTotal = 0;
   try {
-    deudaTotal = Number((await calculateLiquidation(db, merchant.id)).saldo || 0);
+    const liquidation = await calcularLiquidacion(db, merchant.id);
+    deudaTotal = liquidation.cobro_diario ? 0 : Number(liquidation.saldo || 0);
   } catch {
     deudaTotal = 0;
   }
@@ -630,7 +631,7 @@ export async function getReportRows(db, options = {}) {
   if (options.cobrador_id) { params.push(Number(options.cobrador_id)); conditions.push(`co.cobrador_id = $${params.length}`); }
   const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
   return rows(db, `
-    SELECT co.id, ${PAYMENT_DAY} AS fecha, ${CODE('c.id')} AS comerciante_codigo,
+    SELECT co.id, ${PAYMENT_DAY} AS fecha, c.codigo AS comerciante_codigo,
       c.nombre AS comerciante, r.nombre AS rubro, z.nombre AS zona, u.nombre AS cobrador,
       co.monto, co.metodo_pago, co.estado, cp.numero_correlativo AS comprobante
     FROM transacciones co JOIN comerciantes c ON c.id = co.comerciante_id
@@ -658,11 +659,11 @@ export async function buildReportCsv(db, options = {}) {
 // ---------------------------------------------------------------------------
 
 export async function getRubros(db) {
-  return rows(db, 'SELECT id, nombre, descripcion FROM rubros WHERE activo ORDER BY nombre ASC');
+  return rows(db, 'SELECT id, codigo, nombre, descripcion FROM rubros WHERE activo ORDER BY nombre ASC');
 }
 
 export async function getZonas(db) {
-  return rows(db, 'SELECT id, nombre, descripcion FROM zonas ORDER BY nombre ASC');
+  return rows(db, 'SELECT id, codigo, nombre, descripcion FROM zonas ORDER BY nombre ASC');
 }
 
 export async function insertZona(db, payload) {
@@ -673,7 +674,7 @@ export async function insertZona(db, payload) {
   const duplicate = await first(db, 'SELECT id FROM zonas WHERE lower(btrim(nombre)) = lower(btrim($1))', [nombre]);
   if (duplicate) throw new Error('Ya existe una zona con ese nombre');
 
-  return first(db, 'INSERT INTO zonas (nombre, descripcion) VALUES ($1, $2) RETURNING id, nombre, descripcion', [nombre, descripcion]);
+  return first(db, 'INSERT INTO zonas (nombre, descripcion) VALUES ($1, $2) RETURNING id, codigo, nombre, descripcion', [nombre, descripcion]);
 }
 
 export async function updateZona(db, id, payload) {
@@ -687,7 +688,7 @@ export async function updateZona(db, id, payload) {
   const duplicate = await first(db, 'SELECT id FROM zonas WHERE lower(btrim(nombre)) = lower(btrim($1)) AND id <> $2', [nombre, Number(id)]);
   if (duplicate) throw new Error('Ya existe una zona con ese nombre');
 
-  return first(db, 'UPDATE zonas SET nombre = $1, descripcion = $2 WHERE id = $3 RETURNING id, nombre, descripcion', [nombre, descripcion, Number(id)]);
+  return first(db, 'UPDATE zonas SET nombre = $1, descripcion = $2 WHERE id = $3 RETURNING id, codigo, nombre, descripcion', [nombre, descripcion, Number(id)]);
 }
 
 export async function deleteZona(db, id) {
@@ -782,12 +783,12 @@ export async function updateComerciantePreferencias(db, comercianteId, payload) 
 // ---------------------------------------------------------------------------
 
 const COMERCIANTE_COLUMNS = `
-  c.id, c.dni_ruc, c.nombre, COALESCE(c.categoria, c.tipo_comerciante) AS categoria, c.tipo_comerciante,
+  c.id, c.correlativo, c.codigo, c.dni_ruc, c.nombre, c.tipo_comerciante AS categoria, c.tipo_comerciante,
   c.estado, c.estado_empadronamiento, ${TS('c.creado_en')} AS fecha_registro,
   c.rubro_id, c.zona_id, r.nombre AS rubro, z.nombre AS zona,
-  ${CODE('c.id')} AS codigo, 'SISREC://comerciante/' || c.id AS qr_code`;
+  'SISREC://comerciante/' || c.codigo AS qr_code`;
 
-async function findComerciante(db, id) {
+export async function findComerciante(db, id) {
   return first(db, `
     SELECT ${COMERCIANTE_COLUMNS}
     FROM comerciantes c JOIN rubros r ON r.id = c.rubro_id JOIN zonas z ON z.id = c.zona_id
@@ -804,7 +805,8 @@ function comercianteFilter(options, params) {
   if (search) {
     params.push(`%${search}%`);
     const n = `$${params.length}`;
-    conditions.push(`(c.nombre ILIKE ${n} OR c.dni_ruc ILIKE ${n} OR c.id::text LIKE ${n} OR (${CODE('c.id')}) ILIKE ${n})`);
+    conditions.push(`(c.nombre ILIKE ${n} OR c.dni_ruc ILIKE ${n} OR c.codigo ILIKE ${n} OR lpad(c.correlativo::text, 4, '0') LIKE ${n}
+      OR EXISTS (SELECT 1 FROM comerciante_codigos_historicos h WHERE h.comerciante_id = c.id AND h.codigo ILIKE ${n}))`);
   }
   if (rubroId) { params.push(rubroId); conditions.push(`c.rubro_id = $${params.length}`); }
   if (zonaId) { params.push(zonaId); conditions.push(`c.zona_id = $${params.length}`); }
@@ -857,13 +859,13 @@ export async function insertComerciante(db, payload) {
   const nombre = String(payload.nombre || '').trim();
   const rubroId = Number(payload.rubro_id);
   const zonaId = Number(payload.zona_id);
-  const categoria = String(payload.categoria || payload.tipo_comerciante || 'permanente').trim();
+  // "categoria" se acepta como sinónimo antiguo de tipo_comerciante.
   const tipoComerciante = String(payload.tipo_comerciante || payload.categoria || 'permanente').trim();
   const estado = String(payload.estado || 'activo').trim();
   const usuarioCreador = Number(payload.usuario_creador || 1);
 
   if (!dniRuc || !nombre || !rubroId || !zonaId) throw new Error('DNI/RUC, nombre, rubro y zona son obligatorios');
-  if (!TIPOS_COMERCIANTE.includes(tipoComerciante) || !TIPOS_COMERCIANTE.includes(categoria)) throw new Error('Tipo de comerciante no válido');
+  if (!TIPOS_COMERCIANTE.includes(tipoComerciante)) throw new Error('Tipo de comerciante no válido');
   if (!ESTADOS_COMERCIANTE.includes(estado)) throw new Error('Estado de comerciante no válido');
 
   await ensureUniqueActiveDocument(db, dniRuc);
@@ -877,25 +879,28 @@ export async function insertComerciante(db, payload) {
   if (dormant) {
     await db.query(`
       UPDATE comerciantes
-      SET nombre = $1, rubro_id = $2, zona_id = $3, categoria = $4, tipo_comerciante = $5, estado = $6,
-          usuario_creador_id = $7, fecha_baja = NULL
-      WHERE id = $8`, [nombre, rubroId, zonaId, categoria, tipoComerciante, estado, creatorId, dormant.id]);
+      SET nombre = $1, rubro_id = $2, zona_id = $3, tipo_comerciante = $4, estado = $5,
+          usuario_creador_id = $6, fecha_baja = NULL
+      WHERE id = $7`, [nombre, rubroId, zonaId, tipoComerciante, estado, creatorId, dormant.id]);
     id = dormant.id;
   } else {
     const created = await first(db, `
-      INSERT INTO comerciantes (dni_ruc, nombre, rubro_id, zona_id, categoria, tipo_comerciante, estado, usuario_creador_id)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id`,
-    [dniRuc, nombre, rubroId, zonaId, categoria, tipoComerciante, estado, creatorId]);
+      INSERT INTO comerciantes (dni_ruc, nombre, rubro_id, zona_id, tipo_comerciante, estado, usuario_creador_id)
+      VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id`,
+    [dniRuc, nombre, rubroId, zonaId, tipoComerciante, estado, creatorId]);
     id = created.id;
   }
 
+  const { codigo, correlativo } = await first(db, 'SELECT codigo, correlativo FROM comerciantes WHERE id = $1', [id]);
   return {
     id,
+    correlativo,
+    codigo,
     dni_ruc: dniRuc,
     nombre,
     rubro_id: rubroId,
     zona_id: zonaId,
-    categoria,
+    categoria: tipoComerciante,
     tipo_comerciante: tipoComerciante,
     estado,
     usuario_creador: usuarioCreador
@@ -910,24 +915,21 @@ export async function updateComerciante(db, id, payload) {
   const nombre = payload.nombre === undefined ? current.nombre : String(payload.nombre).trim();
   const rubroId = payload.rubro_id === undefined ? current.rubro_id : Number(payload.rubro_id);
   const zonaId = payload.zona_id === undefined ? current.zona_id : Number(payload.zona_id);
-  const categoria = payload.categoria === undefined
-    ? (payload.tipo_comerciante === undefined ? current.categoria : String(payload.tipo_comerciante).trim())
-    : String(payload.categoria).trim();
   const tipoComerciante = payload.tipo_comerciante === undefined
     ? (payload.categoria === undefined ? current.tipo_comerciante : String(payload.categoria).trim())
     : String(payload.tipo_comerciante).trim();
   const estado = payload.estado === undefined ? current.estado : String(payload.estado).trim();
 
   if (!nombre || !rubroId || !zonaId) throw new Error('Nombre, rubro y zona son obligatorios');
-  if (!TIPOS_COMERCIANTE.includes(tipoComerciante) || !TIPOS_COMERCIANTE.includes(categoria)) throw new Error('Tipo de comerciante no válido');
+  if (!TIPOS_COMERCIANTE.includes(tipoComerciante)) throw new Error('Tipo de comerciante no válido');
   if (!ESTADOS_COMERCIANTE.includes(estado)) throw new Error('Estado de comerciante no válido');
 
   await ensureUniqueActiveDocument(db, dniRuc, Number(id));
 
   await db.query(`
     UPDATE comerciantes
-    SET dni_ruc = $1, nombre = $2, rubro_id = $3, zona_id = $4, categoria = $5, tipo_comerciante = $6, estado = $7
-    WHERE id = $8`, [dniRuc, nombre, rubroId, zonaId, categoria, tipoComerciante, estado, Number(id)]);
+    SET dni_ruc = $1, nombre = $2, rubro_id = $3, zona_id = $4, tipo_comerciante = $5, estado = $6
+    WHERE id = $7`, [dniRuc, nombre, rubroId, zonaId, tipoComerciante, estado, Number(id)]);
 
   return findComerciante(db, id);
 }
@@ -946,46 +948,114 @@ export async function deactivateComerciante(db, id) {
 // ---------------------------------------------------------------------------
 
 const PUESTO_SELECT = `
-  SELECT p.id, p.comerciante_id, c.nombre AS comerciante,
+  SELECT p.id, p.comerciante_id, c.nombre AS comerciante, c.estado AS comerciante_estado,
          p.zona_id, z.nombre AS zona, p.direccion, p.metros_cuadrados, p.estado,
          p.codigo_puesto AS codigo, p.latitud, p.longitud,
-         COALESCE(c.categoria, c.tipo_comerciante) AS categoria, c.tipo_comerciante,
-         0 AS saldo_pendiente
+         c.tipo_comerciante AS categoria, c.tipo_comerciante, c.codigo AS comerciante_codigo
   FROM puestos p
-  JOIN comerciantes c ON c.id = p.comerciante_id
+  LEFT JOIN comerciantes c ON c.id = p.comerciante_id
   JOIN zonas z ON z.id = p.zona_id`;
 
-export async function getPuestos(db) {
-  return rows(db, `${PUESTO_SELECT} ORDER BY p.id DESC`);
+// Estado de pago de cada puesto en el periodo. La deuda es del comerciante: se calcula con
+// calcularLiquidacion (la misma de Pagos) y se muestra en su puesto principal, el de menor id
+// entre los cobrables (mismo criterio que findMerchantPost); sus otros puestos salen "incluido".
+async function withPaymentStatus(db, puestos, periodo = currentPeriod()) {
+  const merchantIds = [...new Set(puestos.filter((p) => p.comerciante_id).map((p) => Number(p.comerciante_id)))];
+  const principalPorComerciante = new Map(
+    merchantIds.length
+      ? (await rows(db, `
+          SELECT DISTINCT ON (comerciante_id) comerciante_id, id, codigo_puesto
+          FROM puestos
+          WHERE comerciante_id = ANY($1::bigint[]) AND estado NOT IN ('disponible', 'inactivo')
+          ORDER BY comerciante_id, id`, [merchantIds])).map((row) => [Number(row.comerciante_id), row])
+      : []
+  );
+
+  const liquidaciones = new Map();
+  for (const merchantId of principalPorComerciante.keys()) {
+    try {
+      liquidaciones.set(merchantId, await calcularLiquidacion(db, merchantId, periodo));
+    } catch (error) {
+      liquidaciones.set(merchantId, { error: error.message });
+    }
+  }
+
+  return puestos.map((puesto) => {
+    const result = { ...puesto, periodo, saldo_pendiente: 0, monto_total: 0, monto_pagado: 0, cobro_diario: false, puesto_principal: null, motivo: null };
+    if (puesto.estado === 'inactivo') return { ...result, estado_pago: 'inactivo' };
+    if (!puesto.comerciante_id) return { ...result, estado_pago: puesto.estado === 'reservado' ? 'reservado' : 'libre' };
+    // Ferial ausente: el puesto queda disponible pero conserva a su titular; no devenga.
+    if (puesto.estado === 'disponible') return { ...result, estado_pago: 'ausente' };
+
+    const principal = principalPorComerciante.get(Number(puesto.comerciante_id));
+    if (principal && Number(principal.id) !== Number(puesto.id)) {
+      return { ...result, estado_pago: 'incluido', puesto_principal: principal.codigo_puesto };
+    }
+    const liquidacion = liquidaciones.get(Number(puesto.comerciante_id));
+    if (!liquidacion || liquidacion.error) return { ...result, estado_pago: 'sin_tarifa', motivo: liquidacion?.error || null };
+    const montos = {
+      saldo_pendiente: Number(liquidacion.saldo || 0),
+      monto_total: Number(liquidacion.monto_total || 0),
+      monto_pagado: Number(liquidacion.monto_pagado || 0),
+      cobro_diario: Boolean(liquidacion.cobro_diario)
+    };
+    if (liquidacion.no_devengo) return { ...result, ...montos, estado_pago: 'no_devenga', motivo: liquidacion.motivo || null };
+    return { ...result, ...montos, estado_pago: montos.saldo_pendiente > 0 ? 'pendiente' : 'pagado' };
+  });
+}
+
+// conPagos: false cuando solo hace falta contar o ubicar puestos (evita recorrer las liquidaciones).
+export async function getPuestos(db, { incluirInactivos = false, conPagos = true, periodo } = {}) {
+  const puestos = await rows(db, `${PUESTO_SELECT} ${incluirInactivos ? '' : `WHERE p.estado <> 'inactivo'`} ORDER BY p.id DESC`);
+  return conPagos ? withPaymentStatus(db, puestos, periodo) : puestos;
 }
 
 async function findPuesto(db, id) {
-  return first(db, `${PUESTO_SELECT} WHERE p.id = $1`, [Number(id)]);
+  const puesto = await first(db, `${PUESTO_SELECT} WHERE p.id = $1`, [Number(id)]);
+  return puesto ? (await withPaymentStatus(db, [puesto]))[0] : null;
+}
+
+// undefined = no se envió; null, '' o 0 = sin titular (puesto libre).
+function parseComercianteId(value) {
+  if (value === undefined) return undefined;
+  if (value === null || value === '' || Number(value) === 0) return null;
+  const id = Number(value);
+  if (!Number.isInteger(id) || id < 0) throw new Error('Comerciante no válido');
+  return id;
+}
+
+async function validatePuestoPlacement(db, { comercianteId, zonaId, direccion, estado, excludeId = null }) {
+  if (!['ocupado', 'disponible', 'reservado', 'inactivo'].includes(estado)) throw new Error('Estado de puesto no válido');
+  if (estado === 'ocupado' && !comercianteId) throw new Error('Un puesto ocupado necesita un comerciante titular');
+  if (!(await first(db, 'SELECT id FROM zonas WHERE id = $1', [zonaId]))) throw new Error('La zona elegida no existe');
+  if (comercianteId) {
+    const merchant = await first(db, `SELECT id FROM comerciantes WHERE id = $1 AND estado <> 'inactivo'`, [comercianteId]);
+    if (!merchant) throw new Error('El comerciante no existe o está inactivo');
+  }
+  // Un mismo lugar (zona + dirección) no puede tener puestos activos de titulares distintos.
+  const duplicate = await first(db, `
+    SELECT id FROM puestos
+    WHERE zona_id = $1 AND lower(btrim(direccion)) = lower(btrim($2)) AND estado <> 'inactivo'
+      AND comerciante_id IS DISTINCT FROM $3 AND ($4::bigint IS NULL OR id <> $4)`,
+  [zonaId, direccion, comercianteId, excludeId]);
+  if (duplicate) throw new Error('El puesto físico ya está asignado a otro comerciante');
 }
 
 export async function insertPuesto(db, payload) {
-  const comercianteId = Number(payload.comerciante_id);
+  const comercianteId = parseComercianteId(payload.comerciante_id) ?? null;
   const zonaId = Number(payload.zona_id);
   const direccion = String(payload.direccion || '').trim();
   const metros = Number(payload.metros_cuadrados);
-  const estado = String(payload.estado || 'ocupado').trim();
+  const estado = String(payload.estado || (comercianteId ? 'ocupado' : 'disponible')).trim();
   const codigo = String(payload.codigo_puesto || payload.codigoPuesto || '').trim() || null;
   const latitud = Number(payload.latitud);
   const longitud = Number(payload.longitud);
 
-  if (!comercianteId || !zonaId || !direccion || !Number.isFinite(metros) || metros <= 0) {
-    throw new Error('Comerciante, zona, dirección y metros cuadrados válidos son obligatorios');
+  if (!zonaId || !direccion || !Number.isFinite(metros) || metros <= 0) {
+    throw new Error('Zona, dirección y metros cuadrados válidos son obligatorios');
   }
-  if (!['ocupado', 'disponible', 'reservado'].includes(estado)) throw new Error('Estado de puesto no válido');
-
-  const merchant = await first(db, `SELECT id FROM comerciantes WHERE id = $1 AND estado <> 'inactivo'`, [comercianteId]);
-  if (!merchant) throw new Error('El comerciante no existe o está inactivo');
-
-  const duplicate = await first(db, `
-    SELECT id FROM puestos
-    WHERE zona_id = $1 AND lower(btrim(direccion)) = lower(btrim($2)) AND comerciante_id <> $3 AND estado <> 'inactivo'`,
-  [zonaId, direccion, comercianteId]);
-  if (duplicate) throw new Error('El puesto físico ya está asignado a otro comerciante');
+  if (estado === 'inactivo') throw new Error('Estado de puesto no válido');
+  await validatePuestoPlacement(db, { comercianteId, zonaId, direccion, estado });
 
   const next = await first(db, `SELECT nextval(pg_get_serial_sequence('puestos', 'id')) AS id`);
   const finalCode = codigo || `S-${String(next.id).padStart(3, '0')}`;
@@ -1002,35 +1072,49 @@ export async function insertPuesto(db, payload) {
   return findPuesto(db, next.id);
 }
 
+// Si se envía comerciante_id sin estado: con titular pasa a ocupado; con null queda libre (disponible).
 export async function updatePuesto(db, id, payload) {
   const puestoId = Number(id);
-  const current = await findPuesto(db, puestoId);
+  const current = await first(db, 'SELECT * FROM puestos WHERE id = $1', [puestoId]);
   if (!current) throw new Error('Puesto no encontrado');
 
+  const requested = parseComercianteId(payload.comerciante_id);
+  const comercianteId = requested === undefined ? current.comerciante_id : requested;
   const zonaId = Number(payload.zona_id ?? current.zona_id);
   const direccion = String(payload.direccion ?? current.direccion ?? '').trim();
-  const metros = Number(payload.metros_cuadrados ?? current.metros_cuadrados);
-  const estado = String(payload.estado ?? current.estado).trim();
+  // Puestos del padrón ferial pueden no tener metraje todavía: se respeta mientras no se envíe uno.
+  const metros = payload.metros_cuadrados === undefined ? current.metros_cuadrados : Number(payload.metros_cuadrados);
+  const estado = String(payload.estado ?? (requested === undefined ? current.estado : requested ? 'ocupado' : 'disponible')).trim();
   const latitud = Number(payload.latitud ?? current.latitud);
   const longitud = Number(payload.longitud ?? current.longitud);
 
-  if (!zonaId || !direccion || !Number.isFinite(metros) || metros <= 0) {
+  if (!zonaId || !direccion || (metros !== null && (!Number.isFinite(metros) || metros <= 0))) {
     throw new Error('Zona, dirección y metros cuadrados válidos son obligatorios');
   }
-  if (!['ocupado', 'disponible', 'reservado', 'inactivo'].includes(estado)) throw new Error('Estado de puesto no válido');
+  await validatePuestoPlacement(db, { comercianteId, zonaId, direccion, estado, excludeId: puestoId });
 
   await db.query(`
     UPDATE puestos
-    SET zona_id = $1, direccion = $2, metros_cuadrados = $3, estado = $4, latitud = $5, longitud = $6
-    WHERE id = $7`,
-  [zonaId, direccion, metros, estado, Number.isFinite(latitud) ? latitud : null, Number.isFinite(longitud) ? longitud : null, puestoId]);
+    SET comerciante_id = $1, zona_id = $2, direccion = $3, metros_cuadrados = $4, estado = $5, latitud = $6, longitud = $7
+    WHERE id = $8`,
+  [comercianteId, zonaId, direccion, metros, estado, Number.isFinite(latitud) ? latitud : null, Number.isFinite(longitud) ? longitud : null, puestoId]);
 
+  return findPuesto(db, puestoId);
+}
+
+// Deja el puesto físico sin titular para asignarlo a otro comerciante; los cobros pasados no cambian.
+export async function liberarPuesto(db, id) {
+  const puestoId = Number(id);
+  const current = await first(db, 'SELECT estado FROM puestos WHERE id = $1', [puestoId]);
+  if (!current) throw new Error('Puesto no encontrado');
+  if (current.estado === 'inactivo') throw new Error('El puesto está dado de baja');
+  await db.query(`UPDATE puestos SET comerciante_id = NULL, estado = 'disponible' WHERE id = $1`, [puestoId]);
   return findPuesto(db, puestoId);
 }
 
 export async function deactivatePuesto(db, id) {
   const puestoId = Number(id);
-  if (!(await findPuesto(db, puestoId))) throw new Error('Puesto no encontrado');
+  if (!(await first(db, 'SELECT id FROM puestos WHERE id = $1', [puestoId]))) throw new Error('Puesto no encontrado');
   await db.query(`UPDATE puestos SET estado = 'inactivo' WHERE id = $1`, [puestoId]);
   return findPuesto(db, puestoId);
 }
@@ -1132,12 +1216,35 @@ async function findMerchantPost(db, merchantId) {
     ORDER BY id LIMIT 1`, [merchantId]);
 }
 
-export async function calculateLiquidation(db, comercianteId, periodo) {
-  periodo = periodo || currentPeriod();
+// Monto de un día de la tarifa: la diaria tal cual; la semanal entre 7; la mensual (o por m²) entre los días del mes.
+function dailyTariffAmount(tarifa, dia, metros = 1) {
+  const fijo = Number(tarifa.monto_fijo || 0);
+  const variable = Number(tarifa.monto_variable || 0) * (tarifa.unidad_medida === 'metro_cuadrado' ? metros : 1);
+  const total = fijo + variable;
+  if (tarifa.unidad_medida === 'diaria') return Number(total.toFixed(2));
+  if (tarifa.unidad_medida === 'semanal') return Number((total / 7).toFixed(2));
+  return Number((total / periodMultiplier(dia.slice(0, 7), 'diaria')).toFixed(2));
+}
+
+// Tarifa vigente del rubro en el periodo; la de la zona del comerciante tiene prioridad sobre la general.
+async function findApplicableTariff(db, merchant, periodo) {
+  return first(db, `
+    ${TARIFA_SELECT}
+    WHERE t.rubro_id = $1 AND t.activo
+      AND (t.zona_id IS NULL OR t.zona_id = $2)
+      AND t.vigencia_inicio <= $3::date AND (t.vigencia_fin IS NULL OR t.vigencia_fin >= $3::date)
+    ORDER BY (t.zona_id IS NOT NULL) DESC, t.vigencia_inicio DESC, t.id DESC LIMIT 1`,
+  [merchant.rubro_id, merchant.zona_id, `${periodo}-01`]);
+}
+
+// Eventual: no tiene deuda mensual; se le cobra un día de la tarifa de su rubro el día en que el cobrador
+// lo encuentra (dia, AAAA-MM-DD en Lima; por omisión hoy). En otro periodo no devenga.
+export async function calcularLiquidacion(db, comercianteId, periodo, { dia = null } = {}) {
+  periodo = periodo || (dia ? dia.slice(0, 7) : currentPeriod());
   const merchant = await findComerciante(db, comercianteId);
   if (!merchant) throw new Error('Comerciante no encontrado');
 
-  const merchantType = String(merchant.tipo_comerciante || merchant.categoria || '').trim().toLowerCase();
+  const merchantType = String(merchant.tipo_comerciante || '').trim().toLowerCase();
   const pendingRegularization = String(merchant.estado_empadronamiento || '').toUpperCase() === 'PENDIENTE_REGULARIZACION';
   const puesto = await findMerchantPost(db, merchant.id);
 
@@ -1159,20 +1266,38 @@ export async function calculateLiquidation(db, comercianteId, periodo) {
   if (pendingRegularization && (!puesto || puesto.metros_cuadrados === null || puesto.metros_cuadrados === undefined)) {
     return noDevengo('pendiente_regularizacion_sin_metraje', { metros_cuadrados: null, estado: 'pendiente_regularizacion' });
   }
-  if (merchantType === 'eventual') return noDevengo('eventual');
+  if (merchantType === 'eventual') {
+    const day = dia || todayInLima();
+    if (day.slice(0, 7) !== periodo) return noDevengo('eventual');
+    const tarifa = await findApplicableTariff(db, merchant, periodo);
+    if (!tarifa) throw new Error('No existe una tarifa vigente para el rubro y periodo indicado');
+    const montoDia = dailyTariffAmount(tarifa, day, Number(puesto?.metros_cuadrados || 1));
+    const paidToday = await first(db, `
+      SELECT COALESCE(SUM(monto), 0) AS pagado FROM transacciones
+      WHERE comerciante_id = $1 AND estado = 'confirmado'
+        AND to_char(${LOCAL('fecha_cobro_cliente')}, 'YYYY-MM-DD') = $2`, [merchant.id, day]);
+    const pagadoDia = Number(paidToday.pagado);
+    const saldoDia = Number(Math.max(montoDia - pagadoDia, 0).toFixed(2));
+    return {
+      comerciante: merchant,
+      tarifa,
+      periodo,
+      dia: day,
+      cobro_diario: true,
+      metros_cuadrados: Number(puesto?.metros_cuadrados || 1),
+      monto_total: montoDia,
+      monto_pagado: pagadoDia,
+      saldo: saldoDia,
+      estado: saldoDia === 0 ? 'pagado' : 'pendiente',
+      vencida: false,
+      no_devengo: false
+    };
+  }
   if (merchantType === 'ferial' && !puesto) {
     return noDevengo('ferial_sin_asistencia', { metros_cuadrados: 0 });
   }
 
-  const periodStart = `${periodo}-01`;
-  const tariffs = await rows(db, `
-    ${TARIFA_SELECT}
-    WHERE t.rubro_id = $1 AND t.activo
-      AND (t.zona_id IS NULL OR t.zona_id = $2)
-      AND t.vigencia_inicio <= $3::date AND (t.vigencia_fin IS NULL OR t.vigencia_fin >= $3::date)
-    ORDER BY (t.zona_id IS NOT NULL) DESC, t.vigencia_inicio DESC, t.id DESC LIMIT 1`,
-  [merchant.rubro_id, merchant.zona_id, periodStart]);
-  const tarifa = tariffs[0];
+  const tarifa = await findApplicableTariff(db, merchant, periodo);
   if (!tarifa) throw new Error('No existe una tarifa vigente para el rubro y periodo indicado');
 
   const metros = Number(puesto?.metros_cuadrados || 1);
@@ -1209,22 +1334,40 @@ export async function getCobros(db) {
   return rows(db, `
     SELECT co.id, co.comerciante_id, c.nombre AS comerciante, co.tarifa_id, co.cobrador_id,
            co.monto, co.concepto, co.metodo_pago, co.codigo_operacion, co.observaciones,
-           co.estado, ${PAYMENT_DAY} AS fecha_cobro, cp.numero_correlativo AS comprobante
+           CASE WHEN ob.estado = 'pendiente' THEN 'observado' ELSE co.estado END AS estado, ob.motivo AS observacion,
+           ${PAYMENT_DAY} AS fecha_cobro, cp.numero_correlativo AS comprobante
     FROM transacciones co
     JOIN comerciantes c ON c.id = co.comerciante_id
     LEFT JOIN comprobantes cp ON cp.id = co.comprobante_id
+    LEFT JOIN cobros_observados ob ON ob.transaccion_id = co.id
     ORDER BY co.id DESC`);
 }
 
-export async function getMerchantPortal(db, identifier) {
-  const value = String(identifier || '').trim();
-  const code = value.toUpperCase().replace(/^CM-/, '');
-  const merchant = await first(db, `
-    SELECT c.id, c.dni_ruc, c.nombre, COALESCE(c.categoria, c.tipo_comerciante) AS categoria, c.tipo_comerciante, c.estado,
-           ${TS('c.creado_en')} AS fecha_registro, ${CODE('c.id')} AS codigo, r.nombre AS rubro, z.nombre AS zona
+/**
+ * Encuentra al comerciante por lo que la gente tiene a mano: su código actual (COM-0004-…), un código
+ * anterior impreso en un QR o recibo (CM-004 o un COM-… previo), el correlativo (0004, CM-004) o el DNI/RUC.
+ * Devuelve el id interno o null.
+ */
+export async function buscarComerciantePorCodigo(db, identifier) {
+  const value = String(identifier || '').trim().replace(/^SISREC:\/\/comerciante\//i, '').toUpperCase();
+  if (!value) return null;
+  const correlativo = value.match(/^(?:CM-?|COM-)?0*(\d{1,7})$/)?.[1];
+  const found = await first(db, `
+    SELECT c.id FROM comerciantes c
+    WHERE c.codigo = $1 OR c.dni_ruc = $1 OR c.correlativo = $2
+       OR c.id IN (SELECT h.comerciante_id FROM comerciante_codigos_historicos h WHERE upper(h.codigo) = $1)
+    ORDER BY (c.codigo = $1) DESC, (c.estado <> 'inactivo') DESC
+    LIMIT 1`, [value, Number(correlativo) || 0]);
+  return found ? Number(found.id) : null;
+}
+
+export async function obtenerPortalComerciante(db, identifier) {
+  const id = await buscarComerciantePorCodigo(db, identifier);
+  const merchant = id && await first(db, `
+    SELECT c.id, c.correlativo, c.codigo, c.dni_ruc, c.nombre, c.tipo_comerciante AS categoria, c.tipo_comerciante, c.estado,
+           ${TS('c.creado_en')} AS fecha_registro, r.nombre AS rubro, z.nombre AS zona
     FROM comerciantes c JOIN rubros r ON r.id = c.rubro_id JOIN zonas z ON z.id = c.zona_id
-    WHERE c.estado <> 'inactivo' AND (c.dni_ruc = $1 OR c.id = $2)
-    LIMIT 1`, [value, Number(code) || 0]);
+    WHERE c.id = $1 AND c.estado <> 'inactivo'`, [id]);
   if (!merchant) throw new Error('DNI o código de comerciante no encontrado');
 
   const payments = await rows(db, `
@@ -1232,7 +1375,7 @@ export async function getMerchantPortal(db, identifier) {
            cp.numero_correlativo AS comprobante
     FROM transacciones co LEFT JOIN comprobantes cp ON cp.id = co.comprobante_id
     WHERE co.comerciante_id = $1 ORDER BY co.fecha_cobro_cliente DESC`, [merchant.id]);
-  const liquidation = await calculateLiquidation(db, merchant.id);
+  const liquidation = await calcularLiquidacion(db, merchant.id);
   return { comerciante: merchant, pagos: payments, deuda: liquidation };
 }
 
@@ -1265,9 +1408,11 @@ function createTransactionHash({ comercianteId, cobradorId, monto, concepto, per
 
 // Comprobante, transacción, notificación y auditoría se graban juntos o no se graba nada.
 // Si db ya es una conexión dentro de una transacción (PoolClient) se reutiliza.
-export async function insertCobro(db, payload, { audit = null } = {}) {
+// allowExcess (cobros offline): el dinero ya se recibió en campo, así que un cobro que excede el saldo
+// o cae en un periodo sin devengo no se rechaza: se registra y queda "observado" para revisión manual.
+export async function registrarCobro(db, payload, { audit = null, allowExcess = false } = {}) {
   if (typeof db?.release !== 'function') {
-    return withTransaction((client) => insertCobro(client, payload, { audit }));
+    return withTransaction((client) => registrarCobro(client, payload, { audit, allowExcess }));
   }
 
   const comercianteId = Number(payload.comerciante_id);
@@ -1301,8 +1446,21 @@ export async function insertCobro(db, payload, { audit = null } = {}) {
     'SELECT id FROM transacciones WHERE codigo_operacion = $1 OR hash_transaccion = $2', [uniqueCode, hashTransaccion]);
   if (duplicate) throw new Error('Ya existe un cobro registrado con ese código de operación o hash transaccional');
 
-  const liquidation = await calculateLiquidation(db, comercianteId, payload.periodo);
-  if (monto > liquidation.saldo) throw new Error(`El monto excede el saldo pendiente de S/ ${liquidation.saldo.toFixed(2)}`);
+  const clientDate = payload.fecha_cobro && !Number.isNaN(Date.parse(payload.fecha_cobro)) ? new Date(payload.fecha_cobro) : new Date();
+  const liquidation = await calcularLiquidacion(db, comercianteId, payload.periodo, { dia: todayInLima(clientDate) });
+  let observacion = null;
+  let tarifaId = liquidation.tarifa?.id;
+  if (monto > liquidation.saldo) {
+    if (!allowExcess) throw new Error(`El monto excede el saldo pendiente de S/ ${liquidation.saldo.toFixed(2)}`);
+    observacion = liquidation.no_devengo
+      ? `Cobro offline en un periodo sin devengo (${liquidation.motivo})`
+      : `Cobro offline de S/ ${monto.toFixed(2)} excede el saldo pendiente de S/ ${liquidation.saldo.toFixed(2)}`;
+    if (!tarifaId) {
+      const tarifa = await findApplicableTariff(db, liquidation.comerciante, liquidation.periodo);
+      if (!tarifa) throw new Error('No existe una tarifa vigente para el rubro y periodo indicado');
+      tarifaId = tarifa.id;
+    }
+  }
 
   const collector = await first(db, 'SELECT id FROM usuarios WHERE id = $1', [cobradorId]);
   if (!collector) throw new Error('El cobrador indicado no existe');
@@ -1311,14 +1469,19 @@ export async function insertCobro(db, payload, { audit = null } = {}) {
   const number = `R-${String(sequence.n).padStart(6, '0')}`;
   const comprobante = await first(db, `INSERT INTO comprobantes (numero_correlativo, tipo) VALUES ($1, 'recibo') RETURNING id`, [number]);
 
-  const clientDate = payload.fecha_cobro && !Number.isNaN(Date.parse(payload.fecha_cobro)) ? new Date(payload.fecha_cobro) : new Date();
   const cobro = await first(db, `
     INSERT INTO transacciones
       (comerciante_id, tarifa_id, cobrador_id, comprobante_id, monto, concepto, metodo_pago, codigo_operacion,
        hash_transaccion, observaciones, estado, fecha_cobro_cliente)
     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'confirmado', $11) RETURNING id`,
-  [comercianteId, liquidation.tarifa?.id, cobradorId, comprobante.id, monto, concepto, metodoPago, uniqueCode,
+  [comercianteId, tarifaId, cobradorId, comprobante.id, monto, concepto, metodoPago, uniqueCode,
     hashTransaccion, observaciones || null, clientDate]);
+
+  if (observacion) {
+    await db.query(`
+      INSERT INTO cobros_observados (transaccion_id, motivo, saldo_al_sincronizar, monto, device_id)
+      VALUES ($1, $2, $3, $4, $5)`, [cobro.id, observacion, liquidation.saldo, monto, cleanText(payload.device_id, 100)]);
+  }
 
   await createNotification(db, {
     comerciante_id: comercianteId,
@@ -1337,8 +1500,9 @@ export async function insertCobro(db, payload, { audit = null } = {}) {
     codigo_operacion: uniqueCode,
     hash_transaccion: hashTransaccion,
     observaciones,
-    estado: 'confirmado',
-    saldo_restante: Number((liquidation.saldo - monto).toFixed(2))
+    estado: observacion ? 'observado' : 'confirmado',
+    observacion,
+    saldo_restante: Number(Math.max(liquidation.saldo - monto, 0).toFixed(2))
   };
 
   if (audit) {
@@ -1346,7 +1510,7 @@ export async function insertCobro(db, payload, { audit = null } = {}) {
       ...audit,
       usuarioId: audit.usuarioId ?? cobradorId,
       entidad: 'cobros',
-      detalle: audit.detalle || `Cobro ${number} por S/ ${monto.toFixed(2)} al comerciante ${comercianteId}`,
+      detalle: audit.detalle || `Cobro ${number} por S/ ${monto.toFixed(2)} al comerciante ${comercianteId}${observacion ? ` (observado: ${observacion})` : ''}`,
       recursoId: result.id,
       payloadNuevo: result
     });
@@ -1360,13 +1524,23 @@ async function logSyncQueue({ deviceId, hash, payload, estado, error }) {
       INSERT INTO colas_sincronizacion (device_id, entidad, hash_transaccion, payload, estado, intentos, error, procesado_en)
       VALUES ($1, 'transacciones', $2, $3::jsonb, $4, 1, $5, now())
       ON CONFLICT (hash_transaccion) DO UPDATE
-        SET intentos = colas_sincronizacion.intentos + 1, error = EXCLUDED.error, procesado_en = now()`,
+        SET intentos = colas_sincronizacion.intentos + 1, estado = EXCLUDED.estado, error = EXCLUDED.error, procesado_en = now()`,
     [deviceId || 'api', hash, JSON.stringify(payload), estado, error || null]);
   } catch (logError) {
     console.error('No se pudo registrar la cola de sincronización:', logError.message);
   }
 }
 
+// Un error de datos (comerciante inexistente, método inválido, restricción de la base) no se arregla
+// reintentando: es "permanente". Una caída de conexión o un fallo interno sí puede reintentarse.
+function isPermanentSyncError(error) {
+  const code = String(error?.code || '');
+  if (!code) return true;
+  return code.startsWith('22') || code.startsWith('23');
+}
+
+// Sincroniza un cobro hecho sin señal. Nunca rechaza un cobro válido por el saldo: si lo excede,
+// lo registra como observado (status OBSERVED). Devuelve IGNORED si ya se había recibido (idempotencia).
 export async function syncOfflineCobro(_db, payload, { audit = null } = {}) {
   const normalized = {
     ...payload,
@@ -1378,12 +1552,9 @@ export async function syncOfflineCobro(_db, payload, { audit = null } = {}) {
     codigo_operacion: String(payload.codigo_operacion || payload.idempotency_key || payload.codigoOperacion || '').trim(),
     hash_transaccion: String(payload.hash_transaccion || payload.hashTransaccion || '').trim(),
     fecha_cobro: payload.fecha_cobro || payload.fechaCobro || new Date().toISOString(),
-    periodo: payload.periodo || currentPeriod()
+    periodo: payload.periodo || currentPeriod(),
+    device_id: payload.device_id || payload.deviceId || null
   };
-
-  if (!normalized.comerciante_id || !normalized.cobrador_id || !Number.isFinite(normalized.monto) || normalized.monto <= 0) {
-    throw new Error('Cobro offline incompleto: faltan comerciante, cobrador o monto válido');
-  }
 
   const hashValue = normalized.hash_transaccion || createTransactionHash({
     comercianteId: normalized.comerciante_id,
@@ -1394,7 +1565,14 @@ export async function syncOfflineCobro(_db, payload, { audit = null } = {}) {
     metodoPago: normalized.metodo_pago,
     salt: normalized.codigo_operacion || normalized.fecha_cobro
   });
-  const deviceId = payload.device_id || payload.deviceId;
+  const deviceId = normalized.device_id;
+
+  if (!normalized.comerciante_id || !normalized.cobrador_id || !Number.isFinite(normalized.monto) || normalized.monto <= 0) {
+    const message = 'Cobro offline incompleto: faltan comerciante, cobrador o monto válido';
+    await logSyncQueue({ deviceId, hash: hashValue, payload: normalized, estado: 'error', error: message });
+    throw Object.assign(new Error(message), { permanent: true });
+  }
+
   const ignored = (message = 'El cobro ya fue registrado anteriormente (idempotencia aplicada)') => ({
     status: 'IGNORED',
     message,
@@ -1407,29 +1585,261 @@ export async function syncOfflineCobro(_db, payload, { audit = null } = {}) {
         'SELECT id FROM transacciones WHERE hash_transaccion = $1 OR codigo_operacion = $2',
         [hashValue, normalized.codigo_operacion || hashValue]);
       if (duplicate) return null;
-      return insertCobro(client, { ...normalized, hash_transaccion: hashValue }, { audit });
+      return registrarCobro(client, { ...normalized, hash_transaccion: hashValue }, { audit, allowExcess: true });
     });
 
     if (!result) {
       await logSyncQueue({ deviceId, hash: hashValue, payload: normalized, estado: 'duplicado' });
       return ignored();
     }
+    if (result.estado === 'observado') {
+      await logSyncQueue({ deviceId, hash: hashValue, payload: normalized, estado: 'observado', error: result.observacion });
+      return { status: 'OBSERVED', message: `Cobro registrado y enviado a revisión: ${result.observacion}`, data: result };
+    }
     await logSyncQueue({ deviceId, hash: hashValue, payload: normalized, estado: 'procesado' });
     return { status: 'SUCCESS', message: 'Cobro sincronizado correctamente', data: result };
   } catch (error) {
     const message = String(error.message || '');
-    if (error.code === '23505' || /ya existe un cobro registrado|hash transaccional|código de operación/i.test(message)) {
+    if (error.code === '23505' || /ya existe un cobro registrado/i.test(message)) {
       await logSyncQueue({ deviceId, hash: hashValue, payload: normalized, estado: 'duplicado' });
       return ignored();
     }
     await logSyncQueue({ deviceId, hash: hashValue, payload: normalized, estado: 'error', error: message });
+    if (error.permanent === undefined) error.permanent = isPermanentSyncError(error);
     throw error;
   }
 }
 
+export const MAX_LOTE_COBROS = 100;
+
+// Sube varios cobros offline en una petición. Cada cobro va en su propia transacción: uno que falla
+// no detiene ni deshace a los demás. Se procesan en el orden en que se cobraron (hora del celular).
+export async function syncOfflineBatch(db, cobros, { cobradorId = null, deviceId = null, audit = null } = {}) {
+  if (!Array.isArray(cobros) || !cobros.length) throw new Error('El lote no contiene cobros');
+  if (cobros.length > MAX_LOTE_COBROS) throw new Error(`El lote admite como máximo ${MAX_LOTE_COBROS} cobros`);
+
+  const when = (cobro) => Date.parse(cobro.fecha_cobro || cobro.fechaCobro) || 0;
+  const ordered = cobros
+    .map((cobro, index) => ({ cobro: cobro && typeof cobro === 'object' ? cobro : {}, index }))
+    .sort((a, b) => when(a.cobro) - when(b.cobro) || a.index - b.index);
+
+  const resultados = new Array(cobros.length);
+  for (const { cobro, index } of ordered) {
+    const hash = String(cobro.hash_transaccion || cobro.hashTransaccion || '').trim() || null;
+    try {
+      const result = await syncOfflineCobro(db, {
+        ...cobro,
+        // El cobrador es quien inició sesión, nunca el que diga el celular.
+        cobrador_id: cobradorId,
+        device_id: deviceId || cobro.device_id || cobro.deviceId
+      }, { audit });
+      const estado = result.status === 'IGNORED' ? 'duplicado' : result.status === 'OBSERVED' ? 'observado' : 'sincronizado';
+      resultados[index] = {
+        hash_transaccion: result.hash_transaccion || result.data?.hash_transaccion || hash,
+        estado,
+        mensaje: result.message,
+        comprobante: result.data?.comprobante ?? null,
+        id: result.data?.id ?? null
+      };
+    } catch (error) {
+      const temporal = error.permanent === false;
+      if (temporal) console.error('Error temporal al sincronizar cobro offline:', error);
+      resultados[index] = {
+        hash_transaccion: hash,
+        estado: temporal ? 'error' : 'rechazado',
+        mensaje: temporal ? 'Error temporal del servidor; se reintentará' : String(error.message || 'Cobro rechazado')
+      };
+    }
+  }
+
+  const resumen = { total: resultados.length, sincronizado: 0, duplicado: 0, observado: 0, rechazado: 0, error: 0 };
+  for (const item of resultados) resumen[item.estado] += 1;
+  return { resultados, resumen };
+}
+
 // ---------------------------------------------------------------------------
-// Autenticación contra la base de datos
+// Revisión manual de cobros offline
 // ---------------------------------------------------------------------------
+
+export async function getCobrosObservados(db, { estado = 'pendiente' } = {}) {
+  const params = [];
+  let where = '';
+  if (estado && estado !== 'todos') { params.push(String(estado)); where = 'WHERE ob.estado = $1'; }
+  return rows(db, `
+    SELECT ob.id, ob.transaccion_id, ob.motivo, ob.saldo_al_sincronizar, ob.monto, ob.device_id, ob.estado,
+           ob.resolucion, ${TS('ob.creado_en')} AS fecha_observacion, ${TS('ob.revisado_en')} AS fecha_revision,
+           rv.nombre AS revisado_por,
+           co.comerciante_id, c.nombre AS comerciante, c.dni_ruc, co.metodo_pago, co.codigo_operacion,
+           co.estado AS estado_cobro, ${TS('co.fecha_cobro_cliente')} AS fecha_cobro,
+           cp.numero_correlativo AS comprobante, u.nombre AS cobrador
+    FROM cobros_observados ob
+    JOIN transacciones co ON co.id = ob.transaccion_id
+    JOIN comerciantes c ON c.id = co.comerciante_id
+    JOIN usuarios u ON u.id = co.cobrador_id
+    LEFT JOIN comprobantes cp ON cp.id = co.comprobante_id
+    LEFT JOIN usuarios rv ON rv.id = ob.revisado_por
+    ${where}
+    ORDER BY ob.id DESC LIMIT 500`, params);
+}
+
+// Aceptar deja el cobro como pago válido (p. ej. un adelanto); anular lo saca de la recaudación
+// (se devuelve el dinero). La decisión y la auditoría se graban en la misma transacción.
+export async function resolveCobroObservado(_db, id, { decision, resolucion, usuarioId, audit = null }) {
+  if (!['aceptado', 'anulado'].includes(decision)) throw new Error('La decisión debe ser "aceptado" o "anulado"');
+  const nota = String(resolucion || '').trim();
+  if (nota.length < 5) throw new Error('Explique la decisión (al menos 5 caracteres)');
+
+  return withTransaction(async (client) => {
+    const previous = await first(client, 'SELECT * FROM cobros_observados WHERE id = $1 FOR UPDATE', [Number(id)]);
+    if (!previous) throw Object.assign(new Error('Cobro observado no encontrado'), { status: 404 });
+    if (previous.estado !== 'pendiente') throw new Error(`El cobro ya fue revisado (${previous.estado})`);
+
+    const updated = await first(client, `
+      UPDATE cobros_observados SET estado = $2, resolucion = $3, revisado_por = $4, revisado_en = now()
+      WHERE id = $1 RETURNING id, transaccion_id, estado, resolucion`, [Number(id), decision, nota, Number(usuarioId)]);
+    if (decision === 'anulado') {
+      await client.query(`UPDATE transacciones SET estado = 'anulado' WHERE id = $1`, [previous.transaccion_id]);
+    }
+    if (audit) {
+      await appendAudit(client, {
+        ...audit,
+        usuarioId: audit.usuarioId ?? usuarioId,
+        entidad: 'cobros_observados',
+        detalle: `Cobro observado ${id} (transacción ${previous.transaccion_id}) ${decision}: ${nota}`,
+        recursoId: Number(id),
+        payloadPrevio: previous,
+        payloadNuevo: updated
+      });
+    }
+    return { ...updated, id: Number(updated.id), transaccion_id: Number(updated.transaccion_id) };
+  });
+}
+
+// Cobros offline que el servidor rechazó por datos inválidos: el dinero se cobró pero no entró al sistema.
+export async function getSyncErrors(db) {
+  return rows(db, `
+    SELECT id, device_id, hash_transaccion, payload, error, intentos,
+           ${TS('recibido_en')} AS recibido, ${TS('procesado_en')} AS procesado
+    FROM colas_sincronizacion WHERE estado = 'error' ORDER BY procesado_en DESC NULLS LAST LIMIT 200`);
+}
+
+// ---------------------------------------------------------------------------
+// Paquete de jornada: padrón, saldos y tarifas para buscar y cobrar sin señal
+// ---------------------------------------------------------------------------
+
+export async function getJornadaPackage(db, { periodo = currentPeriod() } = {}) {
+  const merchants = await rows(db, `
+    SELECT c.id, c.correlativo, c.codigo, c.dni_ruc, c.nombre, c.tipo_comerciante,
+           ARRAY(SELECT h.codigo FROM comerciante_codigos_historicos h WHERE h.comerciante_id = c.id) AS codigos_anteriores,
+           c.tipo_comerciante AS categoria, c.rubro_id, r.nombre AS rubro,
+           c.zona_id, z.nombre AS zona,
+           (SELECT p.codigo_puesto FROM puestos p
+             WHERE p.comerciante_id = c.id AND p.estado NOT IN ('disponible', 'inactivo') ORDER BY p.id LIMIT 1) AS codigo_puesto
+    FROM comerciantes c JOIN rubros r ON r.id = c.rubro_id JOIN zonas z ON z.id = c.zona_id
+    WHERE c.estado = 'activo' ORDER BY c.nombre`);
+
+  const comerciantes = [];
+  for (const merchant of merchants) {
+    let deuda = { monto_total: 0, monto_pagado: 0, saldo: 0, no_devengo: true, tarifa: null };
+    try {
+      deuda = await calcularLiquidacion(db, merchant.id, periodo);
+    } catch {
+      // Sin tarifa vigente: se descarga con saldo 0 (tampoco se podría cobrar en línea).
+    }
+    comerciantes.push({
+      ...merchant,
+      id: Number(merchant.id),
+      periodo,
+      tarifa_id: deuda.tarifa?.id ?? null,
+      tarifa_monto_fijo: deuda.tarifa ? Number(deuda.tarifa.monto_fijo) : null,
+      monto_total: Number(deuda.monto_total || 0),
+      monto_pagado: Number(deuda.monto_pagado || 0),
+      saldo: Number(deuda.saldo || 0),
+      no_devengo: Boolean(deuda.no_devengo),
+      cobro_diario: Boolean(deuda.cobro_diario),
+      dia: deuda.dia ?? null
+    });
+  }
+
+  return {
+    generado_en: new Date().toISOString(),
+    periodo,
+    comerciantes,
+    tarifas: await getTarifas(db),
+    rubros: await getRubros(db),
+    zonas: await getZonas(db)
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Sesiones por dispositivo (token de renovación)
+// ---------------------------------------------------------------------------
+
+// Solo se guarda el sha256 del token: quien lea la tabla no puede usarlo.
+const hashToken = (token) => createHash('sha256').update(String(token)).digest('hex');
+
+const SESSION_SELECT = `
+  SELECT s.id, s.usuario_id, u.nombre AS usuario, u.email, r.codigo AS rol, s.device_id, s.device_nombre,
+         s.ip_origen, s.user_agent, s.creado_en, s.ultimo_uso_en, s.expira_en, s.revocado_en, s.motivo_revocacion,
+         (s.revocado_en IS NULL AND s.expira_en > now()) AS activa
+  FROM sesiones_dispositivo s
+  JOIN usuarios u ON u.id = s.usuario_id
+  JOIN roles r ON r.id = u.rol_id`;
+
+// Abre una sesión para el dispositivo y cierra la anterior del mismo usuario en ese dispositivo.
+export async function createDeviceSession(_db, { usuarioId, deviceId = null, deviceNombre = null, ip = null, userAgent = null, ttlHours = config.refreshTokenTtlHours }) {
+  const refreshToken = randomBytes(32).toString('base64url');
+  const device = cleanText(deviceId, 100) || `sin-id-${randomBytes(6).toString('hex')}`;
+  return withTransaction(async (client) => {
+    await client.query(`
+      UPDATE sesiones_dispositivo SET revocado_en = now(), motivo_revocacion = 'Nuevo inicio de sesión en el dispositivo'
+      WHERE usuario_id = $1 AND device_id = $2 AND revocado_en IS NULL`, [Number(usuarioId), device]);
+    const created = await first(client, `
+      INSERT INTO sesiones_dispositivo (usuario_id, device_id, device_nombre, token_hash, ip_origen, user_agent, expira_en)
+      VALUES ($1, $2, $3, $4, $5, $6, now() + make_interval(hours => $7))
+      RETURNING id, expira_en`,
+    [Number(usuarioId), device, cleanText(deviceNombre, 120), hashToken(refreshToken), cleanText(ip, 60), cleanText(userAgent, 300), Number(ttlHours)]);
+    return { id: Number(created.id), deviceId: device, refreshToken, expiraEn: created.expira_en };
+  });
+}
+
+// Sesión vigente (no revocada, no vencida, usuario activo) a la que pertenece el token; marca el último uso.
+export async function findActiveSessionByToken(db, refreshToken) {
+  if (!refreshToken) return null;
+  const session = await first(db, `
+    UPDATE sesiones_dispositivo s SET ultimo_uso_en = now()
+    FROM usuarios u JOIN roles r ON r.id = u.rol_id
+    WHERE u.id = s.usuario_id AND u.activo
+      AND s.token_hash = $1 AND s.revocado_en IS NULL AND s.expira_en > now()
+    RETURNING s.id, s.usuario_id, s.device_id, s.expira_en, u.nombre, u.email, r.codigo AS rol`, [hashToken(refreshToken)]);
+  return session;
+}
+
+export async function isSessionActive(db, sessionId) {
+  const row = await first(db, `SELECT 1 AS ok FROM sesiones_dispositivo WHERE id = $1 AND revocado_en IS NULL AND expira_en > now()`, [Number(sessionId)]);
+  return Boolean(row);
+}
+
+export async function getDeviceSessions(db, { usuarioId = null, soloActivas = true } = {}) {
+  const params = [];
+  const where = [];
+  if (usuarioId) { params.push(Number(usuarioId)); where.push(`s.usuario_id = $${params.length}`); }
+  if (soloActivas) where.push('s.revocado_en IS NULL AND s.expira_en > now()');
+  return rows(db, `${SESSION_SELECT} ${where.length ? `WHERE ${where.join(' AND ')}` : ''} ORDER BY s.ultimo_uso_en DESC LIMIT 200`, params);
+}
+
+// Revoca una sesión. Devuelve la sesión revocada o null si no existía o ya estaba cerrada.
+export async function revokeDeviceSession(db, { sessionId = null, refreshToken = null, revocadoPor = null, motivo = 'Revocada', usuarioId = null }) {
+  const params = [revocadoPor ? Number(revocadoPor) : null, cleanText(motivo, 200)];
+  let match;
+  if (refreshToken) { params.push(hashToken(refreshToken)); match = `token_hash = $${params.length}`; }
+  else { params.push(Number(sessionId)); match = `id = $${params.length}`; }
+  if (usuarioId) { params.push(Number(usuarioId)); match += ` AND usuario_id = $${params.length}`; }
+  return first(db, `
+    UPDATE sesiones_dispositivo SET revocado_en = now(), revocado_por = $1, motivo_revocacion = $2
+    WHERE ${match} AND revocado_en IS NULL
+    RETURNING id, usuario_id, device_id, device_nombre, revocado_en`, params);
+}
 
 export async function findUserByEmail(db, email) {
   return first(db, `

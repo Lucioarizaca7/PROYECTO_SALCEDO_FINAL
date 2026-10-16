@@ -49,7 +49,7 @@ function buildPopup(props, { onCollect, onInspect }) {
     root.append(button);
   }
   if (onInspect) {
-    const button = el('button', 'secondary-button compact', 'Inspeccionar');
+    const button = el('button', 'secondary-button compact', 'Gestionar puesto');
     button.type = 'button';
     button.addEventListener('click', onInspect);
     root.append(button);
@@ -180,7 +180,8 @@ export default function SitesMap25D({ sites, selectedSite, baseLayer, drawing, d
       popupRef.current = new mapboxgl.Popup({ closeButton: true, maxWidth: '280px', offset: 12 })
         .setLngLat([Number(props.longitud), Number(props.latitud)])
         .setDOMContent(buildPopup(props, {
-          onCollect: site && handlers.onCollect ? () => handlers.onCollect(site) : null,
+          // Solo se ofrece cobrar donde hay saldo; lo demás (asignar, liberar, baja) va en "Gestionar puesto".
+          onCollect: site && handlers.onCollect && props.estadoPago === 'deuda' ? () => handlers.onCollect(site) : null,
           onInspect: site && handlers.onInspect ? () => handlers.onInspect(site) : null
         }))
         .addTo(map);

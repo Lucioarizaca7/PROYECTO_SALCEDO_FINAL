@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { calculateLiquidation, getComerciantes, getPuestos, initializeDatabase } from '../src/db.js';
+import { calcularLiquidacion, getComerciantes, getPuestos, initializeDatabase } from '../src/db.js';
 import { buildFeriaZapatillasSeedPlan, seedFeriaZapatillas } from '../src/feriaZapatillasSeed.js';
 
 const workbook = [
@@ -48,8 +48,8 @@ test('seeder crea comerciantes temporales, puestos por bloque y conserva marcas 
   assert.ok(importedPosts.every((post) => post.metros_cuadrados === null));
   assert.ok(importedPosts.some((post) => post.codigo === 'ZAP-A-I-01'));
   assert.ok(importedPosts.some((post) => post.codigo === 'ZAP-ROPA-01'));
-  assert.equal((await calculateLiquidation(db, importedMerchant.id, '2026-09')).no_devengo, true);
-  assert.equal((await calculateLiquidation(db, importedMerchant.id, '2026-09')).motivo, 'pendiente_regularizacion_sin_metraje');
+  assert.equal((await calcularLiquidacion(db, importedMerchant.id, '2026-09')).no_devengo, true);
+  assert.equal((await calcularLiquidacion(db, importedMerchant.id, '2026-09')).motivo, 'pendiente_regularizacion_sin_metraje');
 
   const scalar = async (text, params = []) => Number((await db.query(text, params)).rows[0].count);
   assert.equal(await scalar("SELECT COUNT(*) FROM tarifas t JOIN rubros r ON r.id = t.rubro_id WHERE LOWER(r.nombre) = 'zapatillas' AND t.unidad_medida = 'metro_cuadrado' AND t.monto_variable = 2"), 1);

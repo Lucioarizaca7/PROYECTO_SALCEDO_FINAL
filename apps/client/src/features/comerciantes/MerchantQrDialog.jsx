@@ -36,7 +36,7 @@ export function MerchantQrDialog({ merchant, onClose }) {
           <span>{merchant.codigo}</span>
           <code>{qrValue}</code>
         </div>
-        <p className="merchant-qr-note">Este QR identifica al comerciante; no contiene DNI ni información tributaria personal.</p>
+        <p className="merchant-qr-note">Este QR lleva el código del comerciante: correlativo, iniciales, rubro, los 3 últimos dígitos del DNI/RUC, zona, estado y fecha de registro.</p>
         <div className="merchant-qr-actions">
           <button type="button" className="secondary-button" onClick={() => window.print()}>Imprimir</button>
           <button type="button" className="primary-button" onClick={onClose}>Cerrar</button>

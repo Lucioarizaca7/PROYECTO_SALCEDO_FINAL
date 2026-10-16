@@ -60,6 +60,8 @@ export const config = Object.freeze({
   databaseUrl,
   jwtSecret,
   jwtExpiresIn: jwtExpiresIn(env.JWT_EXPIRES_IN),
+  // Token de renovación por dispositivo: dura una jornada de campo (12 h por defecto).
+  refreshTokenTtlHours: integer('REFRESH_TOKEN_TTL_HOURS', 12, 1),
   bcryptSaltRounds: integer('BCRYPT_SALT_ROUNDS', 10, 4),
   frontendOrigins: frontendUrl.split(',').map((origin) => origin.trim().replace(/\/+$/, '')).filter(Boolean),
   trustProxy: trustProxy(env.TRUST_PROXY),

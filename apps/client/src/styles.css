@@ -1,7 +1,7 @@
 :root {
   /* Reference Design Color Tokens - Municipal/Civic Palette */
   --civic-ink: #0F172A;          /* Dark slate for primary text */
-  --civic-muted: #64748B;        /* Muted slate for secondary text */
+  --civic-muted: #475569;        /* Muted slate for secondary text (AA on every light surface) */
   --civic-blue: #1D4ED8;         /* Municipal blue - primary */
   --civic-blue-dark: #1E40AF;    /* Darker municipal blue */
   --civic-blue-light: #3B82F6;   /* Lighter municipal blue */
@@ -22,13 +22,13 @@
   --primary-2: #004a99;
   --primary-soft: #e6f2ff;
   --accent: #F2B84B;
-  --green: #1BAA74;
+  --green: #065F46;
   --green-soft: #E9F9F2;
   --blue: #2C7BE5;
   --blue-soft: #EAF3FF;
   --amber: #E7A62A;
   --amber-soft: #FFF4DB;
-  --red: #DB4C4C;
+  --red: #B91C1C;
   --red-soft: #FDECEC;
   --text: #181c22;
   --muted: #414753;
@@ -108,6 +108,12 @@ select:focus-visible,
 a:focus-visible {
   outline: 3px solid var(--civic-blue);
   outline-offset: 2px;
+}
+
+/* On navy grounds the blue ring is invisible (1.7:1): use a white ring */
+.sidebar :focus-visible,
+.landing-impact-section :focus-visible {
+  outline-color: #fff;
 }
 
 .landing-screen {
@@ -961,44 +967,103 @@ a:focus-visible {
 }
 
 .notification-button {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   width: 44px;
   height: 44px;
+  padding: 0;
   border-radius: 12px;
   border: 1px solid rgba(27, 94, 168, 0.12);
   background: linear-gradient(180deg, #fff 0%, #f8fbff 100%);
   color: var(--primary);
+  transition: background 160ms ease, border-color 160ms ease;
+}
+
+.notification-button:hover {
+  background: #eef6ff;
+  border-color: rgba(27, 94, 168, 0.25);
 }
 
 .user-badge {
   display: flex;
   align-items: center;
-  gap: 12px;
-  border: 1px solid rgba(27, 94, 168, 0.08);
-  background: linear-gradient(180deg, #f8fbff 0%, #ffffff 100%);
-  border-radius: 12px;
-  padding: 8px 12px;
-  box-shadow: 0 10px 20px rgba(15, 62, 103, 0.04);
+  gap: 10px;
+  min-width: 0;
+  max-width: 240px;
+  height: 44px;
+  padding: 4px 14px 4px 4px;
+  border: 1px solid rgba(27, 94, 168, 0.12);
+  border-radius: 999px;
+  background: #fff;
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.06);
 }
 
-.user-badge span {
-  width: 36px;
-  height: 36px;
-  border-radius: 50%;
-  background: linear-gradient(135deg, #dfeeff, #dff7ec);
-  color: var(--primary);
-  font-weight: 800;
+.user-avatar {
+  flex-shrink: 0;
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #2563EB 0%, #1D4ED8 100%);
+  color: #fff;
+  font-size: 0.78rem;
+  font-weight: 800;
+  letter-spacing: 0.02em;
 }
 
-.user-badge strong,
-.user-badge small {
-  display: block;
+.user-meta {
+  display: grid;
+  min-width: 0;
+  line-height: 1.2;
 }
 
-.user-badge small {
-  color: var(--muted);
+.user-meta strong,
+.user-meta small {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.user-meta strong {
+  color: var(--civic-ink);
+  font-size: 0.86rem;
+  font-weight: 700;
+}
+
+.user-meta small {
+  color: var(--civic-muted);
+  font-size: 0.72rem;
+  font-weight: 600;
+}
+
+/* Topbar: the search box gives up space first; badges and buttons never wrap */
+.topbar-right > .sync-status-badge,
+.topbar-right > .primary-button {
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+.topbar-right > .search-box {
+  flex: 0 1 240px;
+  min-width: 150px;
+}
+
+.topbar-right > .user-badge {
+  flex-shrink: 0;
+}
+
+@media (max-width: 1240px) {
+  .topbar-right > .user-badge {
+    padding-right: 4px;
+  }
+
+  .topbar-right .user-meta {
+    display: none;
+  }
 }
 
 .page-content {
@@ -1302,7 +1367,7 @@ a:focus-visible {
 
 .status.pending {
   background: linear-gradient(180deg, #fff4db 0%, #ffeec4 100%);
-  color: #996a00;
+  color: #8c6113;
 }
 
 .status.neutral {
@@ -2360,6 +2425,28 @@ tbody td {
   gap: 10px;
 }
 
+.checkbox-inline {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--civic-ink);
+  font-size: 0.9rem;
+  white-space: nowrap;
+}
+
+.map-form-hint {
+  margin: 0;
+  color: var(--civic-muted);
+  font-size: 0.86rem;
+}
+
+.map-edit-form .panel-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
 .map-edit-grid input,
 .map-edit-grid select {
   width: 100%;
@@ -2726,7 +2813,7 @@ tbody td {
 
 .civic-nav .landing-brand small {
   margin-top: 4px;
-  color: #64748b;
+  color: var(--civic-muted);
   font-size: 0.62rem;
   letter-spacing: 0.02em;
   text-transform: none;
@@ -4497,7 +4584,7 @@ tbody td {
   place-items: center;
   height: 100%;
   min-height: 420px;
-  color: #64748b;
+  color: var(--civic-muted);
 }
 
 .map-location-note {
