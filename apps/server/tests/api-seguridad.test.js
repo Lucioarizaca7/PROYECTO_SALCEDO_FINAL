@@ -35,18 +35,20 @@ after(async () => {
   await closeDatabase();
 });
 
-function registeredGetRoutes() {
-  return app.router.stack
-    .filter((layer) => layer.route?.methods?.get)
-    .map((layer) => layer.route.path)
-    .filter((path) => typeof path === 'string');
+// Recorre también los routers montados (routes/*.ts): si no, sus rutas quedarían sin revisar.
+function registeredGetRoutes(stack = app.router.stack) {
+  return stack.flatMap((layer) => {
+    if (layer.route) return layer.route.methods?.get && typeof layer.route.path === 'string' ? [layer.route.path] : [];
+    return layer.handle?.stack ? registeredGetRoutes(layer.handle.stack) : [];
+  });
 }
 
 const concrete = (path) => path.replace(/:[A-Za-z_]+/g, '1');
 
 test('toda ruta GET de la API exige token, salvo las públicas declaradas', async () => {
   const routes = registeredGetRoutes();
-  assert.ok(routes.length > 15, `se esperaban más rutas GET, hay ${routes.length}`);
+  // 27 rutas GET al dividir index.ts en routers; si cambia, revise que las nuevas pidan token.
+  assert.equal(routes.length, 27, `cambió el número de rutas GET: ${routes.length}`);
 
   const open = [];
   for (const path of routes) {
