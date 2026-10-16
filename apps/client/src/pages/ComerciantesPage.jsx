@@ -25,6 +25,7 @@ export function ComerciantesPage() {
       onSubmit={merchants.submit}
       onEdit={merchants.edit}
       onDeactivate={merchants.deactivate}
+      onGeneratePortalPin={merchants.generatePortalPin}
     />
   );
 }

@@ -2,9 +2,10 @@ import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { apiBase } from '../services/session';
 
-// Portal del comerciante: consulta pública de su deuda y sus pagos con el DNI o el código.
+// Portal del comerciante: consulta de su deuda y sus pagos con el DNI o el código y el PIN de su carnet QR.
 export function PortalPage() {
   const [identifier, setIdentifier] = useState('');
+  const [pin, setPin] = useState('');
   const [data, setData] = useState(null);
   const [error, setError] = useState('');
 
@@ -12,10 +13,11 @@ export function PortalPage() {
     event.preventDefault();
     setError('');
     try {
-      const response = await fetch(`${apiBase}/portal/login`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ identifier }) });
+      const response = await fetch(`${apiBase}/portal/login`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ identifier, pin }) });
       const body = await response.json();
       if (!response.ok) throw new Error(body.message || 'No se pudo consultar el portal');
       setData(body.data);
+      setPin('');
     } catch (portalError) {
       setData(null);
       setError(portalError.message);
@@ -34,15 +36,17 @@ export function PortalPage() {
         <form className="portal-login panel" onSubmit={submit}>
           <div className="eyebrow">PORTAL DEL COMERCIANTE</div>
           <h1>Consulta tus pagos</h1>
-          <p>Ingresa tu DNI o código de comerciante para revisar tu información.</p>
-          <input required placeholder="DNI o código COM-0001" value={identifier} onChange={(event) => setIdentifier(event.target.value)} />
+          <p>Ingresa tu DNI o código de comerciante y el PIN de 6 dígitos impreso en tu carnet.</p>
+          <input required placeholder="DNI o código COM-0001" value={identifier} onChange={(event) => setIdentifier(event.target.value)} aria-label="DNI o código de comerciante" />
+          <input required inputMode="numeric" autoComplete="one-time-code" pattern="\d{6}" maxLength={6} placeholder="PIN de 6 dígitos" aria-label="PIN del portal" value={pin} onChange={(event) => setPin(event.target.value.replace(/\D/g, ''))} />
+          <small className="portal-pin-help">¿No tienes PIN? Pídelo en la municipalidad; viene impreso en tu carnet QR.</small>
           {error && <div className="form-error">{error}</div>}
           <button className="primary-button" type="submit">Consultar información →</button>
         </form>
       ) : (
         <div className="portal-content">
           <div className="page-heading">
-            <div><div className="eyebrow">MI CUENTA / INFORMACIÓN MUNICIPAL</div><h1>Hola, {data.comerciante.nombre}</h1><p>{data.comerciante.codigo} · {data.comerciante.rubro} · {data.comerciante.zona}</p></div>
+            <div><div className="eyebrow">MI CUENTA / INFORMACIÓN MUNICIPAL</div><h1>Hola, {data.comerciante.nombre}</h1><p>{data.comerciante.codigo} · {data.comerciante.rubro} · {data.comerciante.zona} · Doc. {data.comerciante.documento}</p></div>
             <span className="status pending">{data.deuda.saldo > 0 ? `Saldo: S/ ${data.deuda.saldo.toFixed(2)}` : 'Cuenta al día'}</span>
           </div>
           <div className="portal-debt panel">

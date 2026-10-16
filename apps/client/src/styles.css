@@ -336,6 +336,13 @@ a:focus-visible {
   margin-bottom: 14px;
 }
 
+.portal-pin-help {
+  display: block;
+  margin: -6px 0 16px;
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
 .portal-debt {
   display: grid;
   grid-template-columns: repeat(4, 1fr);

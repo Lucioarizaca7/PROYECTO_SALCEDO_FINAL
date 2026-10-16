@@ -20,7 +20,8 @@ export function MerchantDirectory({
   onImport,
   onSubmit,
   onEdit,
-  onDeactivate
+  onDeactivate,
+  onGeneratePortalPin
 }) {
   const directory = useMerchantDirectory(merchants);
   const [qrMerchant, setQrMerchant] = useState(null);
@@ -206,7 +207,7 @@ export function MerchantDirectory({
           <button type="button" className="secondary-button" disabled={directory.page >= directory.totalPages} onClick={() => directory.setPage((page) => page + 1)} aria-label="Página siguiente">Siguiente</button>
         </div>
       </div>
-      {qrMerchant && <MerchantQrDialog merchant={qrMerchant} onClose={() => setQrMerchant(null)} />}
+      {qrMerchant && <MerchantQrDialog merchant={qrMerchant} onClose={() => setQrMerchant(null)} onGeneratePortalPin={onGeneratePortalPin} />}
     </section>
   );
 }

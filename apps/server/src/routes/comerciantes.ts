@@ -7,6 +7,7 @@ import { importPadronPreview, previewPadronSheets, readPadronWorkbook } from '..
 import { AppError } from '../errors.js';
 import { staffOnly, receivePadronWorkbook, rowById, resolveComercianteParam } from '../http/comunes.js';
 import { pool as db } from '../pg.js';
+import { generarPinPortal } from '../portalAcceso.js';
 
 export const router = express.Router();
 
@@ -111,6 +112,23 @@ router.post('/api/v1/comerciantes/:id/preferencias',
     const payload = req.body || {};
     const data = await updateComerciantePreferencias(db, comercianteId, payload);
     return res.status(201).json({ data, message: 'Preferencias actualizadas correctamente' });
+  }
+);
+
+// PIN del portal del comerciante (se imprime en el carnet QR). Responde el PIN una sola vez;
+// la auditoría registra que se generó, nunca el PIN.
+router.post('/api/v1/comerciantes/:id/portal-pin',
+  requireAuth,
+  requireRoles(['super_admin', 'auditor']),
+  auditMutation({
+    db,
+    accion: 'GENERAR_PIN_PORTAL',
+    entidad: 'comerciante_portal_acceso',
+    serializeResponse: (body) => ({ comerciante_id: body?.data?.comerciante_id, pin_generado: Boolean(body?.data?.pin) })
+  }),
+  async (req, res) => {
+    const data = await generarPinPortal(db, Number(req.params.id), req.user?.id);
+    return res.status(201).json({ data, message: 'PIN del portal generado. Anótelo en el carnet: no se vuelve a mostrar.' });
   }
 );
 
