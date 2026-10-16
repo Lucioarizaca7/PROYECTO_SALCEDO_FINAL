@@ -4,7 +4,7 @@ import { useSisrec } from '../app/SisrecContext';
 import { formatPEN } from '../lib/formato';
 import { createReceiptHash } from '../features/payments/recibo';
 import { buildExpressSuggestion } from '../features/payments/sugerenciaExpress';
-import { aComercianteDePantalla, aSaldoDePantalla } from '../services/jornadaOffline';
+import { aComercianteDePantalla, aSaldoDePantalla, periodoEnLima } from '../services/jornadaOffline';
 import { crearHashCobro } from '../services/offlineQueue';
 import { apiBase, authFetch } from '../services/session';
 
@@ -21,7 +21,7 @@ export function usePagos() {
   const { user, cobros, jornada, offlineQueue, refresh } = useSisrec();
   const location = useLocation();
   const navigate = useNavigate();
-  const [form, setForm] = useState({ search: '', comercianteId: '', periodo: new Date().toISOString().slice(0, 7), monto: '', metodo_pago: 'efectivo', codigo_operacion: '', observaciones: '' });
+  const [form, setForm] = useState({ search: '', comercianteId: '', periodo: periodoEnLima(), monto: '', metodo_pago: 'efectivo', codigo_operacion: '', observaciones: '' });
   const [merchant, setMerchant] = useState(null);
   const [balance, setBalance] = useState(null);
   const [suggestion, setSuggestion] = useState(NO_SUGGESTION);
@@ -180,7 +180,7 @@ export function usePagos() {
       cobrador_id: user?.id || 2,
       metodo_pago: form.metodo_pago,
       fecha_cobro: fechaCobro,
-      periodo: form.periodo || new Date().toISOString().slice(0, 7),
+      periodo: form.periodo || periodoEnLima(),
       // El mismo hash viaja en línea y, si la red falla, en la cola: el servidor nunca lo registra dos veces.
       hash_transaccion: await crearHashCobro({ cobradorId: user?.id, comercianteId: form.comercianteId, monto: form.monto, fechaCobro, salt: `${Date.now()}-${Math.random()}` })
     };

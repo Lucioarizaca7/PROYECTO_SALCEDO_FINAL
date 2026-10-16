@@ -14,6 +14,8 @@
  * `enviarLote`, así se prueba en Node sin navegador.
  */
 
+import { periodoEnLima } from './jornadaOffline.js';
+
 export const MAX_INTENTOS = 3;
 export const TAMANO_LOTE = 25;
 export const ESTADO = Object.freeze({ PENDIENTE: 'pendiente', SINCRONIZADO: 'sincronizado', ERROR: 'error' });
@@ -86,7 +88,7 @@ export function crearColaOffline({ store, enviarLote, ahora = () => new Date(), 
       codigoOperacion: codigoOperacion || null,
       observaciones: String(payload.observaciones || '').trim() || null,
       concepto: payload.concepto || null,
-      periodo: payload.periodo || fechaCobro.slice(0, 7),
+      periodo: payload.periodo || periodoEnLima(new Date(fechaCobro)),
       fechaCobro,
       creadoEn,
       actualizadoEn: creadoEn

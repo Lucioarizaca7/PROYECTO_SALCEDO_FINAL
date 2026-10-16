@@ -273,3 +273,10 @@ test('el transporte distingue sin conexión, proxy caído, sesión vencida y err
   assert.deepEqual(ok, { resultados: [] });
   assert.equal(sentBody.device_id, 'cel-1');
 });
+
+test('sin periodo, el cobro toma el mes de Lima de su fecha (no el de UTC)', async () => {
+  const cola = crearColaOffline({ store: memoryStore(), enviarLote: fakeServer().enviarLote, ahora });
+  const item = await cola.encolar({ comerciante_id: 5, cobrador_id: 7, monto: 2, fecha_cobro: '2026-11-01T00:30:00.000Z' });
+  assert.equal(item.periodo, '2026-10');
+  assert.equal(aPayloadServidor(item).periodo, '2026-10');
+});

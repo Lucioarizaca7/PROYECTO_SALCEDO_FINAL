@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { formatPEN } from '../lib/formato';
+import { periodoEnLima } from '../services/jornadaOffline';
 import { readMapSnapshot, saveMapSnapshot, syncPendingMapMutations } from '../services/mapaOffline';
 import { apiBase, authFetch } from '../services/session';
 
@@ -53,7 +54,7 @@ export function useDatosSisrec({ user, onSessionExpired }) {
 
   const refresh = async () => {
     try {
-      const period = new Date().toISOString().slice(0, 7);
+      const period = periodoEnLima();
       const request = async (path) => {
         const response = await authFetch(path);
         // Un módulo que el rol no puede ver queda vacío en vez de vaciar todo el panel.
