@@ -108,9 +108,14 @@ Proyecto_Final_Salcedo_Rentas/
 Desde la raíz del proyecto:
 
 ```bash
+docker compose up -d postgres   # PostgreSQL en el puerto 5433
+cp .env.example .env            # define JWT_SECRET
+cp apps/server/.env.example apps/server/.env
 npm install
 npm run dev
 ```
+
+Al iniciar por primera vez, el backend crea las tablas y los usuarios de demostración.
 
 Esto levanta la aplicación con:
 - Frontend: http://localhost:5173

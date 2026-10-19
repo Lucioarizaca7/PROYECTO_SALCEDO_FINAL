@@ -12,7 +12,7 @@ import { TariffCalculator } from './components/landing/TariffCalculator';
 import { TransparencySection, LandingFooter } from './components/landing/TransparencySection';
 import { useNetworkStatus } from './hooks/useNetworkStatus';
 
-const configuredApiBase = import.meta.env.VITE_API_URL || 'http://localhost:3003/api/v1';
+const configuredApiBase = import.meta.env.VITE_API_URL || 'http://localhost:4000/api/v1';
 const apiBase = `${configuredApiBase.replace(/\/+$/, '').replace(/\/api(?:\/v1)?$/, '')}/api/v1`;
 const formatPEN = (value) => new Intl.NumberFormat('es-PE', { style: 'currency', currency: 'PEN', minimumFractionDigits: 2 }).format(Number(value) || 0);
 

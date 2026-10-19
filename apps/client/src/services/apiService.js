@@ -315,6 +315,6 @@ export class ApiService {
 const apiBaseUrl =
   typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_API_URL
     ? import.meta.env.VITE_API_URL
-    : 'http://localhost:3003';
+    : 'http://localhost:4000';
 
 export const apiService = new ApiService(apiBaseUrl);
