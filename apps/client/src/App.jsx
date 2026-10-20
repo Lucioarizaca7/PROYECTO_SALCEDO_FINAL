@@ -17,11 +17,14 @@ import { AnaliticaPage, AuditoriaPage, ReportesPage } from './pages/ConsultaPage
 import { IngresarPage } from './pages/IngresarPage';
 import { InicioPage } from './pages/InicioPage';
 import { MapaPage } from './pages/MapaPage';
+import { CajaPage } from './pages/CajaPage';
 import { PagosPage } from './pages/PagosPage';
 import { PanelPage } from './pages/PanelPage';
 import { PortalPage } from './pages/PortalPage';
 import { SitiosPage } from './pages/SitiosPage';
 import { TarifasPage } from './pages/TarifasPage';
+import { TicketsPage } from './pages/TicketsPage';
+import { VerificarPage } from './pages/VerificarPage';
 import { ZonasPage } from './pages/ZonasPage';
 
 // Una página por ruta de navegacion.js. Cada página trae su propio hook (usePagos, useSitios…).
@@ -31,6 +34,8 @@ function pageFor(key, { user, refresh }) {
     case 'comerciantes': return <ComerciantesPage />;
     case 'sitios': return <SitiosPage />;
     case 'pagos': return <PagosPage />;
+    case 'caja': return <CajaPage />;
+    case 'tickets': return <TicketsPage />;
     case 'zonas': return <ZonasPage />;
     case 'mapa': return <MapaPage />;
     case 'reportes': return <ReportesPage />;
@@ -66,6 +71,7 @@ function SisrecRoutes() {
         <Route path="/" element={<InicioPage stats={datos.dashboardStats} />} />
         <Route path="/ingresar" element={<IngresarPage onLogin={sesion.login} error={sesion.error} setError={sesion.setError} />} />
         <Route path="/portal" element={<PortalPage />} />
+        <Route path="/verificar/:token" element={<VerificarPage />} />
         {/* Una página del personal sin sesión (enlace guardado o sesión vencida): primero ingresar, luego volver a ella. */}
         <Route path="*" element={leaving ? <Navigate to="/" replace /> : <Navigate to="/ingresar" replace state={{ from: location.pathname }} />} />
       </Routes>
@@ -92,6 +98,7 @@ function SisrecRoutes() {
           ))}
         </Route>
         <Route path="/ingresar" element={<Navigate to={afterLogin} replace />} />
+        <Route path="/verificar/:token" element={<VerificarPage />} />
         <Route path="*" element={<Navigate to={HOME_PATH} replace />} />
       </Routes>
     </SisrecContext.Provider>

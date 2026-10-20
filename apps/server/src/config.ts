@@ -70,6 +70,8 @@ export const config = Object.freeze({
     max: integer('RATE_LIMIT_MAX_REQUESTS', 1000, 1),
     loginMax: integer('LOGIN_RATE_LIMIT_MAX', 20, 1)
   }),
+  // Microservicio de analítica (FastAPI). Vacío = la API proyecta con su respaldo local (prediccion.js).
+  analyticsUrl: String(env.ANALYTICS_URL || '').trim().replace(/\/+$/, ''),
   timeZone: 'America/Lima'
 });
 

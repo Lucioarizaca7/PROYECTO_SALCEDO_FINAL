@@ -28,6 +28,18 @@ Los términos que usa la Municipalidad de Salcedo son los mismos en la base de d
 | **Jornada** | Día de trabajo del cobrador; el padrón se descarga al iniciarla | — | `/api/v1/jornada/paquete` | `getJornadaPackage`, `jornadaOffline.js` | Jornada sin señal |
 | **Padrón** | Lista oficial de comerciantes | `comerciantes` | `/api/v1/padron/importar` | `padronImport.js` | importar Excel |
 | **Empadronamiento** | Situación del registro: regularizado o pendiente de regularización | `comerciantes.estado_empadronamiento` | `estado_empadronamiento` | — | — |
+| **Asistencia ferial** | Marca de que el ferial vino (P) o faltó (F) un día; el ferial paga solo los días que asistió | `asistencias_feriales` (`asistio`) | `/api/v1/asistencias` | `marcarAsistencias` | Asistencia ferial de hoy (Pagos) |
+| **Tipo de vía** | Si la zona es de vía asfaltada o sin asfaltar; puede tener tarifa propia | `zonas.tipo_via`, `tarifas.tipo_via` | `tipo_via` | `findApplicableTariff` | Zonas, Tarifas |
+| **Deuda acumulada** | Meses impagos desde el alta, nunca antes del inicio de cobro | — (se calcula) | `deuda_acumulada` | `calcularDeudaAcumulada` | Pagos, portal |
+| **Inicio de cobro** | Primer mes desde el que se suma la deuda acumulada | `parametros_sistema` | `/api/v1/parametros` | `setInicioCobro` | Tarifas |
+| **Ticket preimpreso** | Ticket de papel numerado que se entrega por cada puesto y día cobrado; disponible, usado, anulado o devuelto | `tickets` | `tickets` en `POST /cobros`; `/api/v1/tickets/anulaciones` | `validarTicketsCobro`, `anularTickets`, `ticketsOffline.js` | Cobro rápido (Entregar ticket N°) |
+| **Serie de tickets** | Numeración propia por tipo de vía: S3 (S/ 3, asfaltada) y S2 (S/ 2, sin asfaltar) | `ticket_series` | `/api/v1/tickets/series`; `series_cobro` (saldo y paquete de jornada) | `seriesDelComerciante` | Tickets |
+| **Lote de tickets** | Rango de números de una serie entregado a un cobrador; se puede reasignar o devolver lo no usado | `ticket_lotes` | `/api/v1/tickets/lotes` | `asignarLote`, `reasignarTickets`, `devolverTickets` | Tickets |
+| **Mes aplicado** | Mes al que se aplicó un cobro (puede ser uno anterior con deuda) | `transacciones.periodo_aplicado` | `periodo` | `registrarCobro` | Pagos, recibo |
+| **Anulación** | Un cobro que deja de contar, con motivo y responsable; no se borra | `transacciones.motivo_anulacion` | `/api/v1/cobros/:id/anular` | `anularCobro` | Pagos (admin), recibo ANULADO |
+| **Cierre de caja** | Lo que el cobrador entrega al final del día frente a lo que registró | `cierres_caja` | `/api/v1/caja` | `cerrarCaja`, `resumenCaja` | Cierre de caja |
+| **Tiempo de atención** | Segundos entre abrir al comerciante y registrar el cobro | `transacciones.inicio_atencion` | `/api/v1/cobros/tiempos` | `getTiemposCobro` | Analítica |
+| **Verificación de recibo** | QR del recibo que comprueba que es auténtico | — (firma HMAC) | `/api/v1/publico/verificar/:token` | `verificarRecibo` | `/verificar/:token` |
 | **Cobrador** | Usuario que cobra en campo | `usuarios` con rol `cobrador` | — | `requireRoles(['cobrador'])` | — |
 
 ## El código del comerciante

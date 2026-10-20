@@ -54,13 +54,25 @@ export function PortalPage() {
             <div><span>Total</span><strong>S/ {data.deuda.monto_total.toFixed(2)}</strong></div>
             <div><span>Pagado</span><strong>S/ {data.deuda.monto_pagado.toFixed(2)}</strong></div>
             <div><span>Saldo pendiente</span><strong>S/ {data.deuda.saldo.toFixed(2)}</strong></div>
+            {data.deuda.deuda_vencida > 0 && <div><span>Meses anteriores</span><strong>S/ {data.deuda.deuda_vencida.toFixed(2)}</strong></div>}
           </div>
+          {data.deuda.meses_impagos?.length > 0 && (
+            <div className="table-card">
+              <table>
+                <thead><tr><th>Mes impago</th><th>Debe</th></tr></thead>
+                <tbody>
+                  {data.deuda.meses_impagos.map((mes) => <tr key={mes.periodo}><td>{mes.periodo}</td><td>S/ {Number(mes.saldo).toFixed(2)}</td></tr>)}
+                </tbody>
+                <tfoot><tr><td><strong>Total adeudado</strong></td><td><strong>S/ {Number(data.deuda.deuda_total || 0).toFixed(2)}</strong></td></tr></tfoot>
+              </table>
+            </div>
+          )}
           <div className="table-card">
             <table>
               <thead><tr><th>Fecha</th><th>Concepto</th><th>Monto</th><th>Método</th><th>Comprobante</th><th>Acción</th></tr></thead>
               <tbody>
                 {data.pagos.length ? data.pagos.map((payment) => (
-                  <tr key={payment.id}><td>{payment.fecha}</td><td>{payment.concepto}</td><td>S/ {Number(payment.monto).toFixed(2)}</td><td>{payment.metodo_pago}</td><td>{payment.comprobante}</td><td><button className="table-action" type="button" onClick={() => window.print()}>Descargar PDF</button></td></tr>
+                  <tr key={payment.id}><td>{payment.fecha}</td><td>{payment.concepto}</td><td>S/ {Number(payment.monto).toFixed(2)}</td><td>{payment.metodo_pago}</td><td>{payment.comprobante}</td><td>{payment.descarga ? <a className="table-action" href={`${apiBase}/portal/recibos/${payment.descarga}/pdf`} download>Descargar PDF</a> : '—'}</td></tr>
                 )) : <tr><td colSpan="6">Aún no tienes pagos registrados.</td></tr>}
               </tbody>
             </table>

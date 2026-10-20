@@ -1,8 +1,8 @@
 // Puestos y mapa de sitios.
 import express from 'express';
-import { getPuestos, insertPuesto, updatePuesto, liberarPuesto, deactivatePuesto } from '../db.js';
+import { getPuestos, insertPuesto, updatePuesto, liberarPuesto, deactivatePuesto, getAsistencias, marcarAsistencias, getObservacionesCobro } from '../db.js';
 import { requireAuth, requireRoles, auditMutation } from '../auth.js';
-import { staffOnly, rowById } from '../http/comunes.js';
+import { staffOnly, rowById, auditContext } from '../http/comunes.js';
 import { pool as db } from '../pg.js';
 
 export const router = express.Router();
@@ -94,3 +94,29 @@ router.delete('/api/v1/puestos-mapa/:id',
     return res.json({ data: await deactivatePuesto(db, req.params.id), message: 'Puesto dado de baja lógicamente' });
   }
 );
+
+// Asistencia ferial del día: el ferial paga solo los días que asistió.
+router.get('/api/v1/asistencias', ...staffOnly, async (req, res) => {
+  const data = await getAsistencias(db, { fecha: req.query.fecha });
+  res.json({ data, total: data.puestos.length });
+});
+
+// Reporte de observaciones del cobrador (no salió, no vendió, se negó a pagar…) entre dos fechas.
+// El cobrador ve solo las que registró él.
+router.get('/api/v1/asistencias/observaciones', requireAuth, requireRoles(['super_admin', 'auditor', 'cobrador']), async (req, res) => {
+  const data = await getObservacionesCobro(db, {
+    desde: req.query.desde || undefined,
+    hasta: req.query.hasta || undefined,
+    comercianteId: req.query.comerciante_id || undefined,
+    cobradorId: req.user?.rol === 'cobrador' ? req.user.id : req.query.cobrador_id || undefined
+  });
+  res.json({ data, total: data.observaciones.length });
+});
+
+// Una marca ({ puesto_id, fecha?, asistio, motivo?, observacion? }) o varias ({ marcas: [...] }, p. ej. las guardadas sin señal).
+// Reenviar la misma marca no duplica nada.
+router.post('/api/v1/asistencias', requireAuth, requireRoles(['super_admin', 'cobrador']), async (req, res) => {
+  const marcas = Array.isArray(req.body?.marcas) ? req.body.marcas : [req.body || {}];
+  const data = await marcarAsistencias(db, marcas, { usuarioId: req.user.id, audit: auditContext(req, 'MARCAR_ASISTENCIA_FERIAL') });
+  res.status(201).json({ data, message: `${data.length} marca(s) de asistencia guardadas` });
+});

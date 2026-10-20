@@ -5,6 +5,8 @@ export const navItems = [
   { key: 'comerciantes', path: '/comerciantes', label: 'Comerciantes', roles: ['super_admin', 'auditor'] },
   { key: 'sitios', path: '/sitios', label: 'Sitios de venta' },
   { key: 'pagos', path: '/pagos', label: 'Pagos y cobros', roles: ['super_admin', 'cobrador'] },
+  { key: 'caja', path: '/caja', label: 'Cierre de caja', roles: ['super_admin', 'cobrador', 'auditor'] },
+  { key: 'tickets', path: '/tickets', label: 'Tickets', roles: ['super_admin', 'auditor'] },
   { key: 'zonas', path: '/zonas', label: 'Zonas y calles', roles: ['super_admin', 'auditor'] },
   { key: 'mapa', path: '/mapa', label: 'Mapa de sitios', roles: ['super_admin', 'cobrador'] },
   { key: 'reportes', path: '/reportes', label: 'Reportes' },

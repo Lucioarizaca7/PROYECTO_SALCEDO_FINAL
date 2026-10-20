@@ -11,7 +11,9 @@
     "dev:client": "npm run dev --workspace apps/client",
     "build": "npm run build --workspace apps/server && npm run build --workspace apps/client",
     "test": "npm run test --workspace apps/server && node --test apps/client/tests/*.test.js",
-    "crear-admin": "npm run crear-admin --workspace apps/server"
+    "crear-admin": "npm run crear-admin --workspace apps/server",
+    "crear-usuario": "npm run crear-usuario --workspace apps/server --",
+    "revisar-coordenadas": "npm run revisar-coordenadas --workspace apps/server --"
   },
   "devDependencies": {
     "concurrently": "^9.0.1"

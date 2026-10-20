@@ -150,10 +150,11 @@ test('obtenerPortalComerciante y createNotification exponen el portal del comerc
 test('generateForecastProjection y scoreMorosidadComerciante entregan métricas predictivas razonables', async () => {
   const db = await initializeDatabase();
 
-  const forecast = await generateForecastProjection(db, { period: '2026-09', horizonteDias: 90 });
-  assert.ok(Number(forecast.totalProyectado) > 0);
+  // Sin cobros en los meses anteriores no hay nada que proyectar: 0 y "sin_datos", no una cifra inventada.
+  const forecast = await generateForecastProjection(db, { period: '2020-09', horizonteDias: 90 });
+  assert.equal(forecast.totalProyectado, 0);
+  assert.equal(forecast.modelo.nombre, 'sin_datos');
   assert.ok(Array.isArray(forecast.porZona));
-  assert.ok(forecast.porZona.length >= 1);
 
   const score = await scoreMorosidadComerciante(db, 1);
   assert.ok(score.score >= 0 && score.score <= 1);

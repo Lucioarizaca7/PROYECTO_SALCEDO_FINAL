@@ -12,7 +12,9 @@ import { closeDatabase, currentPeriod, findUserByEmail, getAuditTrail, getComerc
 import { pool } from '../src/pg.js';
 
 // Únicas rutas GET que se pueden consultar sin iniciar sesión.
-const PUBLIC_GET = new Set(['/api/v1/health', '/api/v1/publico/resumen']);
+// Públicas a propósito: la verificación del QR del recibo y la descarga con enlace firmado del portal
+// (sin token de sesión, pero sin datos si la firma no corresponde).
+const PUBLIC_GET = new Set(['/api/v1/health', '/api/v1/publico/resumen', '/api/v1/publico/verificar/:token', '/api/v1/portal/recibos/:token/pdf']);
 
 let server;
 let baseUrl;
@@ -47,8 +49,10 @@ const concrete = (path) => path.replace(/:[A-Za-z_]+/g, '1');
 
 test('toda ruta GET de la API exige token, salvo las públicas declaradas', async () => {
   const routes = registeredGetRoutes();
-  // 27 rutas GET al dividir index.ts en routers; si cambia, revise que las nuevas pidan token.
-  assert.equal(routes.length, 27, `cambió el número de rutas GET: ${routes.length}`);
+  // 27 rutas GET al dividir index.ts en routers, más /cobros/tiempos, /asistencias, /parametros, /caja/resumen, /caja/cierres, /asistencias/observaciones y las dos
+  // públicas del recibo (fase 3), y /tickets/series, /tickets/lotes, /tickets/cobradores y /tickets/mios.
+  // Si cambia, revise que las nuevas pidan token.
+  assert.equal(routes.length, 39, `cambió el número de rutas GET: ${routes.length}`);
 
   const open = [];
   for (const path of routes) {
@@ -64,6 +68,18 @@ test('las rutas con datos personales rechazan al rol comerciante', async () => {
     const response = await fetch(`${baseUrl}${path}`, { headers: { Authorization: `Bearer ${tokens.comerciante}` } });
     assert.equal(response.status, 403, path);
   }
+});
+
+test('solo el administrador asigna, reasigna y devuelve lotes de tickets', async () => {
+  const headers = { 'Content-Type': 'application/json', Authorization: `Bearer ${tokens.cobrador}` };
+  for (const path of ['/api/v1/tickets/lotes', '/api/v1/tickets/lotes/1/reasignar', '/api/v1/tickets/lotes/1/devolver']) {
+    const response = await fetch(`${baseUrl}${path}`, { method: 'POST', headers, body: JSON.stringify({ serie: 'S3', numero_desde: 1, numero_hasta: 2, cobrador_id: 1 }) });
+    assert.equal(response.status, 403, path);
+  }
+  const lotes = await fetch(`${baseUrl}/api/v1/tickets/lotes`, { headers });
+  assert.equal(lotes.status, 403, 'el cobrador no ve los lotes de los demás');
+  const mios = await fetch(`${baseUrl}/api/v1/tickets/mios`, { headers });
+  assert.equal(mios.status, 200, 'el cobrador ve sus propios tickets');
 });
 
 test('el resumen público solo entrega cifras agregadas', async () => {

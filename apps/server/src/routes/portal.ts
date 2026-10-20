@@ -5,6 +5,7 @@ import { ingresarAlPortal } from '../portalAcceso.js';
 import { requireAuth, requireRoles } from '../auth.js';
 import { staffOnly, loginLimiter } from '../http/comunes.js';
 import { pool as db } from '../pg.js';
+import { buscarRecibo, generarReciboPdf, leerTokenDescarga, verificarRecibo } from '../reciboPdf.js';
 
 export const router = express.Router();
 
@@ -12,6 +13,25 @@ export const router = express.Router();
 router.post('/api/v1/portal/login', loginLimiter, async (req, res) => {
   const data = await ingresarAlPortal(db, req.body?.identifier, req.body?.pin);
   return res.json({ data, message: 'Portal del comerciante consultado correctamente' });
+});
+
+// Descarga del recibo desde el portal: el enlace firmado lo recibe solo quien entró con DNI + PIN,
+// vence a los 30 minutos y abre únicamente ese recibo.
+router.get('/api/v1/portal/recibos/:token/pdf', async (req, res) => {
+  const transaccionId = leerTokenDescarga(req.params.token);
+  const recibo = transaccionId ? await buscarRecibo(db, transaccionId) : null;
+  if (!recibo) return res.status(404).json({ message: 'El enlace del recibo no es válido o ya venció; vuelva a ingresar al portal' });
+  const pdf = await generarReciboPdf(recibo);
+  res.setHeader('Content-Type', 'application/pdf');
+  res.setHeader('Content-Disposition', `attachment; filename="recibo-${recibo.numero}.pdf"`);
+  return res.send(pdf);
+});
+
+// Verificación pública del QR del recibo: solo número, fecha, monto y estado (sin datos personales).
+router.get('/api/v1/publico/verificar/:token', async (req, res) => {
+  const data = await verificarRecibo(db, req.params.token);
+  if (!data) return res.status(404).json({ message: 'Recibo no encontrado: el código no corresponde a un recibo emitido por la municipalidad' });
+  return res.json({ data });
 });
 
 router.get('/api/v1/portal/:comercianteId/notificaciones', ...staffOnly, async (req, res) => {

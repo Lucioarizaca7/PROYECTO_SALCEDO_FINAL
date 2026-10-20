@@ -67,6 +67,13 @@ test('el payload al servidor no incluye el cobrador (lo pone el token)', async (
   assert.ok(payload.hash_transaccion && payload.fecha_cobro);
 });
 
+test('el cobro sin señal conserva la hora en que se empezó a atender al comerciante', async () => {
+  const cola = crearColaOffline({ store: memoryStore(), enviarLote: fakeServer().enviarLote, ahora });
+  const item = await cobrar(cola, 3, { inicio_atencion: '2026-10-10T14:58:00.000Z' });
+  assert.equal(aPayloadServidor(item).inicio_atencion, '2026-10-10T14:58:00.000Z');
+  assert.equal(aPayloadServidor(await cobrar(cola, 4)).inicio_atencion, undefined);
+});
+
 test('un cobro rechazado no detiene la cola: los demás se sincronizan', async () => {
   const store = memoryStore();
   const server = fakeServer({ 2: 'rechazado', 3: 'observado', 4: 'duplicado' });
