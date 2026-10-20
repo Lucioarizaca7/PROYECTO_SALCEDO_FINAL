@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  accountStatusText, buildAvenueSample, buildSiteFeatures, filterSites, geolocationErrorMessage, rectangleAround, siteFromFeature, siteProperties, PAYMENT_COLORS
+  accountStatusText, buildAvenueSample, buildSiteFeatures, filterSites, geolocationErrorMessage, paymentStatusText, rectangleAround, siteFromFeature, siteProperties, PAYMENT_COLORS
 } from '../src/components/features/map/sitesGeo.js';
 
 const { sites, geojson } = buildAvenueSample(12);
@@ -83,4 +83,9 @@ test('geolocationErrorMessage explica cada código de error', () => {
   assert.match(geolocationErrorMessage({ code: 2 }), /GPS/);
   assert.match(geolocationErrorMessage({ code: 3 }), /tardó/);
   assert.equal(geolocationErrorMessage({ message: 'x' }), 'x');
+});
+
+test('el puesto que cobra por día y no tuvo días cobrados explica por qué no debe', () => {
+  assert.equal(paymentStatusText({ estado_pago: 'no_devenga', motivo: 'sin_asistencia' }), 'Cobro por día: sin días cobrados en el mes');
+  assert.equal(paymentStatusText({ estado_pago: 'no_devenga', motivo: 'ferial_sin_asistencia' }), 'Ferial: no devenga por inasistencia');
 });

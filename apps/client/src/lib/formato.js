@@ -16,3 +16,16 @@ export const getInitials = (nombre) => {
   if (!words.length) return 'U';
   return words.slice(0, 2).map((word) => word.charAt(0)).join('').toUpperCase();
 };
+
+// Línea "Tarifa" de Pagos. Con cobro por día: monto de un día × días cobrados; cada puesto marcado un día
+// es un día cobrado, y si los puestos pagan montos distintos (vía asfaltada y sin asfaltar) va el detalle.
+export function textoTarifa(balance = {}) {
+  const puestos = balance.puestos_cobrados || [];
+  const dias = Number(balance.dias_asistidos || 0);
+  if (!dias) return `S/ ${balance.tarifa?.monto_fijo ?? 0}`;
+  const enPuestos = puestos.length > 1 ? ` en ${puestos.length} puestos` : '';
+  if (balance.monto_dia === null && puestos.length) {
+    return puestos.map((item) => `S/ ${item.monto_dia} × ${item.dias} (${item.codigo_puesto || `puesto ${item.puesto_id}`})`).join(' + ');
+  }
+  return `S/ ${balance.monto_dia ?? balance.tarifa?.monto_fijo ?? 0} × ${dias} ${dias === 1 ? 'día cobrado' : 'días cobrados'}${enPuestos}`;
+}

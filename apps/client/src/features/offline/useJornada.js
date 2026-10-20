@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 
 import { aplicarCobroLocal, buscarEnPadron, jornadaVigente, normalizarComerciante } from '../../services/jornadaOffline';
+import { CLAVE_TICKETS, desdeServidor } from '../../services/ticketsOffline';
 import { storeFor } from '../../services/offlineStore';
 import { apiBase, authFetch } from '../../services/session';
 
@@ -37,6 +38,8 @@ export function useJornada({ user }) {
       const registros = body.data.comerciantes.map((item) => normalizarComerciante(item, descargadoEn));
       await padronStore.replaceAll(registros);
       await jornadaStore.put({ clave: 'tarifas', tarifas: body.data.tarifas || [], rubros: body.data.rubros || [], zonas: body.data.zonas || [] });
+      // Tickets preimpresos del cobrador: sin perder los que entregó o anuló sin señal y aún no subieron.
+      if (body.data.tickets) await jornadaStore.put(desdeServidor(await jornadaStore.get(CLAVE_TICKETS).catch(() => null), body.data.tickets));
       const nextMeta = {
         clave: 'meta',
         descargadoEn,

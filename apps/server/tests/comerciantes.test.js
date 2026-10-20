@@ -125,8 +125,8 @@ test('calcularLiquidacion respeta la política de no devengo para ferial sin asi
 
 test('al eventual se le cobra un día de la tarifa de su rubro, solo una vez por día', async () => {
   const db = await initializeDatabase();
-  // Tarifa propia de la zona (tiene prioridad sobre la general): S/ 42 a la semana = S/ 6 al día.
-  await insertTarifa(db, { rubro_id: 3, zona_id: 1, tipo_tarifa: 'fija', monto_fijo: 42, monto_variable: 0, unidad_medida: 'semanal', vigencia_inicio: '2026-01-01', version: 1 });
+  // Tarifa propia de la zona (tiene prioridad sobre la general): S/ 6 por día cobrado.
+  await insertTarifa(db, { rubro_id: 3, zona_id: 1, tipo_tarifa: 'fija', monto_fijo: 6, monto_variable: 0, unidad_medida: 'semanal', vigencia_inicio: '2026-01-01', version: 1 });
   const comerciante = await insertComerciante(db, {
     dni_ruc: '75163744', nombre: 'Ambulante Eventual', rubro_id: 3, zona_id: 1,
     categoria: 'eventual', tipo_comerciante: 'eventual', estado: 'activo', usuario_creador: 1

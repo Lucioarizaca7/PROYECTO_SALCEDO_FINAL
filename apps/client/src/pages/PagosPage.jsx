@@ -1,10 +1,33 @@
 import { useSisrec } from '../app/SisrecContext';
+import { AsistenciaFerialPanel } from '../features/offline/AsistenciaFerialPanel';
 import { FieldWorkPanel } from '../features/offline/FieldWorkPanel';
 import { QrScanner } from '../features/payments/QrScanner';
 import { printThermalReceipt, shareViaWhatsApp } from '../features/payments/recibo';
 import { usePagos } from '../hooks/usePagos';
+import { textoTarifa } from '../lib/formato';
+import { textoTicket } from '../services/ticketsOffline';
+import '../features/payments/pagos.css';
 
 const muted = { display: 'block', fontSize: '12px', color: 'var(--civic-muted)' };
+
+// Meses con saldo desde el inicio de cobro; el cobro se aplica al mes elegido (por omisión, el más antiguo).
+function UnpaidMonths({ balance, onSelect }) {
+  const deuda = balance?.deuda_acumulada;
+  const impagos = (deuda?.periodos || []).filter((item) => item.saldo > 0);
+  // Se muestra si debe algún mes anterior o más de un mes; si solo debe el mes en curso, basta el desglose.
+  if (!deuda || !impagos.length || (impagos.length === 1 && !impagos[0].vencida)) return null;
+  return (
+    <div className="debt-months">
+      <div><span>Deuda acumulada desde {deuda.desde}</span><strong>S/ {Number(deuda.deuda_total).toFixed(2)}</strong></div>
+      <label>
+        <span>Aplicar el cobro a</span>
+        <select value={balance.periodo} onChange={(event) => onSelect(event.target.value)}>
+          {impagos.map((item) => <option key={item.periodo} value={item.periodo}>{item.periodo} · debe S/ {item.saldo.toFixed(2)}{item.vencida ? ' (vencido)' : ''}</option>)}
+        </select>
+      </label>
+    </div>
+  );
+}
 
 function DebtBreakdown({ balance }) {
   if (!balance) return <div className="empty-state">Busca un comerciante para mostrar su liquidación.</div>;
@@ -12,9 +35,50 @@ function DebtBreakdown({ balance }) {
     <div className="debt-breakdown">
       {balance.cobro_diario
         ? <><div><span>Cobro del día (eventual)</span><strong>S/ {Number(balance.monto_total || 0).toFixed(2)}</strong></div><div><span>Día</span><strong>{balance.dia}</strong></div></>
-        : <><div><span>Tarifa</span><strong>S/ {(balance.tarifa?.monto_fijo ?? 0)}</strong></div><div><span>Periodo</span><strong>{balance.periodo}</strong></div></>}
+        : <><div><span>Tarifa</span><strong>{textoTarifa(balance)}</strong></div><div><span>Periodo</span><strong>{balance.periodo}</strong></div></>}
       <div><span>Pagado</span><strong>S/ {Number(balance.monto_pagado || 0).toFixed(2)}</strong></div>
       <div className="debt-total"><span>Saldo pendiente</span><strong>S/ {balance.saldo.toFixed(2)}</strong></div>
+    </div>
+  );
+}
+
+// Tickets preimpresos: qué números entregar (los siguientes del lote del cobrador), cuántos por serie y
+// el botón para anular uno dañado. El monto del cobro es lo que valen los tickets.
+function TicketsDelCobro({ pagos }) {
+  const { requeridos, entrega, cambiarTickets, anularTicket, tickets } = pagos;
+  const monto = requeridos.reduce((total, item) => total + item.valor * item.cantidad, 0);
+  return (
+    <div className="ticket-panel" aria-label="Tickets a entregar">
+      {requeridos.map((item) => (
+        <div className="ticket-row" key={item.serie}>
+          <span>Tickets de S/ {item.valor.toFixed(2)} ({item.serie}) · quedan {tickets.estado.series[item.serie]?.disponibles.length ?? 0}</span>
+          <div className="ticket-stepper">
+            <button className="secondary-button compact" type="button" aria-label={`Un ticket ${item.serie} menos`} onClick={() => cambiarTickets(item.serie, -1)}>−</button>
+            <strong>{item.cantidad}</strong>
+            <button className="secondary-button compact" type="button" aria-label={`Un ticket ${item.serie} más`} onClick={() => cambiarTickets(item.serie, 1)}>+</button>
+          </div>
+        </div>
+      ))}
+      <div className="ticket-entrega">
+        <span>Cobrar S/ {monto.toFixed(2)}</span>
+        <strong>{entrega.tickets.length ? `Entregar ${entrega.tickets.length === 1 ? 'ticket' : 'tickets'} ${entrega.tickets.map((ticket) => textoTicket(ticket.serie, ticket.numero)).join(', ')}` : 'Sin tickets que entregar'}</strong>
+      </div>
+      {entrega.faltan.length > 0 && <div className="form-message">No te quedan tickets suficientes de {entrega.faltan.map((item) => item.serie).join(' y ')}.</div>}
+      <div className="ticket-chips">
+        {entrega.tickets.map((ticket) => (
+          <button key={`${ticket.serie}-${ticket.numero}`} className="secondary-button compact" type="button" onClick={() => anularTicket(ticket)}>Anular {textoTicket(ticket.serie, ticket.numero)}</button>
+        ))}
+      </div>
+      {tickets.anulacionesPendientes > 0 && <small>{tickets.anulacionesPendientes} anulación(es) por subir.</small>}
+    </div>
+  );
+}
+
+function AvisoPocosTickets({ tickets }) {
+  if (!tickets.pocos.length) return null;
+  return (
+    <div className="offline-banner" role="status">
+      {tickets.pocos.map((item) => `Te quedan ${item.quedan} tickets de S/ ${item.valor.toFixed(2)} (${item.serie})`).join(' · ')}. Pide un lote nuevo a la oficina.
     </div>
   );
 }
@@ -35,6 +99,7 @@ function ReceiptCard({ receipt, printStatus, setPrintStatus }) {
         <div><span>Método</span><strong>{receipt.metodo_pago}</strong></div>
         <div><span>Cobrador</span><strong>{receipt.cobrador}</strong></div>
         <div><span>Operación</span><strong>{receipt.codigo_operacion || 'No aplica'}</strong></div>
+        {receipt.tickets?.length > 0 && <div><span>Tickets</span><strong>{receipt.tickets.map((ticket) => ticket.texto || textoTicket(ticket.serie, ticket.numero)).join(', ')}</strong></div>}
         <div><span>Hash</span><strong>{receipt.hash_idempotencia || 'N/A'}</strong></div>
         <div className="receipt-total"><span>Total pagado</span><strong>S/ {receipt.monto.toFixed(2)}</strong></div>
       </div>
@@ -47,7 +112,7 @@ function ReceiptCard({ receipt, printStatus, setPrintStatus }) {
   );
 }
 
-function RecentPayments({ cobros }) {
+function RecentPayments({ cobros, puedeAnular, onAnular }) {
   return (
     <div className="panel payment-history">
       <div className="panel-heading"><div><div className="panel-title">Cobros recientes</div><div className="panel-subtitle">Estado actualizado al instante</div></div></div>
@@ -55,6 +120,8 @@ function RecentPayments({ cobros }) {
         <div className="payment-row" key={item.comprobante || index}>
           <div><strong>{item.comprobante || `#${item.id}`}</strong><span>{item.comerciante} · {item.metodo_pago}</span></div>
           <div><strong>{typeof item.monto === 'number' ? `S/ ${item.monto.toFixed(2)}` : item.monto}</strong><span className={`status ${item.estado === 'observado' ? 'pending' : item.estado === 'anulado' ? 'danger' : 'paid'}`}>{item.estado}</span></div>
+          {item.estado === 'anulado' && item.motivo_anulacion && <small className="payment-void-reason">Anulado: {item.motivo_anulacion}</small>}
+          {puedeAnular && item.estado === 'confirmado' && <button className="secondary-button payment-void" type="button" onClick={() => onAnular(item)}>Anular</button>}
         </div>
       ))}
     </div>
@@ -76,6 +143,7 @@ export function PagosPage() {
         </div>
       </div>
       {!isOnline && <div className="offline-banner">Sin señal: la búsqueda usa el padrón guardado y los cobros se guardan en el celular.</div>}
+      <AvisoPocosTickets tickets={pagos.tickets} />
       <div className="payment-workspace">
         <form className="panel payment-form" onSubmit={pagos.submit}>
           <div className="step-label">01 · Localizar comerciante</div>
@@ -103,10 +171,12 @@ export function PagosPage() {
             </div>
           )}
           <div className="step-label">02 · Revisar deuda</div>
+          <UnpaidMonths balance={balance} onSelect={pagos.elegirPeriodo} />
           <DebtBreakdown balance={balance} />
           <div className="step-label">03 · Confirmar cobro</div>
+          {pagos.usaTickets && <TicketsDelCobro pagos={pagos} />}
           <div className="payment-fields">
-            <input required min="0.01" max={balance?.saldo || undefined} step="0.01" type="number" placeholder="Monto a cobrar" value={form.monto} onChange={(event) => setForm({ ...form, monto: event.target.value })} />
+            <input required min="0.01" max={balance?.saldo || undefined} step="0.01" type="number" placeholder="Monto a cobrar" aria-label="Monto a cobrar" readOnly={pagos.usaTickets} title={pagos.usaTickets ? 'El monto es lo que valen los tickets a entregar' : undefined} value={form.monto} onChange={(event) => setForm({ ...form, monto: event.target.value })} />
             <select value={form.metodo_pago} onChange={(event) => setForm({ ...form, metodo_pago: event.target.value })}><option value="efectivo">Efectivo</option><option value="yape">Yape</option><option value="plin">Plin</option><option value="pos">POS</option></select>
           </div>
           {form.metodo_pago !== 'efectivo' && <input required placeholder="Código de operación digital" value={form.codigo_operacion} onChange={(event) => setForm({ ...form, codigo_operacion: event.target.value })} />}
@@ -117,7 +187,8 @@ export function PagosPage() {
         </form>
         <div className="payment-side">
           <FieldWorkPanel isOnline={isOnline} jornada={jornada} queue={offlineQueue} />
-          <RecentPayments cobros={cobros} />
+          <AsistenciaFerialPanel isOnline={isOnline} jornada={jornada} />
+          <RecentPayments cobros={cobros} puedeAnular={pagos.puedeAnular} onAnular={pagos.anularCobro} />
         </div>
       </div>
       {pagos.showQrScanner && <QrScanner onScan={pagos.scanQr} onClose={() => pagos.setShowQrScanner(false)} />}

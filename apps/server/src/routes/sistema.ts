@@ -4,11 +4,35 @@ import { currentPeriod, getDbStats, getRubros, getZonas, getPuestos, getOperatio
 import { requireAuth } from '../auth.js';
 import { staffOnly, roles } from '../http/comunes.js';
 import { pool as db } from '../pg.js';
+import { config } from '../config.js';
 
 export const router = express.Router();
 
-router.get('/api/v1/health', (_req, res) => {
-  res.json({ status: 'ok', message: 'SISREC Salcedo API funcionando' });
+// Para el monitoreo (UptimeRobot) y el healthcheck de Docker: 503 si la base no responde.
+// La analítica es opcional (la API proyecta sola si falta): se informa, pero no tumba la salud.
+router.get('/api/v1/health', async (_req, res) => {
+  let baseDeDatos = 'ok';
+  try {
+    await db.query('SELECT 1');
+  } catch {
+    baseDeDatos = 'sin_conexion';
+  }
+  let analitica = 'no_configurada';
+  if (config.analyticsUrl) {
+    try {
+      const response = await fetch(`${config.analyticsUrl}/api/health`, { signal: AbortSignal.timeout(2000) });
+      analitica = response.ok ? 'ok' : 'error';
+    } catch {
+      analitica = 'sin_conexion';
+    }
+  }
+  const ok = baseDeDatos === 'ok';
+  res.status(ok ? 200 : 503).json({
+    status: ok ? 'ok' : 'error',
+    message: ok ? 'SISREC Salcedo API funcionando' : 'La base de datos no responde',
+    base_de_datos: baseDeDatos,
+    analitica
+  });
 });
 
 function dashboardStats(metrics) {

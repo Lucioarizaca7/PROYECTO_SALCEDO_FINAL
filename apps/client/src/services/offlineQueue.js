@@ -47,7 +47,10 @@ export function aPayloadServidor(item) {
     observaciones: item.observaciones || undefined,
     concepto: item.concepto || undefined,
     periodo: item.periodo,
-    fecha_cobro: item.fechaCobro
+    fecha_cobro: item.fechaCobro,
+    inicio_atencion: item.inicioAtencion || undefined,
+    // Tickets preimpresos entregados: el servidor valida que sean del lote del cobrador y que la suma cuadre.
+    tickets: item.tickets?.length ? item.tickets.map(({ serie, numero }) => ({ serie, numero: Number(numero) })) : undefined
   };
 }
 
@@ -90,6 +93,9 @@ export function crearColaOffline({ store, enviarLote, ahora = () => new Date(), 
       concepto: payload.concepto || null,
       periodo: payload.periodo || periodoEnLima(new Date(fechaCobro)),
       fechaCobro,
+      // Hora en que el cobrador abrió al comerciante: mide el tiempo de cada cobro (indicador de −50 %).
+      inicioAtencion: payload.inicio_atencion || payload.inicioAtencion || null,
+      tickets: Array.isArray(payload.tickets) && payload.tickets.length ? payload.tickets : null,
       creadoEn,
       actualizadoEn: creadoEn
     };

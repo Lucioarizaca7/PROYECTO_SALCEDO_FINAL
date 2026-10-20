@@ -1,67 +1,22 @@
 // Cobros, sincronización offline, revisión de observados, jornada y comprobantes.
 import express from 'express';
-import { currentPeriod, getComerciantes, getCobros, registrarCobro, syncOfflineCobro, syncOfflineBatch, getCobrosObservados, resolveCobroObservado, getSyncErrors, getJornadaPackage } from '../db.js';
+import { currentPeriod, getCobros, registrarCobro, syncOfflineCobro, syncOfflineBatch, getCobrosObservados, resolveCobroObservado, getSyncErrors, getJornadaPackage, anularCobro, getTiemposCobro, ticketsDelCobrador } from '../db.js';
 import { requireAuth, requireRoles } from '../auth.js';
 import { handleValidationErrors, validateCobro } from '../validation.js';
 import { staffOnly, auditContext } from '../http/comunes.js';
 import { pool as db } from '../pg.js';
+import { buscarRecibo, generarReciboPdf } from '../reciboPdf.js';
 
 export const router = express.Router();
 
+// Recibo en PDF para el personal (por id de cobro o número R-000123). El comerciante lo baja desde el portal.
 router.get('/api/v1/comprobantes/:id/pdf', ...staffOnly, async (req, res) => {
-  const payment = (await getCobros(db)).find((item) => item.id === Number(req.params.id) || String(item.comprobante) === String(req.params.id) || String(item.codigo_operacion) === String(req.params.id));
-  if (!payment) {
-    return res.status(404).json({ message: 'Comprobante no encontrado' });
-  }
-
-  const merchant = (await getComerciantes(db, { includeInactive: true, limit: 1000 })).find((item) => item.id === Number(payment.comerciante_id));
-  const textLines = [
-    `Comerciante: ${merchant?.nombre || 'N/D'}`,
-    `Comprobante: ${payment.comprobante || payment.codigo_operacion || `COBRO-${payment.id}`}`,
-    `Concepto: ${payment.concepto || 'Liquidación de deuda'}`,
-    `Monto: S/ ${Number(payment.monto || 0).toFixed(2)}`,
-    `Método: ${payment.metodo_pago || 'efectivo'}`,
-    `Fecha: ${payment.fecha_cobro || 'N/D'}`,
-    `Hash: ${payment.hash_transaccion || 'sha256:local'}`
-  ];
-
-  const content = [
-    'BT',
-    '/F1 16 Tf',
-    '72 760 Td',
-    '(SISREC SALCEDO) Tj',
-    '0 -28 Td',
-    '(COMPROBANTE DE PAGO) Tj',
-    '0 -28 Td',
-    `(${textLines.join(' | ')}) Tj`,
-    'ET'
-  ].join('\n');
-
-  const objects = [
-    '<< /Type /Catalog /Pages 2 0 R >>',
-    '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
-    '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>',
-    `<< /Length ${Buffer.byteLength(content, 'latin1')} >>\nstream\n${content}\nendstream`,
-    '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>'
-  ];
-
-  let pdf = '%PDF-1.4\n';
-  const offsets = [0];
-  objects.forEach((object, index) => {
-    offsets.push(Buffer.byteLength(pdf, 'latin1'));
-    pdf += `${index + 1} 0 obj\n${object}\nendobj\n`;
-  });
-
-  const xrefStart = Buffer.byteLength(pdf, 'latin1');
-  pdf += `xref\n0 ${objects.length + 1}\n0000000000 65535 f\n`;
-  for (let i = 1; i <= objects.length; i += 1) {
-    pdf += `${String(offsets[i]).padStart(10, '0')} 00000 n\n`;
-  }
-  pdf += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xrefStart}\n%%EOF`;
-
+  const recibo = await buscarRecibo(db, req.params.id);
+  if (!recibo) return res.status(404).json({ message: 'Comprobante no encontrado' });
+  const pdf = await generarReciboPdf(recibo);
   res.setHeader('Content-Type', 'application/pdf');
-  res.setHeader('Content-Disposition', `attachment; filename="comprobante-${req.params.id}.pdf"`);
-  return res.send(Buffer.from(pdf, 'latin1'));
+  res.setHeader('Content-Disposition', `attachment; filename="recibo-${recibo.numero}.pdf"`);
+  return res.send(pdf);
 });
 
 router.get('/api/v1/cobros', ...staffOnly, async (_req, res) => {
@@ -133,6 +88,22 @@ router.post('/api/v1/cobros/observados/:id/resolver', requireAuth, requireRoles(
   return res.json({ data, message: data.estado === 'anulado' ? 'Cobro anulado; registre la devolución al comerciante' : 'Cobro aceptado' });
 });
 
+// Anulación: solo el administrador, con motivo. El cobro no se borra; deja de contar en lo pagado.
+router.post('/api/v1/cobros/:id/anular', requireAuth, requireRoles(['super_admin']), async (req, res) => {
+  const data = await anularCobro(db, Number(req.params.id), {
+    motivo: req.body?.motivo,
+    usuarioId: req.user.id,
+    audit: auditContext(req, 'ANULAR_COBRO')
+  });
+  return res.json({ data, message: 'Cobro anulado; registre la devolución al comerciante si corresponde' });
+});
+
+// Tiempo de atención por cobro (indicador de −50 %).
+router.get('/api/v1/cobros/tiempos', requireAuth, requireRoles(['super_admin', 'auditor']), async (req, res) => {
+  const data = await getTiemposCobro(db, { desde: req.query.desde, hasta: req.query.hasta });
+  return res.json({ data });
+});
+
 router.get('/api/v1/cobros/sincronizacion/errores', requireAuth, requireRoles(['super_admin', 'auditor']), async (_req, res) => {
   const data = await getSyncErrors(db);
   return res.json({ data, total: data.length });
@@ -142,7 +113,8 @@ router.get('/api/v1/cobros/sincronizacion/errores', requireAuth, requireRoles(['
 router.get('/api/v1/jornada/paquete', requireAuth, requireRoles(['super_admin', 'cobrador']), async (req, res) => {
   const periodo = /^\d{4}-\d{2}$/.test(String(req.query.periodo || '')) ? String(req.query.periodo) : currentPeriod();
   const data = await getJornadaPackage(db, { periodo });
-  return res.json({ data, total: data.comerciantes.length });
+  // Los tickets preimpresos del cobrador, para indicar el número a entregar sin señal.
+  return res.json({ data: { ...data, tickets: await ticketsDelCobrador(db, req.user.id) }, total: data.comerciantes.length });
 });
 
 router.post('/api/v1/cobros',

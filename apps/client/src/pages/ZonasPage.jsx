@@ -1,6 +1,8 @@
 import { useSisrec } from '../app/SisrecContext';
 import { useZonas } from '../hooks/useZonas';
 
+const TIPO_VIA_TEXTO = { asfaltada: 'Asfaltada', sin_asfaltar: 'Sin asfaltar' };
+
 export function ZonasPage() {
   const { catalogos } = useSisrec();
   const zonas = useZonas();
@@ -31,6 +33,11 @@ export function ZonasPage() {
             <div className="merchant-form-grid">
               <input required placeholder="Nombre de la zona" value={zoneForm.nombre} onChange={(event) => setZoneForm({ ...zoneForm, nombre: event.target.value })} />
               <input placeholder="Descripción" value={zoneForm.descripcion} onChange={(event) => setZoneForm({ ...zoneForm, descripcion: event.target.value })} />
+              <select aria-label="Tipo de vía" value={zoneForm.tipo_via} onChange={(event) => setZoneForm({ ...zoneForm, tipo_via: event.target.value })}>
+                <option value="">Tipo de vía: sin dato</option>
+                <option value="asfaltada">Vía asfaltada</option>
+                <option value="sin_asfaltar">Vía sin asfaltar</option>
+              </select>
               <button className="primary-button" type="submit">{zonas.editingZoneId ? 'Actualizar zona' : 'Guardar zona'}</button>
               {zonas.editingZoneId && <button type="button" className="secondary-button" onClick={zonas.cancelZone}>Cancelar</button>}
             </div>
@@ -39,13 +46,14 @@ export function ZonasPage() {
           <div className="table-card" style={{ marginTop: '16px' }}>
             <table>
               <thead>
-                <tr><th>Zona</th><th>Descripción</th><th>Calles</th><th>Acciones</th></tr>
+                <tr><th>Zona</th><th>Descripción</th><th>Tipo de vía</th><th>Calles</th><th>Acciones</th></tr>
               </thead>
               <tbody>
                 {zonas.zoneRecords.map((zona) => (
                   <tr key={zona.id}>
                     <td>{zona.nombre}</td>
                     <td>{zona.descripcion || 'Sin descripción'}</td>
+                    <td>{TIPO_VIA_TEXTO[zona.tipo_via] || 'Sin dato'}</td>
                     <td>{Number(zona.calles_count || 0)}</td>
                     <td>
                       <button className="table-action" type="button" onClick={() => zonas.editZone(zona)}>Editar</button>

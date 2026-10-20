@@ -35,6 +35,10 @@ export function normalizarComerciante(item, descargadoEn = new Date().toISOStrin
     noDevengo: Boolean(item.no_devengo),
     cobroDiario: Boolean(item.cobro_diario),
     dia: item.dia || null,
+    puestoFerialId: item.puesto_ferial_id ?? null,
+    diasAsistidos: item.dias_asistidos ?? null,
+    // Series de ticket preimpreso con que se le cobra (un ticket por puesto y día); vacía = sin ticket.
+    seriesCobro: Array.isArray(item.series_cobro) ? item.series_cobro.map((serie) => ({ serie: serie.serie, valor: Number(serie.valor), puestos: Number(serie.puestos) || 1 })) : [],
     actualizadoEn: descargadoEn
   };
 }
@@ -111,6 +115,7 @@ export function aSaldoDePantalla(registro, periodo) {
     no_devengo: registro.noDevengo,
     cobro_diario: Boolean(registro.cobroDiario),
     dia: registro.dia || null,
+    series_cobro: registro.seriesCobro || [],
     offline: true,
     actualizado_en: registro.actualizadoEn
   };

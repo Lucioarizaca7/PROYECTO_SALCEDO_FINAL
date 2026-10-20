@@ -10,7 +10,8 @@ import { randomInt } from 'node:crypto';
 import bcrypt from 'bcryptjs';
 
 import { config } from './config.js';
-import { buscarComerciantePorCodigo, calcularLiquidacion } from './db.js';
+import { buscarComerciantePorCodigo, calcularLiquidacion, calcularDeudaAcumulada } from './db.js';
+import { tokenDescarga } from './reciboPdf.js';
 import { AppError, NotFoundError, ValidationError } from './errors.js';
 
 export const PIN_MAX_INTENTOS = 5;
@@ -105,6 +106,7 @@ async function obtenerDatosPortal(db, comercianteId) {
     FROM transacciones co LEFT JOIN comprobantes cp ON cp.id = co.comprobante_id
     WHERE co.comerciante_id = $1 ORDER BY co.fecha_cobro_cliente DESC LIMIT $2`, [comercianteId, PAGOS_EN_PORTAL]);
   const liquidacion = await calcularLiquidacion(db, comercianteId);
+  const acumulada = await calcularDeudaAcumulada(db, comercianteId);
 
   return {
     comerciante: {
@@ -114,13 +116,18 @@ async function obtenerDatosPortal(db, comercianteId) {
       rubro: merchant.rubro,
       zona: merchant.zona
     },
-    pagos,
+    // Cada recibo con su enlace de descarga firmado (30 minutos): solo el dueño lo recibe.
+    pagos: pagos.map((pago) => ({ ...pago, descarga: pago.comprobante ? tokenDescarga(pago.id) : null })),
     deuda: {
       periodo: liquidacion.periodo,
       monto_total: Number(liquidacion.monto_total || 0),
       monto_pagado: Number(liquidacion.monto_pagado || 0),
       saldo: Number(liquidacion.saldo || 0),
-      estado: liquidacion.estado
+      estado: liquidacion.estado,
+      // Meses anteriores con saldo (desde el inicio de cobro) y total adeudado.
+      meses_impagos: acumulada.periodos.filter((item) => item.saldo > 0).map(({ periodo, saldo }) => ({ periodo, saldo })),
+      deuda_vencida: acumulada.deuda_vencida,
+      deuda_total: acumulada.deuda_total
     }
   };
 }

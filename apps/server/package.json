@@ -9,6 +9,8 @@
     "start": "node dist/index.js",
     "build": "tsc",
     "crear-admin": "tsx src/cli/crear-admin.ts",
+    "crear-usuario": "tsx src/cli/crear-usuario.ts",
+    "revisar-coordenadas": "tsx src/cli/revisar-coordenadas.ts",
     "test": "tsx --test tests/*.test.js",
     "seed:feria-zapatillas": "node scripts/seed-feria-zapatillas.js",
     "migrate:pg": "node scripts/migrate-sqlite-to-pg.js"
@@ -16,16 +18,18 @@
   "dependencies": {
     "bcryptjs": "^2.4.3",
     "cors": "^2.8.5",
+    "dotenv": "^16.4.7",
     "express": "^5.3.0",
     "express-rate-limit": "^8.7.1",
     "express-validator": "^7.3.2",
     "helmet": "^8.3.0",
     "jsonwebtoken": "^9.0.2",
     "multer": "^2.4.0",
+    "pdfkit": "^0.15.0",
     "pg": "^8.23.1",
+    "qrcode": "^1.5.4",
     "read-excel-file": "^9.3.10",
-    "sql.js": "^1.13.0",
-    "dotenv": "^16.4.7"
+    "sql.js": "^1.13.0"
   },
   "devDependencies": {
     "@types/bcryptjs": "^2.4.6",

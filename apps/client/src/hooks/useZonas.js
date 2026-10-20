@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { useSisrec } from '../app/SisrecContext';
 import { apiBase, authFetch } from '../services/session';
 
-const EMPTY_ZONE = { nombre: '', descripcion: '' };
+const EMPTY_ZONE = { nombre: '', descripcion: '', tipo_via: '' };
 const emptyCalle = (zonaId = '') => ({ zona_id: String(zonaId), nombre: '', descripcion: '', estado: 'activo' });
 
 // Página Zonas y calles: listas propias (GET /zonas trae también las calles) y su CRUD.
@@ -77,7 +77,7 @@ export function useZonas() {
 
   const editZone = (zona) => {
     setEditingZoneId(zona.id);
-    setZoneForm({ nombre: zona.nombre, descripcion: zona.descripcion || '' });
+    setZoneForm({ nombre: zona.nombre, descripcion: zona.descripcion || '', tipo_via: zona.tipo_via || '' });
   };
   const cancelZone = () => {
     setEditingZoneId(null);
