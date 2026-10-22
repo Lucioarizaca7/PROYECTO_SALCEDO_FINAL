@@ -8,8 +8,6 @@ import { textoTarifa } from '../lib/formato';
 import { textoTicket } from '../services/ticketsOffline';
 import '../features/payments/pagos.css';
 
-const muted = { display: 'block', fontSize: '12px', color: 'var(--civic-muted)' };
-
 // Meses con saldo desde el inicio de cobro; el cobro se aplica al mes elegido (por omisión, el más antiguo).
 function UnpaidMonths({ balance, onSelect }) {
   const deuda = balance?.deuda_acumulada;
@@ -154,20 +152,20 @@ export function PagosPage() {
           </div>
           {merchant && <div className="merchant-summary"><strong>{merchant.nombre}</strong><span>{merchant.dni_ruc} · {merchant.rubro} · {merchant.zona}</span><span>Puesto: {merchant.codigo}</span></div>}
           {merchant && balance && (
-            <div className="panel express-card" style={{ background: 'linear-gradient(135deg, rgba(39,174,96,0.12), rgba(15,23,42,0.08))', border: '1px solid rgba(39,174,96,0.3)', padding: '16px', borderRadius: '14px', marginTop: '12px' }}>
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px', flexWrap: 'wrap' }}>
+            <div className="panel express-card">
+              <div className="express-head">
                 <div>
-                  <div className="eyebrow" style={{ color: '#1f9d63' }}>MODO EXPRESS</div>
+                  <div className="eyebrow">MODO EXPRESS</div>
                   <strong>{merchant.nombre}</strong>
                 </div>
                 <button className="primary-button" type="button" onClick={pagos.applySuggestion}>Cobrar sugerido</button>
               </div>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: '12px', marginTop: '14px' }}>
-                <div><span style={muted}>Saldo pendiente</span><strong>S/ {Number(balance.saldo || 0).toFixed(2)}</strong></div>
-                <div><span style={muted}>Sugerencia</span><strong>S/ {Number(suggestion.suggestedAmount || 0).toFixed(2)}</strong></div>
-                <div><span style={muted}>Método preferido</span><strong>{String(suggestion.preferredMethod || 'efectivo').toUpperCase()}</strong></div>
+              <div className="express-grid">
+                <div><span>Saldo pendiente</span><strong>S/ {Number(balance.saldo || 0).toFixed(2)}</strong></div>
+                <div><span>Sugerencia</span><strong>S/ {Number(suggestion.suggestedAmount || 0).toFixed(2)}</strong></div>
+                <div><span>Método preferido</span><strong>{String(suggestion.preferredMethod || 'efectivo').toUpperCase()}</strong></div>
               </div>
-              <div style={{ marginTop: '12px', fontWeight: 600, color: '#0f172a' }}>{suggestion.lastLabel}</div>
+              <div className="express-last">{suggestion.lastLabel}</div>
             </div>
           )}
           <div className="step-label">02 · Revisar deuda</div>
