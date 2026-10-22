@@ -21,8 +21,8 @@ const pwa = VitePWA({
     scope: '/',
     display: 'standalone',
     orientation: 'portrait',
-    background_color: '#F4F8FC',
-    theme_color: '#1D4ED8',
+    background_color: '#F3F6F4',
+    theme_color: '#0B5D3B',
     categories: ['government', 'finance', 'business'],
     icons: [
       { src: '/icons/pwa-192x192.png', sizes: '192x192', type: 'image/png' },

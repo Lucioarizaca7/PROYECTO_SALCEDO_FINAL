@@ -74,6 +74,6 @@ export function useCaja() {
 
   return {
     hoy: hoyEnLima(), esCobrador, veTodos, fecha, setFecha, resumen, declarado, setDeclarado, observaciones, setObservaciones,
-    cierres, message, cerrar, diferencia: diferenciaCaja(resumen?.esperado, declarado)
+    cierres, message, cerrar, recargar: cargar, diferencia: diferenciaCaja(resumen?.esperado, declarado)
   };
 }

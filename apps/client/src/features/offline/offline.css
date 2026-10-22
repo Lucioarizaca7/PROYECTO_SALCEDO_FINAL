@@ -142,8 +142,8 @@
 }
 
 .review-tabs button.active {
-  background: var(--civic-blue, #1d4ed8);
-  border-color: var(--civic-blue, #1d4ed8);
+  background: var(--civic-blue, #0B5D3B);
+  border-color: var(--civic-blue, #0B5D3B);
   color: #fff;
 }
 

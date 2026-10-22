@@ -1,3 +1,4 @@
+import { useSisrec } from '../app/SisrecContext';
 import { METODOS_CAJA, useCaja } from '../hooks/useCaja';
 import { formatPEN } from '../lib/formato';
 
@@ -44,6 +45,22 @@ function TicketsDelDia({ tickets }) {
   );
 }
 
+// Cobros guardados en este celular que el servidor aún no tiene: no entran en lo esperado.
+// Se avisa sin bloquear el cierre; los que suban después quedan como posteriores al cierre.
+function AvisoPorSubir({ onSynced }) {
+  const { isOnline, offlineQueue } = useSisrec();
+  const porSubir = offlineQueue.counts.pendiente + offlineQueue.counts.error;
+  if (!porSubir) return null;
+  return (
+    <div className="offline-banner" role="status">
+      Tienes {porSubir} cobro(s) por subir: el servidor todavía no los cuenta en lo esperado.{' '}
+      {isOnline
+        ? <button className="secondary-button compact" type="button" disabled={offlineQueue.syncing} onClick={async () => { await offlineQueue.sync(); onSynced(); }}>{offlineQueue.syncing ? 'Sincronizando…' : 'Sincronizar ahora'}</button>
+        : 'Sincroniza cuando tengas señal, antes de cerrar.'}
+    </div>
+  );
+}
+
 function CierreHecho({ cierre, posteriores }) {
   return (
     <div className="panel">
@@ -82,12 +99,17 @@ export function CajaPage() {
         <input type="date" aria-label="Día de la caja" value={caja.fecha} max={caja.hoy} onChange={(event) => caja.setFecha(event.target.value)} />
       </div>
       {caja.message && <div className="form-message">{caja.message}</div>}
+      {caja.esCobrador && <AvisoPorSubir onSynced={caja.recargar} />}
 
       {caja.esCobrador && resumen && (resumen.cierre
         ? <CierreHecho cierre={resumen.cierre} posteriores={resumen.posteriores_al_cierre} />
         : (
           <form className="panel merchant-form" onSubmit={caja.cerrar}>
-            <div className="panel-title">Mi caja del {resumen.fecha}: {resumen.cobros} cobro(s), {formatPEN(resumen.esperado_total)} esperados</div>
+            <div className="panel-title">Mi caja del {resumen.fecha}</div>
+            <div className="caja-esperado">
+              <span>Esperado según el servidor · {resumen.cobros} cobro(s)</span>
+              <strong>{formatPEN(resumen.esperado_total)}</strong>
+            </div>
             <div className="merchant-form-grid">
               {METODOS_CAJA.map(({ key, label }) => (
                 <label key={key}>
@@ -97,7 +119,7 @@ export function CajaPage() {
               ))}
               <input placeholder="Observaciones (opcional)" value={caja.observaciones} onChange={(event) => caja.setObservaciones(event.target.value)} />
             </div>
-            <p><span className={`status ${claseDiferencia(caja.diferencia)}`}>{textoDiferencia(caja.diferencia)}</span></p>
+            <p className="caja-diferencia"><span className={`status ${claseDiferencia(caja.diferencia)}`}>{textoDiferencia(caja.diferencia)}</span></p>
             <TicketsDelDia tickets={resumen.tickets} />
             <button className="primary-button" type="submit">Cerrar caja del día</button>
           </form>

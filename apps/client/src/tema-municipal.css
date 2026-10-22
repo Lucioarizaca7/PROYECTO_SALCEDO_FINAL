@@ -1,0 +1,737 @@
+/*
+ * Tema municipal (prototipo prototipos/frontend-mezcla): colores del escudo y la bandera del C. P. Salcedo,
+ * bordes marcados que se leen al sol, títulos condensados y números en monoespaciada.
+ * Se carga después de styles.css y solo cambia el aspecto: las páginas y sus clases siguen igual.
+ */
+:root {
+  --institucional: #0B5D3B;          /* verde del escudo: barras y acción principal (texto blanco 7.9:1) */
+  --institucional-oscuro: #084A2F;   /* barra lateral */
+  --institucional-hover: #0E6E46;
+  --institucional-claro: #E4F1EA;
+  --celeste: #0A6E9C;                /* celeste de la bandera, legible: solo lectura e información (5.6:1) */
+  --celeste-bg: #E2F1F9;
+  --dorado: #F2B630;                 /* sol del escudo: selección y avisos, siempre con texto oscuro */
+  --dorado-hover: #DCA21F;
+  --naranja: #C2410C;                /* borde del escudo: solo acciones destructivas */
+  --bandera: linear-gradient(90deg, #0B8F4D 0 40%, #FFFFFF 40% 70%, #0EA5D9 70% 100%);
+
+  --superficie: #F3F6F4;
+  --superficie-2: #E6ECE8;
+  --tinta: #13261C;
+  --tinta-2: #3F5247;
+  --tinta-3: #5E6E64;
+  --borde-fuerte: #1B3A2B;
+  --borde-suave: #D3DDD7;
+  --verde-bg: #E3F4EA;
+  --verde-tinta: #0B6B3A;
+  --rojo-tinta: #B42318;
+  --rojo-bg: #FEE4E2;
+
+  --font-display: 'Barlow Condensed', 'Arial Narrow', sans-serif;
+  --anillo-foco: 0 0 0 3px #F2B630, 0 0 0 5px #084A2F;
+}
+
+body {
+  background: #E4EAE6;
+  color: var(--tinta);
+  line-height: 1.4;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Foco visible en cualquier fondo: anillo dorado con borde verde oscuro */
+button:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible,
+a:focus-visible,
+.sidebar :focus-visible,
+.table-card button:focus-visible {
+  outline: none;
+  box-shadow: var(--anillo-foco);
+}
+
+.font-mono { font-family: var(--font-mono); }
+.tabular-nums { font-variant-numeric: tabular-nums; }
+
+/* Marca "S" del ingreso, el portal y la página principal: sol del escudo */
+.brand-mark {
+  border: 2px solid var(--borde-fuerte);
+  border-radius: 6px;
+  background: var(--dorado);
+  box-shadow: none;
+  color: var(--tinta);
+  font-family: var(--font-display);
+  font-size: 22px;
+}
+
+.landing-brand { color: var(--institucional); }
+
+/* ---------- Marco: barra lateral ---------- */
+.app-shell { background: var(--superficie); }
+
+.sidebar {
+  width: 232px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--institucional-oscuro);
+  background-image: var(--bandera);
+  background-size: 100% 5px;
+  background-repeat: no-repeat;
+  border-right: 2px solid var(--borde-fuerte);
+}
+
+.sidebar-header {
+  padding: 24px 16px 16px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.16);
+}
+
+.marca-sisrec {
+  display: inline-block;
+  padding: 2px 10px;
+  border-radius: 4px;
+  background: var(--dorado);
+  color: var(--tinta);
+  font-family: var(--font-display);
+  font-size: 26px;
+  font-weight: 800;
+  letter-spacing: 0.5px;
+  line-height: 1.1;
+}
+
+.marca-sub {
+  margin-top: 6px;
+  color: #C9DDD1;
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+}
+
+.marca-periodo {
+  margin-top: 2px;
+  color: var(--dorado);
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+.sidebar-nav {
+  flex: 1;
+  gap: 0;
+  margin: 0;
+  padding: 12px 0;
+  overflow-y: auto;
+}
+
+.nav-item {
+  padding: 10px 16px;
+  border: 0;
+  border-left: 4px solid transparent;
+  border-radius: 0;
+  color: #E3EEE7;
+  font-size: 14px;
+  font-weight: 600;
+  transition: background-color 0.1s;
+}
+
+.nav-item:hover {
+  background: var(--institucional-hover);
+  border-color: transparent;
+  color: #FFF;
+}
+
+.nav-item.active,
+.nav-item.active:hover {
+  background: var(--dorado);
+  border-left-color: #FFF;
+  color: var(--tinta);
+  font-weight: 700;
+}
+
+.sidebar-footer {
+  padding: 14px 16px;
+  border-top: 1px solid rgba(255, 255, 255, 0.16);
+  color: #C9DDD1;
+  font-size: 11px;
+  line-height: 1.3;
+}
+
+.sidebar-footer strong {
+  display: block;
+  color: #FFF;
+  font-size: 13px;
+}
+
+.rol-solo-lectura {
+  display: inline-block;
+  margin-bottom: 6px;
+  padding: 4px 8px;
+  border-radius: 4px;
+  background: var(--celeste);
+  color: #FFF;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+/* ---------- Marco: barra superior ---------- */
+.topbar {
+  min-height: 60px;
+  padding: 10px 24px;
+  background: #FFF;
+  border-bottom: 2px solid var(--borde-fuerte);
+  backdrop-filter: none;
+}
+
+.topbar .eyebrow {
+  color: var(--tinta-3);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+}
+
+.topbar-left h2 {
+  color: var(--tinta);
+  font-family: var(--font-display);
+  font-size: 24px;
+  font-weight: 800;
+  letter-spacing: 0;
+  line-height: 1.1;
+}
+
+.menu-button,
+.notification-button {
+  border: 2px solid var(--borde-fuerte);
+  border-radius: 6px;
+  background: #FFF;
+  color: var(--tinta);
+}
+
+.notification-button:hover { background: var(--superficie); border-color: var(--borde-fuerte); }
+
+.search-box {
+  border: 1.5px solid var(--borde-fuerte);
+  border-radius: 6px;
+  background: var(--superficie);
+  box-shadow: none;
+}
+
+.user-badge {
+  border: 1.5px solid var(--borde-fuerte);
+  border-radius: 6px;
+  box-shadow: none;
+}
+
+.user-avatar {
+  border-radius: 4px;
+  background: var(--dorado);
+  color: var(--tinta);
+}
+
+/* Píldora de conexión: verde con señal, dorada y punteada sin señal */
+.sync-status-badge {
+  padding: 4px 10px;
+  border: 1.5px solid var(--borde-fuerte);
+  border-radius: 20px;
+  background: var(--verde-bg);
+  box-shadow: none;
+  color: var(--verde-tinta);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.sync-status-badge .sync-label { color: inherit; }
+.sync-dot, .sync-dot.online, .sync-dot.offline { width: 8px; height: 8px; background: currentColor; box-shadow: none; }
+
+.sync-status-badge.sin-senal {
+  background: var(--dorado);
+  border-style: dashed;
+  color: var(--tinta);
+}
+
+.sync-pending {
+  border: 1px solid var(--borde-fuerte);
+  border-radius: 4px;
+  background: #FFF;
+  color: var(--tinta);
+  font-family: var(--font-mono);
+}
+
+/* ---------- Páginas ---------- */
+.page-content { background: var(--superficie); }
+
+.page-heading h1 {
+  color: var(--tinta);
+  font-family: var(--font-display);
+  font-size: clamp(2rem, 3vw, 2.4rem);
+  font-weight: 800;
+  letter-spacing: 0;
+  line-height: 1.05;
+}
+
+.page-heading p {
+  color: var(--tinta-2);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.eyebrow {
+  color: var(--tinta-2);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.06em;
+}
+
+.stat-card,
+.panel,
+.table-card,
+.detail-card {
+  background: #FFF;
+  border: 2px solid var(--borde-fuerte);
+  border-radius: 10px;
+  box-shadow: none;
+}
+
+.kpi-card::before { height: 5px; background: var(--bandera); }
+.kpi-card:hover { transform: none; box-shadow: 0 2px 0 var(--borde-fuerte); }
+
+.stat-top {
+  color: var(--tinta-2);
+  font-size: 13px;
+  letter-spacing: 0.5px;
+}
+
+.stat-icon { border: 1px solid var(--borde-fuerte); border-radius: 4px; }
+.stat-icon.blue { background: var(--celeste-bg); color: var(--celeste); }
+.stat-icon.amber { background: var(--dorado); color: var(--tinta); }
+
+.stat-value {
+  color: var(--tinta);
+  font-family: var(--font-display);
+  font-size: 40px;
+  font-weight: 800;
+  letter-spacing: 0;
+  line-height: 1;
+}
+
+.stat-change { color: var(--tinta-3); font-size: 12px; font-weight: 600; }
+
+.date-chip {
+  border: 1.5px solid var(--borde-fuerte);
+  border-radius: 6px;
+  background: #FFF;
+  box-shadow: none;
+  color: var(--tinta);
+  font-family: var(--font-mono);
+  font-size: 13px;
+}
+
+.panel-title {
+  color: var(--tinta);
+  font-family: var(--font-display);
+  font-size: 20px;
+  font-weight: 800;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+}
+
+.panel-subtitle { color: var(--tinta-3); font-weight: 600; }
+
+/* Tablas: encabezado gris verdoso con borde fuerte; códigos y montos sin partirse */
+.table-card { overflow-x: auto; }
+
+thead th {
+  background: var(--superficie);
+  border-bottom: 2px solid var(--borde-fuerte);
+  color: var(--tinta);
+  font-size: 12px;
+  letter-spacing: 0.5px;
+  padding: 10px 14px;
+}
+
+tbody td {
+  padding: 12px 14px;
+  border-top: 1px solid var(--borde-suave);
+  color: var(--tinta);
+}
+
+.table-card tbody tr:hover { background: #FAFBFA; }
+
+/* Estados: rectángulos con texto en mayúsculas, como en el prototipo */
+.status {
+  gap: 4px;
+  padding: 2px 8px;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.3px;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.status.paid { background: var(--verde-bg); border-color: #8FD8AF; color: var(--verde-tinta); }
+.status.pending { background: var(--dorado); border-color: var(--borde-fuerte); color: var(--tinta); }
+.status.danger { background: var(--rojo-bg); border-color: var(--rojo-tinta); color: var(--rojo-tinta); }
+.status.neutral { background: var(--celeste-bg); border-color: var(--celeste); color: var(--celeste); }
+
+/* ---------- Botones ---------- */
+.primary-button,
+.secondary-button,
+.landing-login {
+  min-height: 44px;
+  border: 2px solid var(--borde-fuerte);
+  border-radius: 6px;
+  box-shadow: none;
+  font-weight: 700;
+  transition: background-color 0.1s, transform 0.1s;
+}
+
+.primary-button,
+.landing-login {
+  background: var(--institucional);
+  border-color: var(--institucional-oscuro);
+  color: #FFF;
+}
+
+.primary-button:hover,
+.landing-login:hover {
+  background: var(--institucional-hover);
+  box-shadow: none;
+  transform: none;
+}
+
+.secondary-button {
+  background: #FFF;
+  color: var(--tinta);
+}
+
+.secondary-button:hover { background: var(--superficie); }
+.primary-button:active,
+.secondary-button:active { transform: translateY(1px); }
+
+.primary-button:disabled,
+.secondary-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.secondary-button.danger-button,
+.table-action {
+  color: var(--rojo-tinta);
+}
+
+.secondary-button.danger-button { border-color: var(--rojo-tinta); background: var(--rojo-bg); }
+
+.link-button,
+.view-all,
+.qr-table-action { color: var(--institucional); }
+
+/* ---------- Formularios ---------- */
+.page input:not([type='checkbox']):not([type='radio']),
+.page select,
+.page textarea {
+  min-height: 44px;
+  border: 2px solid var(--borde-fuerte);
+  border-radius: 6px;
+  background: #FFF;
+  color: var(--tinta);
+  font-weight: 600;
+}
+
+.page input[readonly] { background: var(--superficie); }
+
+.form-message {
+  border: 1.5px solid #8FD8AF;
+  border-radius: 6px;
+  background: var(--verde-bg);
+  color: var(--verde-tinta);
+}
+
+.form-error {
+  border: 1.5px solid var(--rojo-tinta);
+  border-radius: 6px;
+  background: var(--rojo-bg);
+  color: var(--rojo-tinta);
+}
+
+.empty-state {
+  border: 1.5px dashed var(--borde-suave);
+  border-radius: 6px;
+  background: var(--superficie);
+  color: var(--tinta-2);
+}
+
+/* Aviso sin señal o pocos tickets: dorado, borde punteado */
+.offline-banner {
+  border: 2px dashed var(--borde-fuerte);
+  border-radius: 10px;
+  background: var(--dorado);
+  color: var(--tinta);
+  font-weight: 700;
+}
+
+/* ---------- Cobro en el puesto ---------- */
+.step-label {
+  color: var(--tinta-2);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  letter-spacing: 0.06em;
+}
+
+.merchant-summary {
+  border: 2px solid var(--borde-fuerte);
+  border-radius: 14px;
+  background: #FFF;
+  box-shadow: 0 2px 0 var(--borde-fuerte);
+  color: var(--tinta);
+}
+
+.merchant-summary strong {
+  font-family: var(--font-display);
+  font-size: 28px;
+  font-weight: 800;
+  line-height: 1.1;
+}
+
+.merchant-summary span { color: var(--tinta-2); font-size: 14px; font-weight: 600; }
+
+.express-card {
+  border: 2px solid var(--borde-fuerte);
+  border-radius: 14px;
+  background: var(--institucional-claro);
+}
+
+.express-card { margin-top: 12px; padding: 16px; }
+.express-card .eyebrow { color: var(--institucional); }
+
+.express-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.express-head strong {
+  display: block;
+  font-family: var(--font-display);
+  font-size: 22px;
+  font-weight: 800;
+}
+
+.express-last { margin-top: 12px; color: var(--tinta); font-weight: 600; }
+
+.express-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 12px;
+  margin-top: 14px;
+}
+
+.express-grid span { display: block; color: var(--tinta-2); font-size: 12px; font-weight: 600; }
+.express-grid strong { font-family: var(--font-mono); }
+
+.debt-breakdown {
+  border: 2px solid var(--borde-fuerte);
+  border-radius: 10px;
+  background: #FFF;
+}
+
+.debt-breakdown span { color: var(--tinta-2); font-weight: 600; }
+.debt-breakdown strong { overflow-wrap: anywhere; }
+.debt-total strong { font-family: var(--font-mono); }
+.debt-total { border-top: 2px solid var(--borde-fuerte); }
+.debt-total strong { color: var(--rojo-tinta); font-size: 1.5rem; }
+
+.debt-months {
+  border: 2px solid var(--rojo-tinta);
+  border-radius: 10px;
+  background: var(--rojo-bg);
+}
+
+.debt-months strong { font-family: var(--font-mono); color: var(--rojo-tinta); }
+
+/* Tickets a entregar: el número se lee de lejos */
+.ticket-panel {
+  border: 2px solid var(--borde-fuerte);
+  border-radius: 14px;
+  background: #FFF;
+}
+
+.ticket-row > span { font-weight: 700; }
+.ticket-stepper strong { font-family: var(--font-mono); font-size: 22px; }
+.ticket-stepper .secondary-button { width: 44px; padding: 0; font-size: 20px; }
+
+.ticket-entrega strong {
+  color: var(--tinta);
+  font-family: var(--font-mono);
+  font-size: 22px;
+  letter-spacing: 0.5px;
+}
+
+.payment-submit {
+  min-height: 56px;
+  font-family: var(--font-display);
+  font-size: 24px;
+  font-weight: 800;
+}
+
+.payment-row { border-bottom: 1px solid var(--borde-suave); }
+.payment-row strong { font-family: var(--font-mono); }
+
+/* Recibo: papel blanco con borde punteado, número oficial en monoespaciada */
+.receipt-card {
+  border: 2px dashed var(--borde-fuerte);
+  border-radius: 10px;
+  background: #FFF;
+}
+
+.receipt-number,
+.receipt-lines strong { font-family: var(--font-mono); }
+.receipt-number { color: var(--tinta); font-size: 1.1rem; }
+.receipt-total strong { color: var(--verde-tinta); font-size: 1.4rem; }
+
+.receipt-provisional {
+  border: 1.5px dashed var(--borde-fuerte);
+  background: var(--dorado);
+  color: var(--tinta);
+}
+
+/* ---------- Cierre de caja ---------- */
+.caja-esperado {
+  display: grid;
+  gap: 4px;
+  margin-bottom: 8px;
+}
+
+.caja-esperado > span {
+  color: var(--tinta-2);
+  font-size: 12px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.caja-esperado > strong {
+  font-family: var(--font-mono);
+  font-size: 34px;
+  font-weight: 800;
+  line-height: 1.1;
+}
+
+.caja-diferencia {
+  font-family: var(--font-mono);
+  font-size: 15px;
+}
+
+/* ---------- Revisión de cobros ---------- */
+.review-tabs button.active {
+  background: var(--dorado);
+  border-color: var(--borde-fuerte);
+  color: var(--tinta);
+}
+
+.review-card {
+  border: 2px solid var(--borde-fuerte);
+  border-radius: 10px;
+}
+
+/* ---------- Celular del cobrador ---------- */
+@media (max-width: 1100px) {
+  .sidebar { width: min(260px, 84vw); }
+}
+
+@media (max-width: 640px) {
+  .topbar {
+    padding: 10px 16px 12px;
+    background: var(--institucional);
+    background-image: var(--bandera);
+    background-size: 100% 5px;
+    background-repeat: no-repeat;
+    background-position: bottom;
+    border-bottom: 0;
+    color: #FFF;
+  }
+
+  .topbar .eyebrow { color: #D7E8DE; }
+  .topbar-left h2 { color: #FFF; }
+  .menu-button { border-color: #FFF; background: var(--institucional-oscuro); color: #FFF; }
+
+  .topbar-right .search-box,
+  .topbar-right .notification-button,
+  .topbar-right .user-badge { display: none; }
+
+  .topbar-right > .primary-button {
+    margin-left: auto;
+    background: var(--institucional-oscuro);
+    border-color: #FFF;
+  }
+
+  .sync-status-badge { width: auto; order: 0; }
+
+  .page-content { padding-bottom: 96px; background: #F4F4F2; }
+
+  .page-heading h1 { font-size: 28px; }
+
+  /* Dos tarjetas por fila: el monto se achica en vez de salirse */
+  .stat-card { min-width: 0; padding: 14px; }
+  .stat-value { font-size: clamp(24px, 7.5vw, 34px); overflow-wrap: anywhere; }
+
+  /* Campos y botones del tamaño de un dedo */
+  .page input:not([type='checkbox']):not([type='radio']),
+  .page select { min-height: 52px; font-size: 16px; border-radius: 10px; }
+  .primary-button,
+  .secondary-button { min-height: 48px; }
+
+  .payment-submit {
+    position: sticky;
+    bottom: 76px;
+    z-index: 5;
+    width: 100%;
+    box-shadow: 0 0 0 6px #FFF;
+    font-size: 20px;
+    line-height: 1.1;
+  }
+
+  .mobile-bottom-nav {
+    position: fixed;
+    z-index: 40;
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    left: 0;
+    right: 0;
+    bottom: 0;
+    gap: 0;
+    height: calc(64px + env(safe-area-inset-bottom));
+    padding: 0 0 env(safe-area-inset-bottom);
+    border: 0;
+    border-top: 3px solid var(--borde-fuerte);
+    border-radius: 0;
+    background: #FFF;
+    box-shadow: none;
+    backdrop-filter: none;
+  }
+
+  .mobile-bottom-nav a {
+    align-content: center;
+    min-height: 64px;
+    border-radius: 0;
+    color: var(--tinta);
+    font-size: 12px;
+    font-weight: 700;
+  }
+
+  .mobile-bottom-nav a.active {
+    background: var(--dorado);
+    box-shadow: none;
+    color: var(--tinta);
+    font-weight: 800;
+  }
+
+  .mobile-bottom-nav a span { font-size: 22px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .primary-button,
+  .secondary-button,
+  .nav-item { transition: none; }
+}
