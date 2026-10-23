@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
+  addZoneTariff,
   calculateLiquidation,
   deleteZona,
   feriaDaysOfPeriod,
@@ -11,8 +12,10 @@ import {
   insertComerciante,
   insertPuesto,
   insertZona,
+  setDefaultZoneTariff,
   setZoneTariff,
-  updateComerciante
+  updateComerciante,
+  updatePuesto
 } from '../src/db.js';
 
 let sequence = 0;
@@ -25,7 +28,7 @@ async function zoneWithAmount(db, amount) {
   return zona;
 }
 
-async function merchantWithPost(db, zonaId, { metros = 4, frecuencia = 'semanal', tipo = 'ferial' } = {}) {
+async function merchantWithPost(db, zonaId, { metros = 4, frecuencia = 'semanal', tipo = 'ferial', desde = '2026-01-01', categoriaId } = {}) {
   sequence += 1;
   const merchant = await insertComerciante(db, {
     dni_ruc: `9${String(process.pid % 1000).padStart(3, '0')}${String(sequence).padStart(4, '0')}`,
@@ -36,7 +39,8 @@ async function merchantWithPost(db, zonaId, { metros = 4, frecuencia = 'semanal'
     frecuencia_pago: frecuencia
   });
   const puesto = await insertPuesto(db, {
-    comerciante_id: merchant.id, zona_id: zonaId, direccion: `Puesto zona ${sequence}`, metros_cuadrados: metros, codigo_puesto: `PZ-${process.pid}-${sequence}`
+    comerciante_id: merchant.id, zona_id: zonaId, direccion: `Puesto zona ${sequence}`, metros_cuadrados: metros, codigo_puesto: `PZ-${process.pid}-${sequence}`,
+    asignado_desde: desde, categoria_cobro_id: categoriaId
   });
   return { merchant, puesto };
 }
@@ -122,7 +126,7 @@ test('cambiar el monto de una zona rige desde su fecha y no altera lo ya liquida
   await insertCobro(db, { comerciante_id: merchant.id, cobrador_id: 2, monto: 20, metodo_pago: 'efectivo', periodo: '2026-09' });
 
   const desde = nextMonth();
-  const updated = await setZoneTariff(db, zona.id, { monto_por_feria: 7, vigencia_inicio: desde });
+  const updated = await setZoneTariff(db, zona.categorias[0].id, { monto_por_feria: 7, vigencia_inicio: desde });
   assert.equal(updated.monto_por_feria, 5);
   assert.deepEqual(updated.proximo_cambio, { monto_por_feria: 7, vigente_desde: desde });
 
@@ -135,16 +139,17 @@ test('cambiar el monto de una zona rige desde su fecha y no altera lo ya liquida
   assert.equal(siguiente.monto_por_feria, 7);
   assert.equal(siguiente.monto_total, Number((7 * feriaDaysOfPeriod(desde.slice(0, 7)).length).toFixed(2)));
 
-  await assert.rejects(() => setZoneTariff(db, zona.id, { monto_por_feria: 9, vigencia_inicio: '2026-01-01' }), /desde hoy o una fecha futura/);
-  await assert.rejects(() => setZoneTariff(db, zona.id, { monto_por_feria: 0 }), /mayor que cero/);
+  await assert.rejects(() => setZoneTariff(db, zona.categorias[0].id, { monto_por_feria: 9, vigencia_inicio: '2026-01-01' }), /desde hoy o una fecha futura/);
+  await assert.rejects(() => setZoneTariff(db, zona.categorias[0].id, { monto_por_feria: 0 }), /mayor que cero/);
 });
 
-test('cada zona nueva nace con monto y una zona sin uso se puede eliminar', async () => {
+test('cada zona nueva nace con pista asfaltada (S/ 3) y sin asfaltar (S/ 2), y una zona sin uso se puede eliminar', async () => {
   const db = await initializeDatabase();
   sequence += 1;
   const zona = await insertZona(db, { nombre: `Zona Nueva ${process.pid}-${sequence}` });
   const listed = (await getZoneTariffs(db)).find((item) => item.zona_id === Number(zona.id));
-  assert.equal(listed.monto_por_feria, 5);
+  assert.deepEqual(listed.tarifas.map((item) => [item.nombre, item.monto_por_feria, item.predeterminada]),
+    [['Pista asfaltada', 3, true], ['Pista sin asfaltar', 2, false]]);
   assert.deepEqual(await deleteZona(db, zona.id), { id: Number(zona.id), eliminado: true });
 });
 
@@ -155,4 +160,56 @@ test('el cobro guarda el periodo al que se imputa', async () => {
   const cobro = await insertCobro(db, { comerciante_id: merchant.id, cobrador_id: 2, monto: 10, metodo_pago: 'efectivo', periodo: '2026-09' });
   const stored = (await db.query('SELECT periodo FROM transacciones WHERE id = $1', [cobro.id])).rows[0];
   assert.equal(stored.periodo, '2026-09');
+});
+
+test('una zona puede tener varias tarifas y cada puesto paga la suya', async () => {
+  const db = await initializeDatabase();
+  sequence += 1;
+  const zona = await insertZona(db, { nombre: `Zona Vías ${process.pid}-${sequence}` });
+  await db.query("UPDATE tarifas SET vigencia_inicio = '2026-01-01' WHERE zona_id = $1", [zona.id]);
+  const [asfaltada, sinAsfaltar] = zona.categorias;
+  const a = await merchantWithPost(db, zona.id, { categoriaId: asfaltada.id });
+  const b = await merchantWithPost(db, zona.id, { categoriaId: sinAsfaltar.id });
+  const c = await merchantWithPost(db, zona.id);
+  assert.equal((await calculateLiquidation(db, a.merchant.id, '2026-09')).monto_total, 30);
+  assert.equal((await calculateLiquidation(db, b.merchant.id, '2026-09')).monto_total, 20);
+  // Sin tarifa indicada toma la predeterminada de la zona.
+  assert.equal((await calculateLiquidation(db, c.merchant.id, '2026-09')).puestos[0].tarifa, 'Pista asfaltada');
+
+  const extra = await addZoneTariff(db, zona.id, { nombre: 'Pista de tierra', monto_por_feria: 1.5 });
+  assert.equal(extra.predeterminada, false);
+  await setDefaultZoneTariff(db, extra.categoria_id);
+  const listed = (await getZoneTariffs(db)).find((item) => item.zona_id === Number(zona.id));
+  assert.deepEqual(listed.tarifas.filter((item) => item.predeterminada).map((item) => item.nombre), ['Pista de tierra']);
+  await assert.rejects(() => addZoneTariff(db, zona.id, { nombre: 'pista de tierra', monto_por_feria: 2 }), /ya tiene una tarifa con ese nombre/);
+});
+
+test('un puesto solo se cobra desde que está asignado', async () => {
+  const db = await initializeDatabase();
+  const zona = await zoneWithAmount(db, 5);
+  const { merchant } = await merchantWithPost(db, zona.id, { desde: '2026-09-15' });
+  // Septiembre desde el martes 15: 15, 16, 22, 23, 29 y 30.
+  const septiembre = await calculateLiquidation(db, merchant.id, '2026-09');
+  assert.equal(septiembre.dias_cobrables, 6);
+  assert.equal(septiembre.monto_total, 30);
+  assert.equal((await calculateLiquidation(db, merchant.id, '2026-08')).monto_total, 0);
+  assert.equal(septiembre.puestos[0].asignado_desde, '2026-09-15');
+});
+
+test('cambiar el puesto de zona rige desde su fecha y no recalcula los días anteriores', async () => {
+  const db = await initializeDatabase();
+  const barata = await zoneWithAmount(db, 5);
+  const cara = await zoneWithAmount(db, 8);
+  const { merchant, puesto } = await merchantWithPost(db, barata.id);
+  await updatePuesto(db, puesto.id, { zona_id: cara.id, vigente_desde: '2026-09-15' });
+
+  // 4 ferias a S/ 5 (1, 2, 8, 9) y 6 a S/ 8 (desde el 15).
+  const septiembre = await calculateLiquidation(db, merchant.id, '2026-09');
+  assert.equal(septiembre.monto_total, 4 * 5 + 6 * 8);
+  assert.equal((await calculateLiquidation(db, merchant.id, '2026-08')).monto_total, 8 * 5);
+  const history = (await db.query("SELECT zona_id, to_char(desde, 'YYYY-MM-DD') AS desde, to_char(hasta, 'YYYY-MM-DD') AS hasta FROM puestos_historial WHERE puesto_id = $1 ORDER BY desde", [puesto.id])).rows;
+  assert.deepEqual(history, [
+    { zona_id: Number(barata.id), desde: '2026-01-01', hasta: '2026-09-14' },
+    { zona_id: Number(cara.id), desde: '2026-09-15', hasta: null }
+  ]);
 });

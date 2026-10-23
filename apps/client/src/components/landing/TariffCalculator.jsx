@@ -29,6 +29,7 @@ export function TariffCalculator({ apiBase, onRegister }) {
   const [zones, setZones] = useState([]);
   const [loadError, setLoadError] = useState('');
   const [zoneId, setZoneId] = useState('');
+  const [tariffId, setTariffId] = useState('');
   const [periodValue, setPeriodValue] = useState('semanal');
 
   useEffect(() => {
@@ -37,7 +38,10 @@ export function TariffCalculator({ apiBase, onRegister }) {
       .then((response) => (response.ok ? response.json() : Promise.reject(new Error(`Error ${response.status}`))))
       .then((body) => {
         if (!active) return;
-        const priced = (body.data || []).filter((item) => item.monto_por_feria !== null);
+        // Una zona puede tener varias tarifas (pista asfaltada, sin asfaltar, ...): solo las que tienen monto.
+        const priced = (body.data || [])
+          .map((zona) => ({ ...zona, tarifas: zona.tarifas.filter((item) => item.monto_por_feria !== null) }))
+          .filter((zona) => zona.tarifas.length);
         setZones(priced);
         setZoneId((current) => current || String(priced[0]?.zona_id || ''));
       })
@@ -45,28 +49,36 @@ export function TariffCalculator({ apiBase, onRegister }) {
     return () => { active = false; };
   }, [apiBase]);
 
+  const zone = zones.find((item) => String(item.zona_id) === zoneId);
   const result = useMemo(() => {
-    const zone = zones.find((item) => String(item.zona_id) === zoneId);
     if (!zone) return null;
+    const tariff = zone.tarifas.find((item) => String(item.categoria_id) === tariffId)
+      || zone.tarifas.find((item) => item.predeterminada) || zone.tarifas[0];
     const period = PERIODS.find((item) => item.value === periodValue);
     const ferias = { por_feria: 1, semanal: FERIA_WEEKDAYS.length, mensual: feriaDaysThisMonth() }[periodValue];
-    return { zone, period, ferias, total: zone.monto_por_feria * ferias };
-  }, [zones, zoneId, periodValue]);
+    return { zone, tariff, period, ferias, total: tariff.monto_por_feria * ferias };
+  }, [zone, tariffId, periodValue]);
 
   return (
     <div className="lx-tariff">
       <div className="lx-header">
         <div className="eyebrow">VALORACIÓN TRANSPARENTE DE ESPACIOS PÚBLICOS</div>
         <h2>Tarificador municipal por zona</h2>
-        <p>El cobro es un monto fijo por día de feria según la zona; las ferias son los martes y miércoles. Si falta a una feria ya pagada, el monto queda a cuenta para la siguiente.</p>
+        <p>El cobro es un monto fijo por día de feria según la zona y su tarifa (por ejemplo, pista asfaltada o sin asfaltar); las ferias son los martes y miércoles. Si falta a una feria ya pagada, el monto queda a cuenta para la siguiente.</p>
       </div>
 
       <div className="lx-tariff-grid">
         <form className="lx-card lx-form" onSubmit={(event) => event.preventDefault()}>
           <label>
             <span>1. Zona</span>
-            <select value={zoneId} disabled={!zones.length} onChange={(event) => setZoneId(event.target.value)}>
+            <select value={zoneId} disabled={!zones.length} onChange={(event) => { setZoneId(event.target.value); setTariffId(''); }}>
               {zones.map((item) => <option key={item.zona_id} value={item.zona_id}>{item.zona}</option>)}
+            </select>
+          </label>
+          <label>
+            <span>2. Tarifa del puesto</span>
+            <select value={result ? String(result.tariff.categoria_id) : ''} disabled={!zone} onChange={(event) => setTariffId(event.target.value)}>
+              {zone?.tarifas.map((item) => <option key={item.categoria_id} value={item.categoria_id}>{item.nombre} · S/ {item.monto_por_feria.toFixed(2)} por feria</option>)}
             </select>
           </label>
           <div className="lx-segment" role="group" aria-label="Modalidad de pago">
@@ -84,11 +96,11 @@ export function TariffCalculator({ apiBase, onRegister }) {
           <div className="lx-result-body">
             {result ? (
               <>
-                <small>{result.zone.zona} · {result.period.label}</small>
+                <small>{result.zone.zona} · {result.tariff.nombre} · {result.period.label}</small>
                 <div className="lx-total">{money(result.total)}</div>
                 <p>{result.period.unit}</p>
                 <dl>
-                  <div><dt>Monto por día de feria</dt><dd>{money(result.zone.monto_por_feria)}</dd></div>
+                  <div><dt>Monto por día de feria</dt><dd>{money(result.tariff.monto_por_feria)}</dd></div>
                   <div><dt>Ferias consideradas</dt><dd>{result.ferias}</dd></div>
                 </dl>
               </>

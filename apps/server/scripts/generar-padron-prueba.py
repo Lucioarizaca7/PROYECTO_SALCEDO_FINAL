@@ -20,7 +20,7 @@ OUT_DIR = Path(__file__).resolve().parents[3] / 'datos-prueba'
 
 # Encabezados reconocidos por los alias de apps/server/src/padronImport.js.
 HEADER = ['N°', 'DNI/RUC', 'Titular', 'Código Puesto', 'Sector', 'Zona',
-          'Tipo Comerciante', 'Rubro', 'Metraje m2', 'Estado', 'Fecha Feria']
+          'Tipo Comerciante', 'Rubro', 'Metraje m2', 'Estado', 'Fecha Feria', 'Tarifa']
 
 NOMBRES = ['Yolanda', 'Rosa', 'Juana', 'Nidia', 'Maribel', 'Elena', 'Lourdes', 'Gladys',
            'Marina', 'Sonia', 'Felicitas', 'Teodora', 'Ruth', 'Hilda', 'Delia', 'Vilma',
@@ -49,6 +49,8 @@ def ruc_persona_natural(dni):
 
 
 def generar_filas(rng, total_por_bloque=25):
+    # Generador aparte para la tarifa: así los DNI y nombres son los mismos de las versiones anteriores.
+    rng_tarifa = random.Random(7)
     usados = set()
     filas = {}
     for hoja, letra, zonas, fecha in BLOQUES:
@@ -73,6 +75,7 @@ def generar_filas(rng, total_por_bloque=25):
                 'metraje': rng.choice([2, 2.5, 3, 3.5, 4, 4.5, 6, 8, 9, 12]),
                 'estado': 'Presente',
                 'fecha': fecha,
+                'tarifa': rng_tarifa.choices(['Pista asfaltada', 'Pista sin asfaltar'], weights=[7, 3])[0],
             }
             filas[hoja].append(fila)
 
@@ -93,13 +96,13 @@ def escribir_hoja(ws, titulo, filas):
         celda.alignment = Alignment(horizontal='center')
     for f in filas:
         ws.append([f['n'], f['documento'], f['titular'], f['codigo'], f['sector'], f['zona'],
-                   f['tipo'], f['rubro'], f['metraje'], f['estado'], f.get('fecha')])
+                   f['tipo'], f['rubro'], f['metraje'], f['estado'], f.get('fecha'), f.get('tarifa')])
     # El documento va como texto para conservar ceros a la izquierda.
     for fila in ws.iter_rows(min_row=3, min_col=2, max_col=2):
         fila[0].number_format = '@'
     for fila in ws.iter_rows(min_row=3, min_col=11, max_col=11):
         fila[0].number_format = 'yyyy-mm-dd'
-    for col, ancho in zip('ABCDEFGHIJK', [5, 14, 34, 15, 22, 18, 17, 12, 11, 10, 12]):
+    for col, ancho in zip('ABCDEFGHIJKL', [5, 14, 34, 15, 22, 18, 17, 12, 11, 10, 12, 18]):
         ws.column_dimensions[col].width = ancho
     ws.freeze_panes = 'A3'
 
@@ -130,6 +133,7 @@ def libro_errores():
         dict(documento='45871240', titular='RUBRO INEXISTENTE PARI', codigo='ERR-C-009', metraje=3, rubro='ferreteria'),
         dict(documento='45871241', titular='AUSENTE SIN FECHA COAQUIRA', codigo='ERR-C-010', metraje=3, estado='Ausente'),
         dict(documento='45871242', titular='FECHA NO ES FERIA LAYME', codigo='ERR-C-011', metraje=3, fecha=date(2026, 10, 22)),
+        dict(documento='45871243', titular='TARIFA INEXISTENTE VILCA', codigo='ERR-C-012', metraje=3, tarifa='Pista de tierra'),
     ]
     filas = [{**base, **caso, 'n': i} for i, caso in enumerate(casos, start=1)]
     escribir_hoja(ws, 'PADRÓN DE PRUEBA CON ERRORES INTENCIONALES', filas)
@@ -147,7 +151,7 @@ def libro_casos():
         dict(documento='', titular='SANTOS CALSIN TURPO', codigo='CAS-D-002', sector='Bloque D - Fila 1', zona='Mercado Central', metraje=3),
         # Un titular con dos puestos en zonas distintas: cada puesto paga el monto de su zona.
         dict(documento='47120356', titular='GERMAN YUPANQUI PACOMPIA', codigo='CAS-D-003', sector='Bloque D - Fila 2', zona='Mercado Central'),
-        dict(documento='47120356', titular='GERMAN YUPANQUI PACOMPIA', codigo='CAS-D-004', sector='Bloque D - Fila 2', zona='Zona Norte'),
+        dict(documento='47120356', titular='GERMAN YUPANQUI PACOMPIA', codigo='CAS-D-004', sector='Bloque D - Fila 2', zona='Zona Norte', tarifa='Pista sin asfaltar'),
     ]
     filas = [{**base, **caso, 'n': i} for i, caso in enumerate(casos, start=1)]
     escribir_hoja(ws, 'PADRÓN DE PRUEBA: CASOS ESPECIALES', filas)

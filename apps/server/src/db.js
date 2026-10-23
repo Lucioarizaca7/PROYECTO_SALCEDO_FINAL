@@ -33,7 +33,10 @@ function clamp(value, min, max) {
 // Régimen de cobro: monto fijo por zona y por día de feria.
 // Ferias los martes (2) y miércoles (3), según Date#getUTCDay.
 export const FERIA_WEEKDAYS = [2, 3];
-export const DEFAULT_ZONE_FERIA_AMOUNT = 5;
+// Tarifas con que nace cada zona: [nombre, monto por día de feria, predeterminada].
+export const DEFAULT_TARIFF_CATEGORIES = [['Pista asfaltada', 3, true], ['Pista sin asfaltar', 2, false]];
+
+const today = () => new Date().toISOString().slice(0, 10);
 export const FRECUENCIAS_PAGO = ['por_feria', 'semanal', 'mensual'];
 
 // ---------------------------------------------------------------------------
@@ -128,13 +131,9 @@ async function seedDefaults() {
       await client.query('INSERT INTO calles (nombre, descripcion, zona_id) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING', [nombre, descripcion, await zonaId(zona)]);
     }
 
-    // Cobro fijo por zona y por día de feria; el super admin ajusta los montos.
+    // Cobro fijo por día de feria según la tarifa de cada zona; el super admin ajusta los montos.
     for (const [zona] of zonas) {
-      await client.query(
-        `INSERT INTO tarifas (rubro_id, zona_id, tipo_tarifa, monto_fijo, monto_variable, unidad_medida, vigencia_inicio)
-         VALUES (NULL, $1, 'fija', $2, 0, 'dia_feria', '2026-01-01')`,
-        [await zonaId(zona), DEFAULT_ZONE_FERIA_AMOUNT]
-      );
+      await createZoneCategories(client, await zonaId(zona), DEFAULT_TARIFF_CATEGORIES, '2026-01-01');
     }
 
     const admin = await first(client, `SELECT id FROM usuarios WHERE email = 'admin@salcedo.gob.pe'`);
@@ -142,11 +141,13 @@ async function seedDefaults() {
       INSERT INTO comerciantes (dni_ruc, nombre, rubro_id, zona_id, categoria, tipo_comerciante, estado, usuario_creador_id)
       VALUES ('20123456780', 'Comerciante Demo', $1, $2, 'permanente', 'permanente', 'activo', $3) RETURNING id`,
     [await rubroId('comida'), await zonaId('Mercado Central'), admin.id]);
-    await client.query(
+    const demoPost = await first(client,
       `INSERT INTO puestos (comerciante_id, zona_id, codigo_puesto, direccion, metros_cuadrados, estado, latitud, longitud)
-       VALUES ($1, $2, 'S-001', 'Mercado Central - Local 1', 12, 'ocupado', -15.8997, -70.5881)`,
+       VALUES ($1, $2, 'S-001', 'Mercado Central - Local 1', 12, 'ocupado', -15.8997, -70.5881) RETURNING id`,
       [demo.id, await zonaId('Mercado Central')]
     );
+    const mercadoCentral = await zonaId('Mercado Central');
+    await recordPostAssignment(client, demoPost.id, { zonaId: mercadoCentral, categoriaId: await getDefaultCategoryId(client, mercadoCentral), desde: '2026-01-01' });
     await client.query(
       `INSERT INTO comerciante_preferencias (comerciante_id, clave, valor) VALUES ($1, 'notificaciones_activadas', 'true'), ($1, 'moneda_preferida', 'PEN')`,
       [demo.id]
@@ -608,6 +609,52 @@ export async function getZonas(db) {
   return rows(db, 'SELECT id, nombre, descripcion FROM zonas ORDER BY nombre ASC');
 }
 
+// Crea las tarifas de una zona (nombre, monto por día de feria, predeterminada) vigentes desde una fecha.
+export async function createZoneCategories(db, zonaId, categories, desde) {
+  const created = [];
+  for (const [nombre, monto, predeterminada] of categories) {
+    const categoria = await first(db,
+      'INSERT INTO categorias_cobro (zona_id, nombre, predeterminada) VALUES ($1, $2, $3) RETURNING id, nombre, predeterminada',
+      [Number(zonaId), nombre, predeterminada]);
+    await db.query(`
+      INSERT INTO tarifas (rubro_id, zona_id, categoria_id, tipo_tarifa, monto_fijo, monto_variable, unidad_medida, vigencia_inicio)
+      VALUES (NULL, $1, $2, 'fija', $3, 0, 'dia_feria', $4::date)`, [Number(zonaId), categoria.id, monto, desde]);
+    created.push({ id: Number(categoria.id), nombre: categoria.nombre, predeterminada: categoria.predeterminada });
+  }
+  return created;
+}
+
+export async function getDefaultCategoryId(db, zonaId) {
+  const row = await first(db, 'SELECT id FROM categorias_cobro WHERE zona_id = $1 AND predeterminada', [Number(zonaId)]);
+  return row ? Number(row.id) : null;
+}
+
+// Tarifa del puesto dentro de su zona: la indicada si pertenece a la zona; si no, la predeterminada.
+async function resolvePostCategory(db, zonaId, categoriaId) {
+  if (categoriaId) {
+    const found = await first(db, 'SELECT id FROM categorias_cobro WHERE id = $1 AND zona_id = $2', [Number(categoriaId), Number(zonaId)]);
+    if (!found) throw new Error('La tarifa indicada no pertenece a la zona del puesto');
+    return Number(found.id);
+  }
+  return getDefaultCategoryId(db, zonaId);
+}
+
+// Registra en qué zona y tarifa está un puesto desde una fecha; la asignación abierta se cierra el día previo.
+// Si la fecha no es posterior a la asignación abierta, se corrige esa asignación en lugar de partirla.
+export async function recordPostAssignment(db, puestoId, { zonaId, categoriaId, desde }) {
+  const open = await first(db, `
+    SELECT id, zona_id, categoria_id, ${DAY('desde')} AS desde FROM puestos_historial
+    WHERE puesto_id = $1 AND hasta IS NULL ORDER BY desde DESC LIMIT 1`, [Number(puestoId)]);
+  if (open && Number(open.zona_id) === Number(zonaId) && Number(open.categoria_id) === Number(categoriaId)) return;
+  if (open && open.desde >= desde) {
+    await db.query('UPDATE puestos_historial SET zona_id = $1, categoria_id = $2 WHERE id = $3', [zonaId, categoriaId, open.id]);
+    return;
+  }
+  if (open) await db.query('UPDATE puestos_historial SET hasta = $1::date - 1 WHERE id = $2', [desde, open.id]);
+  await db.query('INSERT INTO puestos_historial (puesto_id, zona_id, categoria_id, desde) VALUES ($1, $2, $3, $4::date)',
+    [Number(puestoId), Number(zonaId), categoriaId, desde]);
+}
+
 export async function insertZona(db, payload) {
   const nombre = String(payload.nombre || '').trim();
   const descripcion = String(payload.descripcion || '').trim();
@@ -616,15 +663,15 @@ export async function insertZona(db, payload) {
   const duplicate = await first(db, 'SELECT id FROM zonas WHERE lower(btrim(nombre)) = lower(btrim($1))', [nombre]);
   if (duplicate) throw new Error('Ya existe una zona con ese nombre');
 
-  const montoPorFeria = payload.monto_por_feria === undefined || payload.monto_por_feria === '' ? DEFAULT_ZONE_FERIA_AMOUNT : Number(payload.monto_por_feria);
-  if (!Number.isFinite(montoPorFeria) || montoPorFeria <= 0) throw new Error('El monto por día de feria debe ser mayor que cero');
+  // Con un monto indicado la zona nace con una sola tarifa; si no, con las tarifas estándar.
+  const hasAmount = payload.monto_por_feria !== undefined && payload.monto_por_feria !== '';
+  const montoPorFeria = Number(payload.monto_por_feria);
+  if (hasAmount && (!Number.isFinite(montoPorFeria) || montoPorFeria <= 0)) throw new Error('El monto por día de feria debe ser mayor que cero');
 
   const zona = await first(db, 'INSERT INTO zonas (nombre, descripcion) VALUES ($1, $2) RETURNING id, nombre, descripcion', [nombre, descripcion]);
   // Toda zona nace con tarifa: una zona sin tarifa bloquearía los cobros de sus comerciantes.
-  await db.query(`
-    INSERT INTO tarifas (rubro_id, zona_id, tipo_tarifa, monto_fijo, monto_variable, unidad_medida, vigencia_inicio)
-    VALUES (NULL, $1, 'fija', $2, 0, 'dia_feria', CURRENT_DATE)`, [zona.id, montoPorFeria]);
-  return zona;
+  const categorias = await createZoneCategories(db, zona.id, hasAmount ? [['General', montoPorFeria, true]] : DEFAULT_TARIFF_CATEGORIES, today());
+  return { ...zona, categorias };
 }
 
 export async function updateZona(db, id, payload) {
@@ -916,11 +963,17 @@ const PUESTO_SELECT = `
   SELECT p.id, p.comerciante_id, c.nombre AS comerciante,
          p.zona_id, z.nombre AS zona, p.direccion, p.metros_cuadrados, p.estado,
          p.codigo_puesto AS codigo, p.latitud, p.longitud,
+         ph.categoria_id AS categoria_cobro_id, cc.nombre AS tarifa,
+         (SELECT ${DAY('min(h.desde)')} FROM puestos_historial h WHERE h.puesto_id = p.id) AS asignado_desde,
          COALESCE(c.categoria, c.tipo_comerciante) AS categoria, c.tipo_comerciante,
          0 AS saldo_pendiente
   FROM puestos p
   JOIN comerciantes c ON c.id = p.comerciante_id
-  JOIN zonas z ON z.id = p.zona_id`;
+  JOIN zonas z ON z.id = p.zona_id
+  LEFT JOIN LATERAL (
+    SELECT h.categoria_id FROM puestos_historial h WHERE h.puesto_id = p.id AND h.hasta IS NULL ORDER BY h.desde DESC LIMIT 1
+  ) ph ON TRUE
+  LEFT JOIN categorias_cobro cc ON cc.id = ph.categoria_id`;
 
 export async function getPuestos(db) {
   return rows(db, `${PUESTO_SELECT} ORDER BY p.id DESC`);
@@ -939,10 +992,14 @@ export async function insertPuesto(db, payload) {
   const codigo = String(payload.codigo_puesto || payload.codigoPuesto || '').trim() || null;
   const latitud = Number(payload.latitud);
   const longitud = Number(payload.longitud);
+  // Solo se cobra desde que el puesto está asignado.
+  const asignadoDesde = String(payload.asignado_desde || today()).trim();
 
   if (!comercianteId || !zonaId || !direccion || !Number.isFinite(metros) || metros <= 0) {
     throw new Error('Comerciante, zona, dirección y metros cuadrados válidos son obligatorios');
   }
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(asignadoDesde)) throw new Error('La fecha de asignación debe usar formato AAAA-MM-DD');
+  const categoriaId = await resolvePostCategory(db, zonaId, payload.categoria_cobro_id);
   if (!['ocupado', 'disponible', 'reservado'].includes(estado)) throw new Error('Estado de puesto no válido');
 
   const merchant = await first(db, `SELECT id FROM comerciantes WHERE id = $1 AND estado <> 'inactivo'`, [comercianteId]);
@@ -966,6 +1023,7 @@ export async function insertPuesto(db, payload) {
     if (error.code === '23505') throw new Error(`El código de puesto ${finalCode} ya está asignado`);
     throw error;
   }
+  await recordPostAssignment(db, next.id, { zonaId, categoriaId, desde: asignadoDesde });
   return findPuesto(db, next.id);
 }
 
@@ -986,11 +1044,21 @@ export async function updatePuesto(db, id, payload) {
   }
   if (!['ocupado', 'disponible', 'reservado', 'inactivo'].includes(estado)) throw new Error('Estado de puesto no válido');
 
+  // Cambiar de zona o de tarifa rige desde "vigente_desde" (hoy por defecto); el pasado conserva la anterior.
+  const zoneChanged = zonaId !== Number(current.zona_id);
+  const categoriaId = payload.categoria_cobro_id !== undefined || zoneChanged
+    ? await resolvePostCategory(db, zonaId, payload.categoria_cobro_id)
+    : current.categoria_cobro_id;
+  const vigenteDesde = String(payload.vigente_desde || today()).trim();
+
   await db.query(`
     UPDATE puestos
     SET zona_id = $1, direccion = $2, metros_cuadrados = $3, estado = $4, latitud = $5, longitud = $6
     WHERE id = $7`,
   [zonaId, direccion, metros, estado, Number.isFinite(latitud) ? latitud : null, Number.isFinite(longitud) ? longitud : null, puestoId]);
+  if (zoneChanged || Number(categoriaId) !== Number(current.categoria_cobro_id)) {
+    await recordPostAssignment(db, puestoId, { zonaId, categoriaId, desde: vigenteDesde });
+  }
 
   return findPuesto(db, puestoId);
 }
@@ -1009,8 +1077,9 @@ export async function deactivatePuesto(db, id) {
 const TARIFA_SELECT = `
   SELECT t.id, t.rubro_id, r.nombre AS rubro, t.zona_id, t.tipo_tarifa, t.monto_fijo, t.monto_variable,
          t.unidad_medida, ${DAY('t.vigencia_inicio')} AS vigencia_inicio, ${DAY('t.vigencia_fin')} AS vigencia_fin,
-         CASE WHEN t.activo THEN 1 ELSE 0 END AS estado, t.version, z.nombre AS zona
-  FROM tarifas t LEFT JOIN rubros r ON r.id = t.rubro_id LEFT JOIN zonas z ON z.id = t.zona_id`;
+         CASE WHEN t.activo THEN 1 ELSE 0 END AS estado, t.version, z.nombre AS zona, t.categoria_id, cc.nombre AS categoria
+  FROM tarifas t LEFT JOIN rubros r ON r.id = t.rubro_id LEFT JOIN zonas z ON z.id = t.zona_id
+  LEFT JOIN categorias_cobro cc ON cc.id = t.categoria_id`;
 
 export async function getTarifas(db, options = {}) {
   const rubroId = Number(options.rubro_id || 0);
@@ -1085,62 +1154,107 @@ export async function updateTarifa(db, id, payload) {
   return findTarifa(db, id);
 }
 
-// Monto por día de feria de cada zona: el vigente hoy y, si hay, el próximo programado.
+// Tarifas de cada zona (una zona puede tener varias): monto vigente hoy y, si hay, el próximo programado.
 export async function getZoneTariffs(db) {
-  const today = new Date().toISOString().slice(0, 10);
+  const now = today();
   const zonas = await rows(db, 'SELECT id, nombre FROM zonas ORDER BY nombre ASC');
+  const categorias = await rows(db, 'SELECT id, zona_id, nombre, predeterminada FROM categorias_cobro ORDER BY predeterminada DESC, nombre ASC');
   const tariffs = await rows(db, `
     ${TARIFA_SELECT}
-    WHERE t.rubro_id IS NULL AND t.zona_id IS NOT NULL AND t.activo
+    WHERE t.categoria_id IS NOT NULL AND t.activo
     ORDER BY t.vigencia_inicio DESC, t.id DESC`);
-  return zonas.map((zona) => {
-    const history = tariffs.filter((tarifa) => Number(tarifa.zona_id) === Number(zona.id));
-    const vigente = zoneTariffOn(history, today);
-    const programada = history.filter((tarifa) => tarifa.vigencia_inicio > today).at(-1) || null;
-    return {
-      zona_id: Number(zona.id),
-      zona: zona.nombre,
-      tarifa_id: vigente ? Number(vigente.id) : null,
-      monto_por_feria: vigente ? Number(vigente.monto_fijo) : null,
-      monto_semanal: vigente ? Number((vigente.monto_fijo * FERIA_WEEKDAYS.length).toFixed(2)) : null,
-      vigente_desde: vigente?.vigencia_inicio || null,
-      proximo_cambio: programada ? { monto_por_feria: Number(programada.monto_fijo), vigente_desde: programada.vigencia_inicio } : null,
-      historial: history.map((tarifa) => ({ monto_por_feria: Number(tarifa.monto_fijo), vigencia_inicio: tarifa.vigencia_inicio, vigencia_fin: tarifa.vigencia_fin }))
-    };
+  return zonas.map((zona) => ({
+    zona_id: Number(zona.id),
+    zona: zona.nombre,
+    tarifas: categorias.filter((categoria) => Number(categoria.zona_id) === Number(zona.id)).map((categoria) => {
+      const history = tariffs.filter((tarifa) => Number(tarifa.categoria_id) === Number(categoria.id));
+      const vigente = tariffOn(history, now);
+      const programada = history.filter((tarifa) => tarifa.vigencia_inicio > now).at(-1) || null;
+      return {
+        categoria_id: Number(categoria.id),
+        nombre: categoria.nombre,
+        predeterminada: categoria.predeterminada,
+        tarifa_id: vigente ? Number(vigente.id) : null,
+        monto_por_feria: vigente ? Number(vigente.monto_fijo) : null,
+        monto_semanal: vigente ? Number((vigente.monto_fijo * FERIA_WEEKDAYS.length).toFixed(2)) : null,
+        vigente_desde: vigente?.vigencia_inicio || null,
+        proximo_cambio: programada ? { monto_por_feria: Number(programada.monto_fijo), vigente_desde: programada.vigencia_inicio } : null,
+        historial: history.map((tarifa) => ({ monto_por_feria: Number(tarifa.monto_fijo), vigencia_inicio: tarifa.vigencia_inicio, vigencia_fin: tarifa.vigencia_fin }))
+      };
+    })
+  }));
+}
+
+function validateFeriaAmount(payload) {
+  const monto = Number(payload.monto_por_feria);
+  const desde = String(payload.vigencia_inicio || today()).trim();
+  if (!Number.isFinite(monto) || monto <= 0) throw new Error('El monto por día de feria debe ser mayor que cero');
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(desde) || Number.isNaN(Date.parse(desde))) throw new Error('La fecha de inicio debe usar formato AAAA-MM-DD');
+  if (desde < today()) throw new Error('El nuevo monto solo puede regir desde hoy o una fecha futura; los meses anteriores conservan su tarifa');
+  return { monto, desde };
+}
+
+async function findZoneTariff(db, categoriaId) {
+  return (await getZoneTariffs(db)).flatMap((zona) => zona.tarifas.map((tarifa) => ({ ...tarifa, zona_id: zona.zona_id, zona: zona.zona })))
+    .find((tarifa) => tarifa.categoria_id === Number(categoriaId)) || null;
+}
+
+// Nueva tarifa dentro de una zona (por ejemplo, "Pista sin asfaltar").
+export async function addZoneTariff(db, zonaId, payload) {
+  const nombre = String(payload.nombre || '').trim();
+  if (!nombre) throw new Error('El nombre de la tarifa es obligatorio');
+  const { monto, desde } = validateFeriaAmount(payload);
+  return withTransaction(async (client) => {
+    if (!(await first(client, 'SELECT id FROM zonas WHERE id = $1', [Number(zonaId)]))) throw new Error('Zona no encontrada');
+    if (await first(client, 'SELECT id FROM categorias_cobro WHERE zona_id = $1 AND lower(btrim(nombre)) = lower(btrim($2))', [Number(zonaId), nombre])) {
+      throw new Error('La zona ya tiene una tarifa con ese nombre');
+    }
+    const isFirst = !(await first(client, 'SELECT id FROM categorias_cobro WHERE zona_id = $1 AND predeterminada', [Number(zonaId)]));
+    const [created] = await createZoneCategories(client, zonaId, [[nombre, monto, isFirst]], desde);
+    if (payload.predeterminada && !isFirst) await markDefault(client, created.id);
+    return findZoneTariff(client, created.id);
+  });
+}
+
+async function markDefault(db, categoriaId) {
+  const categoria = await first(db, 'SELECT id, zona_id FROM categorias_cobro WHERE id = $1', [Number(categoriaId)]);
+  if (!categoria) throw new Error('Tarifa no encontrada');
+  await db.query('UPDATE categorias_cobro SET predeterminada = FALSE WHERE zona_id = $1 AND predeterminada', [categoria.zona_id]);
+  await db.query('UPDATE categorias_cobro SET predeterminada = TRUE WHERE id = $1', [categoria.id]);
+}
+
+// La predeterminada es la que toma un puesto cuando no se indica su tarifa.
+export async function setDefaultZoneTariff(db, categoriaId) {
+  return withTransaction(async (client) => {
+    await markDefault(client, categoriaId);
+    return findZoneTariff(client, categoriaId);
   });
 }
 
 // Cambiar el monto nunca reescribe lo anterior: la tarifa vigente se cierra el día previo y se abre una nueva.
-export async function setZoneTariff(db, zonaId, payload) {
-  const id = Number(zonaId);
-  const monto = Number(payload.monto_por_feria);
-  const today = new Date().toISOString().slice(0, 10);
-  const desde = String(payload.vigencia_inicio || today).trim();
-  if (!Number.isFinite(monto) || monto <= 0) throw new Error('El monto por día de feria debe ser mayor que cero');
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(desde) || Number.isNaN(Date.parse(desde))) throw new Error('La fecha de inicio debe usar formato AAAA-MM-DD');
-  if (desde < today) throw new Error('El nuevo monto solo puede regir desde hoy o una fecha futura; los meses anteriores conservan su tarifa');
-
+export async function setZoneTariff(db, categoriaId, payload) {
+  const id = Number(categoriaId);
+  const { monto, desde } = validateFeriaAmount(payload);
   return withTransaction(async (client) => {
-    const zona = await first(client, 'SELECT id FROM zonas WHERE id = $1', [id]);
-    if (!zona) throw new Error('Zona no encontrada');
+    const categoria = await first(client, 'SELECT id, zona_id FROM categorias_cobro WHERE id = $1', [id]);
+    if (!categoria) throw new Error('Tarifa no encontrada');
 
     const sameDay = await first(client, `
-      SELECT id FROM tarifas WHERE zona_id = $1 AND rubro_id IS NULL AND activo AND vigencia_inicio = $2::date`, [id, desde]);
+      SELECT id FROM tarifas WHERE categoria_id = $1 AND activo AND vigencia_inicio = $2::date`, [id, desde]);
     if (sameDay) {
       await client.query('UPDATE tarifas SET monto_fijo = $1, version = version + 1 WHERE id = $2', [monto, sameDay.id]);
     } else {
       // Un cambio programado después de esta fecha queda reemplazado por el nuevo monto.
       await client.query(`
-        UPDATE tarifas SET activo = FALSE
-        WHERE zona_id = $1 AND rubro_id IS NULL AND activo AND vigencia_inicio > $2::date`, [id, desde]);
+        UPDATE tarifas SET activo = FALSE WHERE categoria_id = $1 AND activo AND vigencia_inicio > $2::date`, [id, desde]);
       await client.query(`
         UPDATE tarifas SET vigencia_fin = $2::date - 1, version = version + 1
-        WHERE zona_id = $1 AND rubro_id IS NULL AND activo AND (vigencia_fin IS NULL OR vigencia_fin >= $2::date)`, [id, desde]);
+        WHERE categoria_id = $1 AND activo AND (vigencia_fin IS NULL OR vigencia_fin >= $2::date)`, [id, desde]);
       await client.query(`
-        INSERT INTO tarifas (rubro_id, zona_id, tipo_tarifa, monto_fijo, monto_variable, unidad_medida, vigencia_inicio)
-        VALUES (NULL, $1, 'fija', $2, 0, 'dia_feria', $3::date)`, [id, monto, desde]);
+        INSERT INTO tarifas (rubro_id, zona_id, categoria_id, tipo_tarifa, monto_fijo, monto_variable, unidad_medida, vigencia_inicio)
+        VALUES (NULL, $1, $2, 'fija', $3, 0, 'dia_feria', $4::date)`, [categoria.zona_id, id, monto, desde]);
     }
-    return (await getZoneTariffs(client)).find((item) => item.zona_id === id);
+    return findZoneTariff(client, id);
   });
 }
 
@@ -1161,23 +1275,21 @@ function nextPeriod(periodo) {
   return new Date(Date.UTC(year, month, 1)).toISOString().slice(0, 7);
 }
 
-// Tarifa de la zona vigente ese día: la de inicio más reciente que lo cubre.
-function zoneTariffOn(history, day) {
+// Tarifa vigente ese día: la de inicio más reciente que lo cubre.
+function tariffOn(history, day) {
   return history.find((tarifa) => tarifa.vigencia_inicio <= day && (!tarifa.vigencia_fin || tarifa.vigencia_fin >= day)) || null;
 }
 
-async function getZoneTariffHistory(db, zonaId) {
-  return rows(db, `
-    ${TARIFA_SELECT}
-    WHERE t.zona_id = $1 AND t.rubro_id IS NULL AND t.activo
-    ORDER BY t.vigencia_inicio DESC, t.id DESC`, [Number(zonaId)]);
+// Zona y tarifa en que estaba el puesto ese día; sin asignación ese día, no se cobra.
+function assignmentOn(assignments, day) {
+  return assignments.find((item) => item.desde <= day && (!item.hasta || item.hasta >= day)) || null;
 }
 
 // Puestos que generan cobro: los asignados (no disponibles ni dados de baja).
 async function findMerchantPosts(db, merchantId) {
   return rows(db, `
-    SELECT p.id, p.codigo_puesto AS codigo, p.zona_id, z.nombre AS zona, p.metros_cuadrados, p.estado
-    FROM puestos p JOIN zonas z ON z.id = p.zona_id
+    SELECT p.id, p.codigo_puesto AS codigo, p.zona_id, p.metros_cuadrados, p.estado
+    FROM puestos p
     WHERE p.comerciante_id = $1 AND p.estado NOT IN ('disponible', 'inactivo')
     ORDER BY p.id`, [merchantId]);
 }
@@ -1222,22 +1334,49 @@ export async function calculateLiquidation(db, comercianteId, periodo) {
     return noDevengo('ferial_sin_asistencia', { metros_cuadrados: 0 });
   }
 
-  // Cada puesto paga el monto de su propia zona; sin puesto (permanente) se usa la zona del comerciante.
-  const billed = posts.length ? posts : [{ id: null, codigo: null, zona_id: merchant.zona_id, zona: merchant.zona, metros_cuadrados: null }];
-  const histories = new Map();
-  for (const zonaId of new Set(billed.map((post) => Number(post.zona_id)))) {
-    const history = await getZoneTariffHistory(db, zonaId);
-    if (!history.length) {
-      const zona = billed.find((post) => Number(post.zona_id) === zonaId)?.zona || zonaId;
-      throw new Error(`La zona ${zona} no tiene un monto por día de feria configurado`);
+  // Historial de cada puesto: zona y tarifa vigentes en cada tramo de fechas.
+  const postIds = posts.map((post) => Number(post.id));
+  const historyRows = postIds.length ? await rows(db, `
+    SELECT puesto_id, zona_id, categoria_id, ${DAY('desde')} AS desde, ${DAY('hasta')} AS hasta
+    FROM puestos_historial WHERE puesto_id = ANY($1::bigint[]) ORDER BY desde`, [postIds]) : [];
+  const registeredOn = String(merchant.fecha_registro || '').slice(0, 10) || today();
+  // Sin puesto (permanente) se cobra la tarifa predeterminada de su zona desde que se registró.
+  const billed = posts.length
+    ? posts.map((post) => {
+      const assignments = historyRows.filter((row) => Number(row.puesto_id) === Number(post.id));
+      // Un puesto sin historial (creado fuera del sistema) se toma asignado desde el registro del comerciante.
+      return { ...post, assignments: assignments.length ? assignments : [{ zona_id: post.zona_id, categoria_id: null, desde: registeredOn, hasta: null }] };
+    })
+    : [{ id: null, codigo: null, zona_id: merchant.zona_id, metros_cuadrados: null, assignments: [{ zona_id: merchant.zona_id, categoria_id: null, desde: registeredOn, hasta: null }] }];
+
+  // Asignaciones sin tarifa indicada toman la predeterminada de su zona.
+  const defaults = new Map();
+  for (const post of billed) {
+    for (const item of post.assignments) {
+      if (item.categoria_id) continue;
+      if (!defaults.has(Number(item.zona_id))) defaults.set(Number(item.zona_id), await getDefaultCategoryId(db, item.zona_id));
+      item.categoria_id = defaults.get(Number(item.zona_id));
     }
-    histories.set(zonaId, history);
   }
-  const regimeStart = [...histories.values()].flat()
-    .reduce((min, tarifa) => (tarifa.vigencia_inicio < min ? tarifa.vigencia_inicio : min), '9999-12-31').slice(0, 7);
+
+  const categoryIds = [...new Set(billed.flatMap((post) => post.assignments.map((item) => Number(item.categoria_id))).filter(Boolean))];
+  const tariffRows = categoryIds.length ? await rows(db, `
+    ${TARIFA_SELECT}
+    WHERE t.categoria_id = ANY($1::int[]) AND t.activo
+    ORDER BY t.vigencia_inicio DESC, t.id DESC`, [categoryIds]) : [];
+  const histories = new Map(categoryIds.map((id) => [id, tariffRows.filter((tarifa) => Number(tarifa.categoria_id) === id)]));
+  const zoneNames = new Map((await rows(db, 'SELECT id, nombre FROM zonas WHERE id = ANY($1::int[])',
+    [[...new Set(billed.flatMap((post) => post.assignments.map((item) => Number(item.zona_id))))]])).map((row) => [Number(row.id), row.nombre]));
+  for (const post of billed) {
+    for (const item of post.assignments) {
+      if (!item.categoria_id || !histories.get(Number(item.categoria_id))?.length) {
+        throw new Error(`La zona ${zoneNames.get(Number(item.zona_id)) || item.zona_id} no tiene un monto por día de feria configurado`);
+      }
+    }
+  }
+  const regimeStart = tariffRows.reduce((min, tarifa) => (tarifa.vigencia_inicio < min ? tarifa.vigencia_inicio : min), '9999-12-31').slice(0, 7);
 
   // Un día de feria con falta ("F") y sin presencia no se cobra en ese puesto.
-  const postIds = billed.map((post) => post.id).filter(Boolean);
   const absentDays = new Set(postIds.length ? (await rows(db, `
     SELECT puesto_id || ':' || to_char(fecha, 'YYYY-MM-DD') AS clave FROM asistencias_feriales
     WHERE puesto_id = ANY($1::bigint[])
@@ -1253,13 +1392,15 @@ export async function calculateLiquidation(db, comercianteId, periodo) {
   const accrue = (month) => {
     const days = month < regimeStart ? [] : feriaDaysOfPeriod(month);
     const detail = billed.map((post) => {
-      const history = histories.get(Number(post.zona_id));
       let total = 0;
       let absent = 0;
       let billable = 0;
       for (const day of days) {
+        // Solo se cobra mientras el puesto estaba asignado, con la zona y tarifa de ese día.
+        const assignment = assignmentOn(post.assignments, day);
+        if (!assignment) continue;
         if (post.id && absentDays.has(`${post.id}:${day}`)) { absent += 1; continue; }
-        const tarifa = zoneTariffOn(history, day);
+        const tarifa = tariffOn(histories.get(Number(assignment.categoria_id)), day);
         if (!tarifa) continue;
         total += Number(tarifa.monto_fijo);
         billable += 1;
@@ -1287,23 +1428,29 @@ export async function calculateLiquidation(db, comercianteId, periodo) {
   const saldo = Math.max(balance, 0);
 
   const currentPeriod = new Date().toISOString().slice(0, 7);
-  const referenceDay = periodo === currentPeriod ? new Date().toISOString().slice(0, 10) : new Date(Date.UTC(...periodo.split('-').map(Number), 0)).toISOString().slice(0, 10);
-  const tariffOf = (post) => {
-    const history = histories.get(Number(post.zona_id));
-    return zoneTariffOn(history, referenceDay) || history[history.length - 1];
-  };
-  const puestos = devengo.detail.map(({ post, total, absent, billable }) => ({
-    puesto_id: post.id,
-    codigo: post.codigo,
-    zona_id: Number(post.zona_id),
-    zona: post.zona,
-    monto_por_feria: Number(tariffOf(post).monto_fijo),
-    dias_ausente: absent,
-    dias_cobrables: billable,
-    monto_total: Number(total.toFixed(2))
-  }));
-  // Monto de una feria con todos sus puestos: es la base de la cuota por feria y por semana.
-  const montoPorFeria = Number(puestos.reduce((sum, item) => sum + item.monto_por_feria, 0).toFixed(2));
+  const referenceDay = periodo === currentPeriod ? today() : new Date(Date.UTC(...periodo.split('-').map(Number), 0)).toISOString().slice(0, 10);
+  const puestos = devengo.detail.map(({ post, total, absent, billable }) => {
+    // Asignación a la fecha de referencia o, si ya no estaba asignado, la última que tuvo.
+    const assignment = assignmentOn(post.assignments, referenceDay) || post.assignments.at(-1);
+    const history = histories.get(Number(assignment.categoria_id));
+    const tarifa = tariffOn(history, referenceDay) || history.at(-1);
+    return {
+      puesto_id: post.id,
+      codigo: post.codigo,
+      zona_id: Number(assignment.zona_id),
+      zona: zoneNames.get(Number(assignment.zona_id)) || null,
+      tarifa: tarifa.categoria,
+      tarifa_id: Number(tarifa.id),
+      asignado_desde: post.assignments[0]?.desde || null,
+      asignado_hoy: Boolean(assignmentOn(post.assignments, referenceDay)),
+      monto_por_feria: Number(tarifa.monto_fijo),
+      dias_ausente: absent,
+      dias_cobrables: billable,
+      monto_total: Number(total.toFixed(2))
+    };
+  });
+  // Monto de una feria con todos los puestos asignados: base de la cuota por feria y por semana.
+  const montoPorFeria = Number(puestos.filter((item) => item.asignado_hoy).reduce((sum, item) => sum + item.monto_por_feria, 0).toFixed(2));
   const cuotaPorFrecuencia = {
     por_feria: montoPorFeria,
     semanal: montoPorFeria * FERIA_WEEKDAYS.length,
@@ -1313,9 +1460,9 @@ export async function calculateLiquidation(db, comercianteId, periodo) {
   return {
     comerciante: merchant,
     // Tarifa de referencia del cobro (la de su primer puesto); el detalle por puesto va en "puestos".
-    tarifa: tariffOf(billed[0]),
+    tarifa: tariffRows.find((tarifa) => Number(tarifa.id) === puestos[0].tarifa_id) || null,
     periodo,
-    zona_id: Number(billed[0].zona_id),
+    zona_id: puestos[0].zona_id,
     metros_cuadrados: billed[0].metros_cuadrados ?? null,
     frecuencia_pago: frecuenciaPago,
     puestos,

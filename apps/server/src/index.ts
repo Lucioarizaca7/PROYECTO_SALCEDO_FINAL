@@ -36,6 +36,8 @@ import {
   updateTarifa,
   getZoneTariffs,
   setZoneTariff,
+  addZoneTariff,
+  setDefaultZoneTariff,
   calculateLiquidation,
   getCobros,
   insertCobro,
@@ -503,6 +505,9 @@ app.post('/api/v1/comerciantes/importar-padron',
         regularizedMerchants: preview.regularizedMerchants,
         reactivatedMerchants: preview.reactivatedMerchants,
         warnings: preview.warnings.slice(0, 100),
+        olderRows: preview.olderRows,
+        assignmentChanges: preview.assignmentChanges.slice(0, 100),
+        defaultTariffRows: preview.defaultTariffRows,
         absentRows: preview.absentRows,
         attendanceRows: preview.attendanceRows,
         feriaDates: preview.feriaDates,
@@ -788,21 +793,58 @@ app.get('/api/v1/tarifas-zona', async (_req, res) => {
   }
 });
 
-app.put('/api/v1/tarifas-zona/:zonaId',
+const findZoneTariffById = async (categoriaId) => (await getZoneTariffs(db))
+  .flatMap((zona) => zona.tarifas.map((tarifa) => ({ ...tarifa, zona_id: zona.zona_id, zona: zona.zona })))
+  .find((tarifa) => tarifa.categoria_id === Number(categoriaId)) || null;
+
+// Una zona puede tener varias tarifas (por ejemplo, pista asfaltada y pista sin asfaltar).
+app.post('/api/v1/tarifas-zona',
+  requireAuth,
+  requireRoles(['super_admin']),
+  auditMutation({ db, accion: 'CREAR_TARIFA_ZONA', entidad: 'tarifas', serializeResponse: (body) => body?.data ?? body }),
+  async (req, res) => {
+    try {
+      return res.status(201).json({ data: await addZoneTariff(db, req.body?.zona_id, req.body || {}), message: 'Tarifa agregada a la zona' });
+    } catch (error) {
+      return res.status(400).json({ message: error.message || 'No se pudo agregar la tarifa' });
+    }
+  }
+);
+
+app.put('/api/v1/tarifas-zona/:categoriaId',
   requireAuth,
   requireRoles(['super_admin']),
   auditMutation({
     db,
     accion: 'ACTUALIZAR_TARIFA_ZONA',
     entidad: 'tarifas',
-    getPreviousState: async (req) => (await getZoneTariffs(db)).find((item) => item.zona_id === Number(req.params.zonaId)) || null,
+    getPreviousState: async (req) => findZoneTariffById(req.params.categoriaId),
     serializeResponse: (body) => body?.data ?? body
   }),
   async (req, res) => {
     try {
-      return res.json({ data: await setZoneTariff(db, req.params.zonaId, req.body || {}), message: 'Monto por zona actualizado correctamente' });
+      return res.json({ data: await setZoneTariff(db, req.params.categoriaId, req.body || {}), message: 'Monto de la tarifa actualizado correctamente' });
     } catch (error) {
-      return res.status(400).json({ message: error.message || 'No se pudo actualizar el monto de la zona' });
+      return res.status(400).json({ message: error.message || 'No se pudo actualizar el monto de la tarifa' });
+    }
+  }
+);
+
+app.put('/api/v1/tarifas-zona/:categoriaId/predeterminada',
+  requireAuth,
+  requireRoles(['super_admin']),
+  auditMutation({
+    db,
+    accion: 'TARIFA_ZONA_PREDETERMINADA',
+    entidad: 'tarifas',
+    getPreviousState: async (req) => findZoneTariffById(req.params.categoriaId),
+    serializeResponse: (body) => body?.data ?? body
+  }),
+  async (req, res) => {
+    try {
+      return res.json({ data: await setDefaultZoneTariff(db, req.params.categoriaId), message: 'Tarifa predeterminada de la zona actualizada' });
+    } catch (error) {
+      return res.status(400).json({ message: error.message || 'No se pudo marcar la tarifa predeterminada' });
     }
   }
 );

@@ -142,7 +142,8 @@ test('insertCobro rechaza cobros duplicados por código de operación', async ()
     zona_id: 1,
     direccion: 'Puesto B-15',
     metros_cuadrados: 5,
-    estado: 'ocupado'
+    estado: 'ocupado',
+    asignado_desde: '2026-01-01'
   });
 
   await insertCobro(db, {

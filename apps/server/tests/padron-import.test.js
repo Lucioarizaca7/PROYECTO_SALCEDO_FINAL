@@ -38,6 +38,8 @@ test('previsualiza e importa por bloque: el ausente registra una falta de esa fe
     updatedPosts: 0,
     absentPosts: 1,
     attendanceMarks: 2,
+    olderRows: 0,
+    assignmentChanges: 0,
     skippedRows: 0
   });
 
@@ -49,11 +51,13 @@ test('previsualiza e importa por bloque: el ausente registra una falta de esa fe
   const marks = (await db.query("SELECT marca FROM asistencias_feriales WHERE puesto_id = $1 AND fecha = '2026-09-08'", [absentPost.id])).rows;
   assert.deepEqual(marks.map((row) => row.marca), ['F']);
 
-  // Septiembre tiene 10 ferias; la del martes 8 no se cobra.
+  // El puesto se cobra desde la feria del archivo (martes 8): 8 ferias en septiembre, y la del 8
+  // no se cobra por la falta; 7 × S/ 3 de la pista asfaltada (predeterminada).
   const liquidation = await calculateLiquidation(db, absentMerchant.id, '2026-09');
   assert.equal(liquidation.no_devengo, false);
   assert.equal(liquidation.dias_ausente, 1);
-  assert.equal(liquidation.monto_total, 45);
+  assert.equal(liquidation.puestos[0].asignado_desde, '2026-09-08');
+  assert.equal(liquidation.monto_total, 21);
 
   const secondPreview = await previewPadronSheets(workbook, options);
   assert.equal(secondPreview.validRows, 2);
@@ -140,7 +144,7 @@ test('previsualiza e importa en lote: el número de consultas no crece con las f
 
   const preview = await previewPadronSheets(workbook, { filename: 'padron.xlsx', db: countingDb, fechaFeria: '2026-09-08' });
   assert.equal(preview.validRows, 60);
-  assert.ok(queries <= 5, `la previsualización hizo ${queries} consultas`);
+  assert.ok(queries <= 6, `la previsualización hizo ${queries} consultas`);
 
   const result = await importPadronPreview(db, preview, 1);
   assert.equal(result.createdMerchants, 60);
@@ -188,7 +192,7 @@ test('sin DNI se importa como pendiente de regularización y se regulariza cuand
   const preview = await previewPadronSheets([{
     name: 'BLOQUE T',
     rows: [header, [null, 'Rosa Pari Ccama', 'TMP-01', 'Zona Norte', 'ropa', null], [null, null, 'TMP-02', 'Zona Norte', 'ropa', 3]]
-  }], { filename: 'padron.xlsx', db });
+  }], { filename: 'padron.xlsx', db, fechaFeria: '2026-09-01' });
 
   assert.equal(preview.validRows, 1);
   assert.equal(preview.pendingMerchants, 1);
@@ -200,10 +204,10 @@ test('sin DNI se importa como pendiente de regularización y se regulariza cuand
   const pending = (await db.query('SELECT id, estado, estado_empadronamiento FROM comerciantes WHERE dni_ruc = $1', [document])).rows[0];
   assert.equal(pending.estado, 'pendiente');
   assert.equal(pending.estado_empadronamiento, 'PENDIENTE_REGULARIZACION');
-  // Pendiente y sin metraje, paga igual que cualquier otro: 10 ferias de septiembre × S/ 5.
+  // Pendiente y sin metraje, paga igual que cualquier otro: 10 ferias de septiembre × S/ 3.
   const pendingLiquidation = await calculateLiquidation(db, pending.id, '2026-09');
   assert.equal(pendingLiquidation.no_devengo, false);
-  assert.equal(pendingLiquidation.monto_total, 50);
+  assert.equal(pendingLiquidation.monto_total, 30);
 
   // Reimportar sin DNI no duplica: el documento temporal es estable.
   const again = await previewPadronSheets([{ name: 'BLOQUE T', rows: [header, [null, 'ROSA PARI CCAMA', 'TMP-01', 'Zona Norte', 'ropa', null]] }], { filename: 'padron.xlsx', db });
@@ -260,7 +264,7 @@ test('un titular puede tener varios puestos y paga el monto de la zona de cada u
       ['66789012', 'Juan Mamani Quispe', 'MULTI-02', 'Zona Norte', 'comida'],
       ['66789012', 'Otro Nombre', 'MULTI-03', 'Zona Norte', 'comida']
     ]
-  }], { filename: 'padron.xlsx', db });
+  }], { filename: 'padron.xlsx', db, fechaFeria: '2026-09-01' });
 
   assert.equal(preview.validRows, 2);
   assert.equal(preview.newMerchants, 1);
@@ -272,12 +276,12 @@ test('un titular puede tener varios puestos y paga el monto de la zona de cada u
 
   const merchantId = (await db.query(`SELECT id FROM comerciantes WHERE dni_ruc = '66789012'`)).rows[0].id;
   const liquidation = await calculateLiquidation(db, merchantId, '2026-09');
-  // Septiembre: 10 ferias × (S/ 5 Mercado Central + S/ 8 Zona Norte).
+  // Septiembre: 10 ferias × (S/ 3 Mercado Central + S/ 8 Zona Norte).
   assert.equal(liquidation.puestos.length, 2);
-  assert.equal(liquidation.monto_por_feria, 13);
-  assert.equal(liquidation.monto_total, 130);
-  assert.equal(liquidation.cuota_sugerida, 26);
-  assert.deepEqual(liquidation.puestos.map((post) => [post.codigo, post.monto_total]), [['MULTI-01', 50], ['MULTI-02', 80]]);
+  assert.equal(liquidation.monto_por_feria, 11);
+  assert.equal(liquidation.monto_total, 110);
+  assert.equal(liquidation.cuota_sugerida, 22);
+  assert.deepEqual(liquidation.puestos.map((post) => [post.codigo, post.monto_total]), [['MULTI-01', 30], ['MULTI-02', 80]]);
 });
 
 test('la plantilla oficial trae las listas del catálogo y se importa sin ajustes', async () => {
@@ -301,4 +305,61 @@ test('la plantilla oficial trae las listas del catálogo y se importa sin ajuste
   assert.equal(preview.candidates[0].feriaDate, '2026-09-15');
   assert.equal(preview.candidates[0].area, null);
   assert.deepEqual(preview.sheets.map((item) => item.sheet), ['PADRON']);
+});
+
+test('mismo cliente con otra fecha: puesto nuevo y cambios de zona rigen desde su feria, y un archivo viejo solo aporta asistencia', async () => {
+  const db = await initializeDatabase();
+  const header = ['DNI', 'Titular', 'Código Puesto', 'Zona', 'Rubro', 'Estado', 'Fecha Feria', 'Tarifa'];
+  const load = async (rows) => {
+    const preview = await previewPadronSheets([{ name: 'BLOQUE X', rows: [header, ...rows] }], { filename: 'padron.xlsx', db });
+    assert.deepEqual(preview.errors, []);
+    await importPadronPreview(db, preview, 1);
+    return preview;
+  };
+  const merchantId = async () => (await db.query(`SELECT id FROM comerciantes WHERE dni_ruc = '67890123'`)).rows[0].id;
+  const total = async (periodo) => (await calculateLiquidation(db, await merchantId(), periodo)).monto_total;
+
+  await load([['67890123', 'Ana Quispe', 'FX-01', 'Mercado Central', 'ropa', 'Presente', '2026-09-15', 'Pista asfaltada']]);
+  // Desde el martes 15: 6 ferias × S/ 3; agosto no se cobra.
+  assert.equal(await total('2026-09'), 18);
+  assert.equal(await total('2026-08'), 0);
+
+  // Otro puesto en Zona Norte, sin asfaltar, desde el 29: solo suma desde esa feria.
+  await load([['67890123', 'Ana Quispe Mamani', 'FX-02', 'Zona Norte', 'ropa', 'Presente', '2026-09-29', 'Pista sin asfaltar']]);
+  assert.equal(await total('2026-09'), 18 + 2 * 2);
+
+  // FX-01 pasa a Zona Norte sin asfaltar desde el 22: los días anteriores conservan su tarifa.
+  const moved = await load([['67890123', 'Ana Quispe Mamani', 'FX-01', 'Zona Norte', 'ropa', 'Presente', '2026-09-22', 'Pista sin asfaltar']]);
+  assert.equal(moved.assignmentChanges.length, 1);
+  assert.equal(await total('2026-09'), 2 * 3 + 4 * 2 + 2 * 2);
+
+  // Un archivo más antiguo (martes 8) no pisa nombre ni zona: registra la asistencia y adelanta la asignación.
+  const old = await load([['67890123', 'Ana Quispe', 'FX-01', 'Mercado Central', 'ropa', 'Ausente', '2026-09-08', 'Pista asfaltada']]);
+  assert.equal(old.olderRows, 1);
+  const merchant = (await db.query(`SELECT nombre, zona_id FROM comerciantes WHERE dni_ruc = '67890123'`)).rows[0];
+  assert.equal(merchant.nombre, 'Ana Quispe Mamani');
+  const fx01 = (await getPuestos(db)).find((post) => post.codigo === 'FX-01');
+  assert.equal(fx01.tarifa, 'Pista sin asfaltar');
+  assert.equal(fx01.asignado_desde, '2026-09-08');
+  // Ahora también se cobra el 9 (el 8 fue falta), a la tarifa que tenía entonces: + S/ 3.
+  assert.equal(await total('2026-09'), 3 * 3 + 4 * 2 + 2 * 2);
+  assert.equal((await calculateLiquidation(db, await merchantId(), '2026-09')).dias_ausente, 1);
+});
+
+test('la columna Tarifa elige la tarifa de la zona y avisa si no existe', async () => {
+  const db = await initializeDatabase();
+  const preview = await previewPadronSheets([{
+    name: 'BLOQUE V',
+    rows: [
+      ['DNI', 'Titular', 'Código Puesto', 'Zona', 'Rubro', 'Tarifa'],
+      ['68901234', 'Con Tarifa', 'TV-01', 'Zona Norte', 'ropa', 'sin asfaltar'],
+      ['68901235', 'Sin Tarifa', 'TV-02', 'Zona Norte', 'ropa', ''],
+      ['68901236', 'Tarifa Rara', 'TV-03', 'Zona Norte', 'ropa', 'Pista de tierra']
+    ]
+  }], { filename: 'padron.xlsx', db });
+  assert.equal(preview.validRows, 2);
+  assert.equal(preview.candidates.find((row) => row.code === 'TV-01').tariffName, 'Pista sin asfaltar');
+  assert.equal(preview.candidates.find((row) => row.code === 'TV-02').tariffName, 'Pista asfaltada');
+  assert.equal(preview.defaultTariffRows, 1);
+  assert.match(preview.errors[0].message, /no tiene la tarifa "Pista de tierra"/);
 });

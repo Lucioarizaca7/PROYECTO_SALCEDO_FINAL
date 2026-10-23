@@ -612,6 +612,7 @@ function App() {
   const [editingTariffId, setEditingTariffId] = useState(null);
   const [tariffMessage, setTariffMessage] = useState('');
   const [tariffForm, setTariffForm] = useState({ monto_por_feria: '', vigencia_inicio: '' });
+  const [newTariffForm, setNewTariffForm] = useState(null);
   const [showPortal, setShowPortal] = useState(false);
   const [portalIdentifier, setPortalIdentifier] = useState('');
   const [portalData, setPortalData] = useState(null);
@@ -748,7 +749,7 @@ function App() {
       setOperational(dashboard.operational || { porZona: [], porRubro: [], porCobrador: [] });
 
       setComerciantes((comerciantes.data || []).map((item) => [item.id, item.nombre, item.rubro, item.dni_ruc, item.zona, item.estado, new Date(item.fecha_registro).toLocaleDateString('es-PE'), item.tipo_comerciante || item.categoria, item.frecuencia_pago || 'semanal']))
-      setTarifas((tarifas.data || []).map((item) => [item.zona, item.monto_por_feria === null ? 'Sin monto' : `S/ ${Number(item.monto_por_feria).toFixed(2)} por feria`, item.monto_por_feria === null ? 'Inactivo' : 'Activo']))
+      setTarifas((tarifas.data || []).flatMap((zona) => zona.tarifas.map((item) => [`${zona.zona} · ${item.nombre}`, item.monto_por_feria === null ? 'Sin monto' : `S/ ${Number(item.monto_por_feria).toFixed(2)} por feria`, item.monto_por_feria === null ? 'Inactivo' : 'Activo'])))
       setTariffRecords(tarifas.data || []);
       setCobros(cobros.data || []);
       setMapPuestos(puestos.data || []);
@@ -1014,24 +1015,37 @@ function App() {
     }
   };
 
-  const handleTariffSubmit = async (event) => {
-    event.preventDefault();
+  const sendTariffRequest = async (path, method, body) => {
     setTariffMessage('');
     try {
-      const response = await fetch(`${apiBase}/tarifas-zona/${editingTariffId}`, {
-        method: 'PUT',
+      const response = await fetch(`${apiBase}/tarifas-zona${path}`, {
+        method,
         headers: getAuthHeaders({ 'Content-Type': 'application/json' }),
-        body: JSON.stringify(tariffForm)
+        body: body ? JSON.stringify(body) : undefined
       });
       const data = await response.json();
-      if (!response.ok) throw new Error(data.message || 'No se pudo guardar el monto de la zona');
+      if (!response.ok) throw new Error(data.message || 'No se pudo guardar la tarifa');
       setTariffMessage(data.message);
-      setEditingTariffId(null);
       await fetchData();
+      return true;
     } catch (tariffError) {
       setTariffMessage(tariffError.message);
+      return false;
     }
   };
+
+  // Cambiar el monto de una tarifa (editingTariffId es el id de la tarifa dentro de su zona).
+  const handleTariffSubmit = async (event) => {
+    event.preventDefault();
+    if (await sendTariffRequest(`/${editingTariffId}`, 'PUT', tariffForm)) setEditingTariffId(null);
+  };
+
+  const handleTariffCreate = async (event) => {
+    event.preventDefault();
+    if (await sendTariffRequest('', 'POST', newTariffForm)) setNewTariffForm(null);
+  };
+
+  const handleTariffDefault = (categoriaId) => sendTariffRequest(`/${categoriaId}/predeterminada`, 'PUT');
 
   const handleZoneSubmit = async (event) => {
     event.preventDefault();
@@ -1600,7 +1614,7 @@ function App() {
                   </div>
                 )}
                 <div className="step-label">02 · Revisar deuda</div>
-                {paymentBalance ? <div className="debt-breakdown"><div><span>Por día de feria</span><strong>S/ {Number(paymentBalance.monto_por_feria || 0).toFixed(2)}</strong></div><div><span>Periodo</span><strong>{paymentBalance.periodo}</strong></div><div><span>Ferias cobrables</span><strong>{paymentBalance.dias_cobrables ?? 0} de {paymentBalance.dias_feria ?? 0}{paymentBalance.dias_ausente ? ` (${paymentBalance.dias_ausente} faltas)` : ''}</strong></div>{paymentBalance.credito_anterior > 0 && <div><span>A cuenta del mes anterior</span><strong>S/ {Number(paymentBalance.credito_anterior).toFixed(2)}</strong></div>}{paymentBalance.puestos?.length > 1 && paymentBalance.puestos.map((post) => <div key={post.puesto_id}><span>Puesto {post.codigo} · {post.zona}</span><strong>S/ {Number(post.monto_por_feria).toFixed(2)} por feria</strong></div>)}<div><span>Pagado</span><strong>S/ {Number(paymentBalance.monto_pagado || 0).toFixed(2)}</strong></div><div className="debt-total"><span>Saldo pendiente</span><strong>S/ {paymentBalance.saldo.toFixed(2)}</strong></div></div> : <div className="empty-state">Busca un comerciante para mostrar su liquidación.</div>}
+                {paymentBalance ? <div className="debt-breakdown"><div><span>Por día de feria</span><strong>S/ {Number(paymentBalance.monto_por_feria || 0).toFixed(2)}</strong></div><div><span>Periodo</span><strong>{paymentBalance.periodo}</strong></div><div><span>Ferias cobrables</span><strong>{paymentBalance.dias_cobrables ?? 0} de {paymentBalance.dias_feria ?? 0}{paymentBalance.dias_ausente ? ` (${paymentBalance.dias_ausente} faltas)` : ''}</strong></div>{paymentBalance.credito_anterior > 0 && <div><span>A cuenta del mes anterior</span><strong>S/ {Number(paymentBalance.credito_anterior).toFixed(2)}</strong></div>}{paymentBalance.puestos?.filter((post) => post.codigo).map((post) => <div key={post.puesto_id}><span>Puesto {post.codigo} · {post.zona} · {post.tarifa}{post.asignado_desde ? ` (desde ${post.asignado_desde})` : ''}</span><strong>S/ {Number(post.monto_por_feria).toFixed(2)} por feria</strong></div>)}<div><span>Pagado</span><strong>S/ {Number(paymentBalance.monto_pagado || 0).toFixed(2)}</strong></div><div className="debt-total"><span>Saldo pendiente</span><strong>S/ {paymentBalance.saldo.toFixed(2)}</strong></div></div> : <div className="empty-state">Busca un comerciante para mostrar su liquidación.</div>}
                 <div className="step-label">03 · Confirmar cobro</div>
                 <div className="payment-fields"><input required min="0.01" max={paymentBalance?.saldo || undefined} step="0.01" type="number" placeholder="Monto a cobrar" value={paymentForm.monto} onChange={(event) => setPaymentForm({ ...paymentForm, monto: event.target.value })} /><select value={paymentForm.metodo_pago} onChange={(event) => setPaymentForm({ ...paymentForm, metodo_pago: event.target.value })}><option value="efectivo">Efectivo</option><option value="yape">Yape</option><option value="plin">Plin</option><option value="pos">POS</option></select></div>
                 {paymentForm.metodo_pago !== 'efectivo' && <input required placeholder="Código de operación digital" value={paymentForm.codigo_operacion} onChange={(event) => setPaymentForm({ ...paymentForm, codigo_operacion: event.target.value })} />}
@@ -1626,15 +1640,29 @@ function App() {
           </section>
         );
       case 'tarifas': {
-        const editingZone = tariffRecords.find((item) => item.zona_id === editingTariffId);
+        const allTariffs = tariffRecords.flatMap((zona) => zona.tarifas.map((item) => ({ ...item, zona: zona.zona })));
+        const editingTariff = allTariffs.find((item) => item.categoria_id === editingTariffId);
         const today = new Date().toISOString().slice(0, 10);
         return (
           <section className="page">
-            <div className="page-heading"><div><div className="eyebrow">CONFIGURACIÓN / TARIFAS</div><h1>Cobro por zona</h1><p>Monto fijo por día de feria (martes y miércoles); la semana equivale a 2 ferias. Un cambio rige desde la fecha que indiques y no altera los meses anteriores.</p></div></div>
+            <div className="page-heading"><div><div className="eyebrow">CONFIGURACIÓN / TARIFAS</div><h1>Cobro por zona</h1><p>Monto fijo por día de feria (martes y miércoles); la semana equivale a 2 ferias. Una zona puede tener varias tarifas (por ejemplo, pista asfaltada y sin asfaltar) y cada puesto paga la suya; la predeterminada se usa cuando no se indica. Un cambio rige desde la fecha que indiques y no altera los meses anteriores.</p></div><button className="primary-button" type="button" onClick={() => { setEditingTariffId(null); setTariffMessage(''); setNewTariffForm(newTariffForm ? null : { zona_id: String(tariffRecords[0]?.zona_id || ''), nombre: '', monto_por_feria: '', vigencia_inicio: today, predeterminada: false }); }}>＋ Agregar tarifa a una zona</button></div>
             {tariffMessage && <div className="form-message" role="status">{tariffMessage}</div>}
-            {editingZone && (
+            {newTariffForm && (
+              <form className="panel merchant-form" onSubmit={handleTariffCreate}>
+                <div className="panel-heading"><div><div className="panel-title">Nueva tarifa</div><div className="panel-subtitle">Se suma a las tarifas de la zona elegida.</div></div></div>
+                <div className="merchant-form-grid">
+                  <label><span>Zona</span><select value={newTariffForm.zona_id} onChange={(event) => setNewTariffForm({ ...newTariffForm, zona_id: event.target.value })}>{tariffRecords.map((zona) => <option key={zona.zona_id} value={zona.zona_id}>{zona.zona}</option>)}</select></label>
+                  <label><span>Nombre de la tarifa</span><input required placeholder="Ej.: Pista sin asfaltar" value={newTariffForm.nombre} onChange={(event) => setNewTariffForm({ ...newTariffForm, nombre: event.target.value })} /></label>
+                  <label><span>Monto por día de feria (S/)</span><input required min="0.01" step="0.01" type="number" value={newTariffForm.monto_por_feria} onChange={(event) => setNewTariffForm({ ...newTariffForm, monto_por_feria: event.target.value })} /></label>
+                  <label><span>Rige desde</span><input required type="date" min={today} value={newTariffForm.vigencia_inicio} onChange={(event) => setNewTariffForm({ ...newTariffForm, vigencia_inicio: event.target.value })} /></label>
+                  <label><span>Predeterminada de la zona</span><input type="checkbox" checked={newTariffForm.predeterminada} onChange={(event) => setNewTariffForm({ ...newTariffForm, predeterminada: event.target.checked })} /></label>
+                  <button className="primary-button" type="submit">Agregar tarifa</button>
+                </div>
+              </form>
+            )}
+            {editingTariff && (
               <form className="panel merchant-form" onSubmit={handleTariffSubmit}>
-                <div className="panel-heading"><div><div className="panel-title">Cambiar monto · {editingZone.zona}</div><div className="panel-subtitle">Monto actual: {editingZone.monto_por_feria === null ? 'sin monto' : `S/ ${editingZone.monto_por_feria.toFixed(2)} por feria`}.</div></div></div>
+                <div className="panel-heading"><div><div className="panel-title">Cambiar monto · {editingTariff.zona} · {editingTariff.nombre}</div><div className="panel-subtitle">Monto actual: {editingTariff.monto_por_feria === null ? 'sin monto' : `S/ ${editingTariff.monto_por_feria.toFixed(2)} por feria`}.</div></div></div>
                 <div className="merchant-form-grid">
                   <label><span>Monto por día de feria (S/)</span><input required min="0.01" step="0.01" type="number" value={tariffForm.monto_por_feria} onChange={(event) => setTariffForm({ ...tariffForm, monto_por_feria: event.target.value })} /></label>
                   <label><span>Rige desde</span><input required type="date" min={today} value={tariffForm.vigencia_inicio} onChange={(event) => setTariffForm({ ...tariffForm, vigencia_inicio: event.target.value })} /></label>
@@ -1643,7 +1671,19 @@ function App() {
                 </div>
               </form>
             )}
-            <div className="table-card"><table><thead><tr><th>Zona</th><th>Por día de feria</th><th>Por semana (2 ferias)</th><th>Vigente desde</th><th>Próximo cambio</th><th>Acción</th></tr></thead><tbody>{tariffRecords.map((item) => <tr key={item.zona_id}><td>{item.zona}</td><td>{item.monto_por_feria === null ? <span className="status pending">Sin monto: no se puede cobrar</span> : `S/ ${item.monto_por_feria.toFixed(2)}`}</td><td>{item.monto_semanal === null ? '—' : `S/ ${item.monto_semanal.toFixed(2)}`}</td><td>{item.vigente_desde || '—'}</td><td>{item.proximo_cambio ? `S/ ${item.proximo_cambio.monto_por_feria.toFixed(2)} desde ${item.proximo_cambio.vigente_desde}` : '—'}</td><td><button className="table-action" type="button" onClick={() => { setEditingTariffId(item.zona_id); setTariffMessage(''); setTariffForm({ monto_por_feria: item.monto_por_feria === null ? '' : String(item.monto_por_feria), vigencia_inicio: today }); }}>Cambiar monto</button></td></tr>)}</tbody></table></div>
+            <div className="table-card"><table><thead><tr><th>Zona</th><th>Tarifa</th><th>Por día de feria</th><th>Por semana (2 ferias)</th><th>Vigente desde</th><th>Próximo cambio</th><th>Acción</th></tr></thead><tbody>
+              {tariffRecords.map((zona) => (zona.tarifas.length ? zona.tarifas : [null]).map((item, index) => (
+                <tr key={item ? item.categoria_id : `sin-${zona.zona_id}`}>
+                  <td>{index === 0 ? zona.zona : ''}</td>
+                  <td>{item ? <>{item.nombre}{item.predeterminada && <span className="status neutral" style={{ marginLeft: '6px' }}>predeterminada</span>}</> : <span className="status pending">Sin tarifas: no se puede cobrar</span>}</td>
+                  <td>{item?.monto_por_feria == null ? '—' : `S/ ${item.monto_por_feria.toFixed(2)}`}</td>
+                  <td>{item?.monto_semanal == null ? '—' : `S/ ${item.monto_semanal.toFixed(2)}`}</td>
+                  <td>{item?.vigente_desde || '—'}</td>
+                  <td>{item?.proximo_cambio ? `S/ ${item.proximo_cambio.monto_por_feria.toFixed(2)} desde ${item.proximo_cambio.vigente_desde}` : '—'}</td>
+                  <td>{item && <><button className="table-action" type="button" onClick={() => { setNewTariffForm(null); setEditingTariffId(item.categoria_id); setTariffMessage(''); setTariffForm({ monto_por_feria: item.monto_por_feria === null ? '' : String(item.monto_por_feria), vigencia_inicio: today }); }}>Cambiar monto</button>{!item.predeterminada && <button className="table-action" type="button" onClick={() => handleTariffDefault(item.categoria_id)}>Hacer predeterminada</button>}</>}</td>
+                </tr>
+              )))}
+            </tbody></table></div>
           </section>
         );
       }

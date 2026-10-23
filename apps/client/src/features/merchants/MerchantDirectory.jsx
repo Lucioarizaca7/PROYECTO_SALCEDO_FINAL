@@ -105,6 +105,13 @@ export function MerchantDirectory({
                 <span>{importPreview.regularizedMerchants.slice(0, 10).map((item) => `${item.nombre} → ${item.dni_ruc}`).join(', ')}{importPreview.regularizedMerchants.length > 10 ? '…' : ''}.</span>
               </div>
             )}
+            {(importPreview.olderRows > 0 || importPreview.assignmentChanges?.length > 0 || importPreview.defaultTariffRows > 0) && (
+              <div className="import-format-warning" role="note">
+                {importPreview.olderRows > 0 && <span>{importPreview.olderRows} filas tienen una fecha anterior a lo ya registrado: solo se guarda su asistencia y no cambian el titular, la zona ni la tarifa.</span>}
+                {importPreview.assignmentChanges?.length > 0 && <span>{importPreview.assignmentChanges.length} puestos cambian de zona o tarifa desde la fecha de su feria (los días anteriores conservan la anterior): {importPreview.assignmentChanges.slice(0, 10).map((item) => `${item.codigo} → ${item.tarifa} desde ${item.desde}`).join(', ')}.</span>}
+                {importPreview.defaultTariffRows > 0 && <span>{importPreview.defaultTariffRows} filas sin tarifa: se usa la predeterminada de su zona.</span>}
+              </div>
+            )}
             {importPreview.warnings?.length > 0 && (
               <details className="import-errors">
                 <summary>{importPreview.warnings.length} advertencias para revisar (no impiden importar)</summary>

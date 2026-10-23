@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { DEFAULT_ZONE_FERIA_AMOUNT, recordAudit } from './db.js';
+import { DEFAULT_TARIFF_CATEGORIES, createZoneCategories, getDefaultCategoryId, recordAudit, recordPostAssignment } from './db.js';
 import { withTransaction } from './pg.js';
 
 function normalizeName(value) {
@@ -187,11 +187,9 @@ export async function seedFeriaZapatillas(_db, plan, sourceFile, userId = 1) {
 
     for (const block of plan.blocks.filter((item) => item.candidates > 0)) {
       await c.query('INSERT INTO zonas (nombre, descripcion) SELECT $1::text, $2::text WHERE NOT EXISTS (SELECT 1 FROM zonas WHERE LOWER(nombre) = LOWER($1::text))', [block.sheet, `Sector ferial ${block.sheet}`]);
-      // El cobro es fijo por zona y por día de feria: cada bloque nuevo nace con el monto de referencia.
-      await c.query(`INSERT INTO tarifas (rubro_id, zona_id, tipo_tarifa, monto_fijo, monto_variable, unidad_medida, vigencia_inicio)
-        SELECT NULL, z.id, 'fija', $2, 0, 'dia_feria', '2026-01-01' FROM zonas z
-        WHERE LOWER(z.nombre) = LOWER($1::text)
-          AND NOT EXISTS (SELECT 1 FROM tarifas t WHERE t.zona_id = z.id AND t.rubro_id IS NULL)`, [block.sheet, DEFAULT_ZONE_FERIA_AMOUNT]);
+      // El cobro es fijo por día de feria: cada bloque nuevo nace con las tarifas estándar de zona.
+      const zone = await one('SELECT z.id, EXISTS (SELECT 1 FROM categorias_cobro cc WHERE cc.zona_id = z.id) AS tiene_tarifas FROM zonas z WHERE LOWER(z.nombre) = LOWER($1) ORDER BY z.id LIMIT 1', [block.sheet]);
+      if (!zone.tiene_tarifas) await createZoneCategories(c, zone.id, DEFAULT_TARIFF_CATEGORIES, '2026-01-01');
     }
 
     const userRow = await one('SELECT id FROM usuarios WHERE id = $1', [userId]);
@@ -229,6 +227,9 @@ export async function seedFeriaZapatillas(_db, plan, sourceFile, userId = 1) {
       }
       post.id = postId;
       assignedPosts += 1;
+      // Asignado desde su primera asistencia registrada (o hoy si la planilla no trae fechas).
+      const firstDate = post.attendance.map((attendance) => attendance.date).filter(Boolean).sort()[0] || new Date().toISOString().slice(0, 10);
+      await recordPostAssignment(c, postId, { zonaId: zoneId, categoriaId: await getDefaultCategoryId(c, zoneId), desde: firstDate });
 
       for (const attendance of post.attendance) {
         await c.query(`INSERT INTO asistencias_feriales (puesto_id, fecha, sesion, marca, fuente) VALUES ($1, $2, $3, $4, $5)

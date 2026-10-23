@@ -18,7 +18,8 @@ const COLUMNS = [
   { header: 'Rubro', width: 14, note: 'Elige un rubro de la lista (clasificación del comerciante).' },
   { header: 'Metraje m2', width: 12, note: 'Opcional, solo informativo: el cobro es fijo por zona y por día de feria.' },
   { header: 'Estado', width: 11, note: 'Presente o Ausente. Ausente registra una falta en esa feria: ese día no se cobra y el puesto sigue asignado.' },
-  { header: 'Fecha Feria', width: 13, note: 'Fecha de la feria (martes o miércoles). Si la dejas vacía se usa la fecha elegida al subir el archivo; es obligatoria para los ausentes.' }
+  { header: 'Fecha Feria', width: 13, note: 'Fecha de la feria (martes o miércoles). Si la dejas vacía se usa la fecha elegida al subir el archivo; es obligatoria para los ausentes.' },
+  { header: 'Tarifa', width: 18, note: 'Tarifa del puesto dentro de su zona (por ejemplo, Pista asfaltada o Pista sin asfaltar). Si la dejas vacía se usa la predeterminada de la zona.' }
 ];
 
 function listRange(column, count) {
@@ -27,6 +28,7 @@ function listRange(column, count) {
 
 export async function buildPadronTemplate(db) {
   const [rubros, zonas] = await Promise.all([getRubros(db), getZonas(db)]);
+  const tarifas = (await db.query('SELECT DISTINCT nombre FROM categorias_cobro ORDER BY nombre')).rows.map((row) => row.nombre);
   const workbook = new ExcelJS.Workbook();
   workbook.creator = 'SISREC Salcedo';
   const sheet = workbook.addWorksheet('PADRON', { views: [{ state: 'frozen', ySplit: 1 }] });
@@ -37,6 +39,7 @@ export async function buildPadronTemplate(db) {
   rubros.forEach((rubro, index) => { lists.getCell(`B${index + 1}`).value = rubro.nombre; });
   TIPOS.forEach((tipo, index) => { lists.getCell(`C${index + 1}`).value = tipo; });
   ESTADOS.forEach((estado, index) => { lists.getCell(`D${index + 1}`).value = estado; });
+  tarifas.forEach((nombre, index) => { lists.getCell(`E${index + 1}`).value = nombre; });
 
   sheet.columns = COLUMNS.map(({ header, width }) => ({ header, width }));
   COLUMNS.forEach(({ note }, index) => {
@@ -70,7 +73,8 @@ export async function buildPadronTemplate(db) {
     J: {
       type: 'custom', allowBlank: true, formulae: ['OR(WEEKDAY(J2)=3,WEEKDAY(J2)=4)'],
       showErrorMessage: true, errorTitle: 'Fecha de feria', error: 'Las ferias son martes y miércoles.'
-    }
+    },
+    K: listRule(listRange('E', tarifas.length), 'Tarifa')
   };
   for (let row = 2; row <= TEMPLATE_ROWS + 1; row += 1) {
     for (const [column, rule] of Object.entries(rules)) sheet.getCell(`${column}${row}`).dataValidation = rule;

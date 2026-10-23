@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import readExcelFile from 'read-excel-file/node';
 
 import { withTransaction } from './pg.js';
-import { FERIA_WEEKDAYS, getRubros, getZonas, validateDocument } from './db.js';
+import { FERIA_WEEKDAYS, getRubros, getZonas, recordPostAssignment, validateDocument } from './db.js';
 
 export const TEMPLATE_LISTS_SHEET = 'LISTAS';
 
@@ -16,7 +16,8 @@ const aliases = {
   rubro: ['rubro', 'giro', 'actividad'],
   area: ['m2', 'm²', 'area', 'metraje', 'metros cuadrados', 'superficie'],
   status: ['asistencia', 'estado', 'presencia', 'incidencia', 'situacion', 'condicion', 'observacion', 'observaciones'],
-  date: ['fecha feria', 'fecha de feria', 'dia feria', 'fecha']
+  date: ['fecha feria', 'fecha de feria', 'dia feria', 'fecha'],
+  tariff: ['tarifa', 'tipo de via', 'tipo via', 'pista']
 };
 
 // Marca con la que el padrón registra la asistencia de una fecha; se reemplaza al reimportar.
@@ -202,6 +203,8 @@ export async function previewPadronSheets(sheets, { filename = '', db, fechaFeri
   }
   const rubros = await getRubros(db);
   const zonas = await getZonas(db);
+  // Tarifas de cada zona (pista asfaltada, sin asfaltar, ...): el puesto toma la indicada o la predeterminada.
+  const categorias = (await db.query('SELECT id, zona_id, nombre, predeterminada FROM categorias_cobro ORDER BY predeterminada DESC, nombre')).rows;
   const defaultRubroId = resolveCatalogId(rubros, filename, null);
   const defaultZonaId = zonas[0]?.id;
   const firstRowByDocument = new Map();
@@ -266,6 +269,12 @@ export async function previewPadronSheets(sheets, { filename = '', db, fechaFeri
       const zoneValue = cellText(value(detected.mapping.zone)) || sheet.name;
       const rubroId = resolveCatalogId(rubros, rubroValue, defaultRubroId);
       const zonaId = resolveCatalogId(zonas, zoneValue, defaultZonaId);
+      const tariffValue = cellText(value(detected.mapping.tariff));
+      const zoneTariffs = categorias.filter((categoria) => Number(categoria.zona_id) === Number(zonaId));
+      const categoria = tariffValue
+        ? zoneTariffs.find((item) => normalize(item.nombre) === normalize(tariffValue))
+          || zoneTariffs.find((item) => normalize(item.nombre).includes(normalize(tariffValue)) || normalize(tariffValue).includes(normalize(item.nombre)))
+        : zoneTariffs.find((item) => item.predeterminada);
       const rowErrors = [];
 
       if (!name) rowErrors.push(rawDocument ? 'Falta el nombre del titular.' : 'Faltan el DNI/RUC y el nombre del titular.');
@@ -278,6 +287,11 @@ export async function previewPadronSheets(sheets, { filename = '', db, fechaFeri
       }
       if (!rubroId) rowErrors.push(`No hay un rubro configurado que coincida con "${rubroValue}".`);
       if (!zonaId) rowErrors.push(`No hay una zona configurada para "${zoneValue}".`);
+      else if (!categoria) {
+        rowErrors.push(tariffValue
+          ? `La zona "${zoneValue}" no tiene la tarifa "${tariffValue}" (tiene: ${zoneTariffs.map((item) => item.nombre).join(', ') || 'ninguna'}).`
+          : `La zona "${zoneValue}" no tiene tarifas configuradas.`);
+      }
       // Un titular puede tener varios puestos: el mismo DNI se acepta si el nombre coincide.
       const previous = document ? firstRowByDocument.get(document) : null;
       if (previous && normalize(previous.name) !== normalize(name)) {
@@ -306,6 +320,13 @@ export async function previewPadronSheets(sheets, { filename = '', db, fechaFeri
         area,
         absence,
         feriaDate,
+        categoriaId: categoria ? Number(categoria.id) : null,
+        tariffName: categoria?.nombre || null,
+        defaultTariff: !tariffValue,
+        // Fila de un archivo con fecha anterior a lo ya registrado: solo aporta su asistencia.
+        attendanceOnly: false,
+        assignmentChange: false,
+        extendFrom: null,
         existingMerchantId: null,
         existingMerchantState: null,
         existingPostId: null,
@@ -323,9 +344,20 @@ export async function previewPadronSheets(sheets, { filename = '', db, fechaFeri
   const merchantsByDocument = await lookupByKey(db,
     'SELECT id, estado, nombre, dni_ruc AS key FROM comerciantes WHERE dni_ruc = ANY($1::text[])',
     candidates.map((row) => row.document).filter(Boolean));
+  // Por puesto: dueño, asignación abierta (zona y tarifa), desde cuándo está asignado y la fecha
+  // más reciente ya registrada (asistencia o cambio de asignación).
   const postsByCode = await lookupByKey(db, `
-    SELECT p.id, p.comerciante_id, c.dni_ruc AS dueno_dni, c.nombre AS dueno_nombre, c.estado AS dueno_estado, p.codigo_puesto AS key
+    SELECT p.id, p.comerciante_id, c.dni_ruc AS dueno_dni, c.nombre AS dueno_nombre, c.estado AS dueno_estado, p.codigo_puesto AS key,
+           ph.zona_id AS asignado_zona_id, ph.categoria_id AS asignado_categoria_id,
+           (SELECT to_char(min(h.desde), 'YYYY-MM-DD') FROM puestos_historial h WHERE h.puesto_id = p.id) AS asignado_desde,
+           to_char(GREATEST(
+             (SELECT max(a.fecha) FROM asistencias_feriales a WHERE a.puesto_id = p.id),
+             (SELECT max(h.desde) FROM puestos_historial h WHERE h.puesto_id = p.id)
+           ), 'YYYY-MM-DD') AS ultima_fecha
     FROM puestos p JOIN comerciantes c ON c.id = p.comerciante_id
+    LEFT JOIN LATERAL (
+      SELECT h.zona_id, h.categoria_id FROM puestos_historial h WHERE h.puesto_id = p.id AND h.hasta IS NULL ORDER BY h.desde DESC LIMIT 1
+    ) ph ON TRUE
     WHERE p.codigo_puesto = ANY($1::text[])`,
   candidates.map((row) => row.code));
   const postsByAddress = await groupByKey(db, `
@@ -372,8 +404,16 @@ export async function previewPadronSheets(sheets, { filename = '', db, fechaFeri
     row.existingMerchantId = merchantId;
     row.existingMerchantState = merchant?.estado || null;
     row.existingPostId = existingPost ? Number(existingPost.id) : null;
+    if (existingPost) {
+      // Un archivo más antiguo que lo ya registrado no pisa zona, tarifa ni datos del titular.
+      row.attendanceOnly = Boolean(row.feriaDate && existingPost.ultima_fecha && row.feriaDate < existingPost.ultima_fecha);
+      row.assignmentChange = !row.attendanceOnly && (Number(existingPost.asignado_zona_id) !== Number(row.zonaId)
+        || Number(existingPost.asignado_categoria_id) !== Number(row.categoriaId));
+      // Si el puesto figura en una feria anterior a su asignación, estaba asignado desde entonces.
+      if (row.feriaDate && existingPost.asignado_desde && row.feriaDate < existingPost.asignado_desde) row.extendFrom = row.feriaDate;
+    }
     // Un dado de baja que vuelve a figurar en el padrón se reactiva; se avisa antes de confirmar.
-    row.reactivate = merchant?.estado === 'inactivo';
+    row.reactivate = merchant?.estado === 'inactivo' && !row.attendanceOnly;
     row.regularize = Boolean(merchant?.regularize);
     if (row.errors.length) errors.push({ sheet: row.sheet, row: row.row, message: row.errors.join(' ') });
     if (row.temporary && !row.errors.length) {
@@ -387,8 +427,13 @@ export async function previewPadronSheets(sheets, { filename = '', db, fechaFeri
   }
 
   const valid = candidates.filter((row) => row.errors.length === 0);
-  const uniqueBy = (list, key) => [...new Map(list.map((row) => [key(row), row])).values()];
-  const validMerchants = uniqueBy(valid, (row) => row.document);
+  // Un titular por DNI; sus datos salen de su primera fila que no sea solo asistencia (igual que al confirmar).
+  const merchantSource = new Map();
+  for (const row of valid) {
+    const current = merchantSource.get(row.document);
+    if (!current || (current.attendanceOnly && !row.attendanceOnly)) merchantSource.set(row.document, row);
+  }
+  const validMerchants = [...merchantSource.values()];
   return {
     workbookType: attendanceWorkbook ? 'attendance' : 'merchant-padron',
     attendanceRecords,
@@ -404,6 +449,9 @@ export async function previewPadronSheets(sheets, { filename = '', db, fechaFeri
     regularizedMerchants: validMerchants.filter((row) => row.regularize).map((row) => ({ nombre: row.name, dni_ruc: row.document })),
     reactivatedMerchants: validMerchants.filter((row) => row.reactivate).map((row) => ({ nombre: row.name, dni_ruc: row.document })),
     newPosts: valid.filter((row) => !row.existingPostId).length,
+    olderRows: valid.filter((row) => row.attendanceOnly).length,
+    assignmentChanges: valid.filter((row) => row.assignmentChange).map((row) => ({ codigo: row.code, tarifa: row.tariffName, desde: row.feriaDate || 'hoy' })),
+    defaultTariffRows: valid.filter((row) => row.defaultTariff).length,
     absentRows: valid.filter((row) => row.absence).length,
     attendanceRows: valid.filter((row) => row.feriaDate).length,
     feriaDates: [...new Set(valid.filter((row) => row.feriaDate).map((row) => row.feriaDate))].sort(),
@@ -418,20 +466,27 @@ export async function previewPadronSheets(sheets, { filename = '', db, fechaFeri
 // Las reglas de insertComerciante/insertPuesto ya se verificaron en previewPadronSheets.
 export async function importPadronPreview(_db, preview, userId = 1) {
   const rows = preview.candidates.filter((row) => row.errors.length === 0);
-  // Un comerciante por DNI (con uno o varios puestos): sus datos salen de su primera fila.
-  const merchants = [...new Map(rows.map((row) => [row.document, row])).values()];
+  // Un comerciante por DNI (con uno o varios puestos): sus datos salen de su primera fila vigente;
+  // las filas de un archivo más antiguo que lo registrado solo aportan asistencia.
+  const merchantSource = new Map();
+  for (const row of rows) {
+    const current = merchantSource.get(row.document);
+    if (!current || (current.attendanceOnly && !row.attendanceOnly)) merchantSource.set(row.document, row);
+  }
+  const merchants = [...merchantSource.values()];
   const newMerchants = merchants.filter((row) => !row.existingMerchantId);
-  const knownMerchants = merchants.filter((row) => row.existingMerchantId);
+  const knownMerchants = merchants.filter((row) => row.existingMerchantId && !row.attendanceOnly);
   const newPosts = rows.filter((row) => !row.existingPostId);
-  const knownPosts = rows.filter((row) => row.existingPostId);
+  const knownPosts = rows.filter((row) => row.existingPostId && !row.attendanceOnly);
+  const fallbackDate = new Date().toISOString().slice(0, 10);
   const attendance = rows.filter((row) => row.feriaDate);
   const column = (list, pick) => list.map(pick);
 
   try {
     await withTransaction(async (client) => {
       const creator = (await client.query('SELECT id FROM usuarios WHERE id = $1', [Number(userId)])).rows[0];
-      const merchantIds = new Map(knownMerchants.map((row) => [row.document, row.existingMerchantId]));
-      const postIds = new Map(knownPosts.map((row) => [row.code, row.existingPostId]));
+      const merchantIds = new Map(rows.filter((row) => row.existingMerchantId).map((row) => [row.document, row.existingMerchantId]));
+      const postIds = new Map(rows.filter((row) => row.existingPostId).map((row) => [row.code, row.existingPostId]));
 
       if (newMerchants.length) {
         const inserted = await client.query(`
@@ -479,6 +534,12 @@ export async function importPadronPreview(_db, preview, userId = 1) {
           column(newPosts, (row) => row.code), column(newPosts, (row) => row.address),
           column(newPosts, (row) => row.area)]);
         for (const post of inserted.rows) postIds.set(post.codigo_puesto, Number(post.id));
+        // Un puesto nuevo está asignado desde la feria del archivo (o desde hoy si no trae fecha).
+        await client.query(`
+          INSERT INTO puestos_historial (puesto_id, zona_id, categoria_id, desde)
+          SELECT * FROM unnest($1::bigint[], $2::int[], $3::int[], $4::date[])`,
+        [column(newPosts, (row) => postIds.get(row.code)), column(newPosts, (row) => row.zonaId),
+          column(newPosts, (row) => row.categoriaId), column(newPosts, (row) => row.feriaDate || fallbackDate)]);
       }
 
       if (knownPosts.length) {
@@ -489,6 +550,22 @@ export async function importPadronPreview(_db, preview, userId = 1) {
           WHERE p.id = v.id`,
         [column(knownPosts, (row) => row.existingPostId), column(knownPosts, (row) => row.zonaId),
           column(knownPosts, (row) => row.address), column(knownPosts, (row) => row.area)]);
+      }
+
+      // Cambio de zona o de tarifa: rige desde la feria del archivo; el pasado conserva la anterior.
+      for (const row of knownPosts.filter((item) => item.assignmentChange)) {
+        await recordPostAssignment(client, row.existingPostId, { zonaId: row.zonaId, categoriaId: row.categoriaId, desde: row.feriaDate || fallbackDate });
+      }
+
+      // El puesto figura en una feria anterior a su asignación: estaba asignado desde esa fecha.
+      const extended = rows.filter((row) => row.extendFrom);
+      if (extended.length) {
+        await client.query(`
+          UPDATE puestos_historial h SET desde = v.desde
+          FROM unnest($1::bigint[], $2::date[]) AS v(puesto_id, desde)
+          WHERE h.puesto_id = v.puesto_id AND v.desde < h.desde
+            AND h.desde = (SELECT min(x.desde) FROM puestos_historial x WHERE x.puesto_id = v.puesto_id)`,
+        [column(extended, (row) => row.existingPostId), column(extended, (row) => row.extendFrom)]);
       }
 
       // Ausente = falta (F) en esa feria, que no se cobra; presente = P. El puesto sigue asignado al titular.
@@ -518,6 +595,8 @@ export async function importPadronPreview(_db, preview, userId = 1) {
     updatedPosts: knownPosts.length,
     absentPosts: rows.filter((row) => row.absence).length,
     attendanceMarks: attendance.length,
+    olderRows: rows.filter((row) => row.attendanceOnly).length,
+    assignmentChanges: knownPosts.filter((row) => row.assignmentChange).length,
     skippedRows: preview.invalidRows
   };
 }
