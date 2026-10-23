@@ -8,7 +8,7 @@ import assert from 'node:assert/strict';
 import jwt from 'jsonwebtoken';
 
 import { startServer } from '../src/index.ts';
-import { closeDatabase, calcularLiquidacion, findUserByEmail, getComerciantes, getAuditTrail } from '../src/db.js';
+import { closeDatabase, calcularLiquidacion, findUserByEmail, getComerciantes, getAuditTrail, DIAS_COBRO_SIN_SENAL, fechaCobroEnLinea, fechaCobroFueraDeRango } from '../src/db.js';
 import { pool } from '../src/pg.js';
 
 let server;
@@ -58,8 +58,8 @@ const adminLogin = () => login('admin@salcedo.gob.pe', 'admin123', { device_id: 
 let hashCounter = 0;
 const offlineHash = () => `test-offline-${process.pid}-${Date.now()}-${hashCounter += 1}`;
 
-// La semilla trae pocos comerciantes con deuda: cada prueba cobra en su propio periodo (futuro),
-// con la fecha de cobro dentro de ese mes, para no consumir el saldo de las demás.
+// La semilla trae pocos comerciantes con deuda: cada prueba cobra en su propio periodo (futuro), que el
+// cobro aplica con periodo_aplicado, para no consumir el saldo de las demás.
 async function merchantWithBalance(periodo) {
   const merchants = await getComerciantes(pool, { limit: 100 });
   for (const merchant of merchants) {
@@ -69,7 +69,8 @@ async function merchantWithBalance(periodo) {
   throw new Error(`La semilla no tiene un comerciante con saldo en ${periodo}`);
 }
 
-const inPeriod = (periodo, minute = 0) => new Date(Date.parse(`${periodo}-15T15:00:00Z`) + minute * 60_000).toISOString();
+// Hora del celular de hace una hora (más los minutos indicados): dentro del rango que se acepta sin señal.
+const horaDeCobro = (minute = 0) => new Date(Date.now() - 60 * 60_000 + minute * 60_000).toISOString();
 
 // ---------------------------------------------------------------------------
 // Token de renovación por dispositivo
@@ -179,7 +180,7 @@ test('el lote sigue con el resto cuando un cobro falla, acepta el que excede com
   const admin = await findUserByEmail(pool, 'admin@salcedo.gob.pe');
   const periodo = '2027-01';
   const { merchant, liquidation } = await merchantWithBalance(periodo);
-  const cobro = (minute, extra) => ({ hash_transaccion: offlineHash(), comerciante_id: merchant.id, monto: 1, metodo_pago: 'efectivo', periodo, fecha_cobro: inPeriod(periodo, minute), ...extra });
+  const cobro = (minute, extra) => ({ hash_transaccion: offlineHash(), comerciante_id: merchant.id, monto: 1, metodo_pago: 'efectivo', periodo, fecha_cobro: horaDeCobro(minute), ...extra });
 
   const valid = cobro(1, { cobrador_id: admin.id });
   const unknownMerchant = cobro(2, { comerciante_id: 99999999 });
@@ -223,12 +224,49 @@ test('el lote procesa en orden de cobro: el segundo cobro que agota el saldo es 
   const { token } = await cobradorLogin({ device_id: 'android-orden' });
   const periodo = '2027-02';
   const { merchant, liquidation } = await merchantWithBalance(periodo);
-  const early = { hash_transaccion: offlineHash(), comerciante_id: merchant.id, monto: liquidation.saldo, metodo_pago: 'efectivo', periodo, fecha_cobro: inPeriod(periodo, 1) };
-  const late = { hash_transaccion: offlineHash(), comerciante_id: merchant.id, monto: 1, metodo_pago: 'efectivo', periodo, fecha_cobro: inPeriod(periodo, 2) };
+  const early = { hash_transaccion: offlineHash(), comerciante_id: merchant.id, monto: liquidation.saldo, metodo_pago: 'efectivo', periodo, fecha_cobro: horaDeCobro(1) };
+  const late = { hash_transaccion: offlineHash(), comerciante_id: merchant.id, monto: 1, metodo_pago: 'efectivo', periodo, fecha_cobro: horaDeCobro(2) };
 
   // Llegan desordenados; el servidor respeta la hora en que se cobraron.
   const { body } = await api('/cobros/sincronizar-lote', { method: 'POST', token, body: { cobros: [late, early] } });
   assert.deepEqual(body.data.resultados.map((item) => item.estado), ['observado', 'sincronizado']);
+});
+
+test('rango de fechas del cobro: sin señal hasta 3 días atrás; en línea manda el reloj del servidor', () => {
+  const ahora = new Date('2026-10-22T15:00:00Z');
+  const menos = (ms) => new Date(ahora.getTime() - ms);
+  assert.equal(DIAS_COBRO_SIN_SENAL, 3);
+  assert.equal(fechaCobroFueraDeRango(menos(72 * 60 * 60_000), ahora), null, 'justo 3 días');
+  assert.match(fechaCobroFueraDeRango(menos(72 * 60 * 60_000 + 60_000), ahora), /más de 3 días/);
+  assert.equal(fechaCobroFueraDeRango(menos(-4 * 60_000), ahora), null, 'reloj 4 min adelantado');
+  assert.match(fechaCobroFueraDeRango(menos(-6 * 60_000), ahora), /en el futuro/);
+
+  assert.equal(fechaCobroEnLinea('2026-10-22T14:58:00Z', ahora), '2026-10-22T14:58:00.000Z', 'el celular con 2 min de diferencia');
+  assert.equal(fechaCobroEnLinea('2026-01-15T15:00:00Z', ahora), ahora.toISOString(), 'una fecha vieja no se acepta');
+  assert.equal(fechaCobroEnLinea('2031-03-15T15:00:00Z', ahora), ahora.toISOString(), 'ni una futura');
+  assert.equal(fechaCobroEnLinea(undefined, ahora), ahora.toISOString());
+});
+
+test('sin señal, una fecha de más de 3 días o en el futuro no se descarta: queda observada', async () => {
+  const { token } = await cobradorLogin({ device_id: 'android-fechas' });
+  const periodo = '2027-04';
+  const { merchant } = await merchantWithBalance(periodo);
+  const cobro = (fecha_cobro) => ({ hash_transaccion: offlineHash(), comerciante_id: merchant.id, monto: 1, metodo_pago: 'efectivo', periodo, fecha_cobro });
+  const hace = (dias) => new Date(Date.now() - dias * 24 * 60 * 60_000).toISOString();
+
+  const enRango = cobro(hace(2.5));
+  const viejo = cobro(hace(5));
+  const futuro = cobro(new Date(Date.now() + 2 * 60 * 60_000).toISOString());
+  const { status, body } = await api('/cobros/sincronizar-lote', { method: 'POST', token, body: { cobros: [enRango, viejo, futuro] } });
+  assert.equal(status, 200, body?.message);
+  assert.deepEqual(body.data.resultados.map((item) => item.estado), ['sincronizado', 'observado', 'observado']);
+
+  const motivos = await pool.query(`
+    SELECT t.hash_transaccion, o.motivo FROM transacciones t JOIN cobros_observados o ON o.transaccion_id = t.id
+    WHERE t.hash_transaccion = ANY($1)`, [[viejo.hash_transaccion, futuro.hash_transaccion]]);
+  const porHash = Object.fromEntries(motivos.rows.map((row) => [row.hash_transaccion, row.motivo]));
+  assert.match(porHash[viejo.hash_transaccion], /más de 3 días/);
+  assert.match(porHash[futuro.hash_transaccion], /en el futuro/);
 });
 
 test('el lote valida su tamaño y exige rol de cobro', async () => {
@@ -253,7 +291,7 @@ test('el administrador acepta o anula un cobro observado; el anulado sale de la 
   const admin = await adminLogin();
   const periodo = '2027-03';
   const { merchant, liquidation } = await merchantWithBalance(periodo);
-  const over = (extra) => ({ hash_transaccion: offlineHash(), comerciante_id: merchant.id, monto: liquidation.saldo + extra, metodo_pago: 'efectivo', periodo, fecha_cobro: inPeriod(periodo, extra) });
+  const over = (extra) => ({ hash_transaccion: offlineHash(), comerciante_id: merchant.id, monto: liquidation.saldo + extra, metodo_pago: 'efectivo', periodo, fecha_cobro: horaDeCobro(extra) });
   const toAccept = over(10);
   const toVoid = over(20);
   const sync = await api('/cobros/sincronizar-lote', { method: 'POST', token: cobradorToken, body: { cobros: [toAccept, toVoid] } });

@@ -5,7 +5,7 @@ import test, { after, before } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { startServer } from '../src/index.ts';
-import { closeDatabase, calcularLiquidacion, getComerciantes } from '../src/db.js';
+import { closeDatabase, calcularLiquidacion, getComerciantes, registrarCobro, todayInLima } from '../src/db.js';
 import { pool } from '../src/pg.js';
 
 let server;
@@ -51,13 +51,14 @@ test('el cobrador cierra su caja: lo esperado lo calcula el servidor y se ve la 
   const dia = '2026-01-15';
   const periodo = dia.slice(0, 7);
   const merchant = await merchantWithBalance(periodo, 8);
-  const cobrar = (monto, metodo_pago, extra = {}) => api('/cobros', {
-    method: 'POST', token: cobrador.token,
-    body: { comerciante_id: merchant.id, monto, metodo_pago, periodo, fecha_cobro: `${dia}T15:00:00Z`, ...extra }
+  // Los cobros de ese día se graban con registrarCobro: por la API, un cobro en línea lleva la hora del
+  // servidor (fechaCobroEnLinea) y no podría caer en un día pasado.
+  const cobrar = (monto, metodo_pago, extra = {}) => registrarCobro(pool, {
+    comerciante_id: merchant.id, cobrador_id: cobrador.id, monto, metodo_pago, periodo, fecha_cobro: `${dia}T15:00:00Z`, ...extra
   });
-  assert.equal((await cobrar(3, 'efectivo')).status, 201);
-  assert.equal((await cobrar(2, 'efectivo')).status, 201);
-  assert.equal((await cobrar(1.5, 'yape', { codigo_operacion: `YP-CAJA-${process.pid}` })).status, 201);
+  await cobrar(3, 'efectivo');
+  await cobrar(2, 'efectivo');
+  await cobrar(1.5, 'yape', { codigo_operacion: `YP-CAJA-${process.pid}` });
 
   const resumen = await api(`/caja/resumen?fecha=${dia}`, { token: cobrador.token });
   assert.equal(resumen.status, 200, resumen.body?.message);
@@ -79,7 +80,7 @@ test('el cobrador cierra su caja: lo esperado lo calcula el servidor y se ve la 
   assert.equal(otraVez.status, 409);
 
   // Un cobro sincronizado después del cierre aparece aparte.
-  assert.equal((await cobrar(1, 'efectivo')).status, 201);
+  await cobrar(1, 'efectivo');
   const despues = await api(`/caja/resumen?fecha=${dia}`, { token: cobrador.token });
   assert.deepEqual(despues.body.data.posteriores_al_cierre, { cobros: 1, monto: 1 });
 
@@ -90,6 +91,25 @@ test('el cobrador cierra su caja: lo esperado lo calcula el servidor y se ve la 
   const cierres = await api(`/caja/cierres?desde=${dia}&hasta=${dia}`, { token: admin.token });
   assert.equal(cierres.body.data.length, 1);
   assert.equal(cierres.body.data[0].cobrador_id, cobrador.id);
+});
+
+test('un cobro en línea cuenta en la caja de hoy aunque el celular mande otra fecha', async () => {
+  const cobrador = await login('cobrador@salcedo.gob.pe', 'cobro123');
+  const periodo = '2026-02';
+  const merchant = await merchantWithBalance(periodo, 2);
+  const hoy = todayInLima();
+  const antes = (await api(`/caja/resumen?fecha=${hoy}`, { token: cobrador.token })).body.data.esperado.efectivo;
+
+  const cobro = await api('/cobros', {
+    method: 'POST', token: cobrador.token,
+    body: { comerciante_id: merchant.id, monto: 1, metodo_pago: 'efectivo', periodo, fecha_cobro: '2026-02-10T15:00:00Z' }
+  });
+  assert.equal(cobro.status, 201, cobro.body?.message);
+  const { rows: [guardado] } = await pool.query('SELECT fecha_cobro_cliente FROM transacciones WHERE id = $1', [cobro.body.data.id]);
+  assert.ok(Math.abs(Date.now() - new Date(guardado.fecha_cobro_cliente).getTime()) < 60_000, 'manda la hora del servidor');
+
+  const despues = (await api(`/caja/resumen?fecha=${hoy}`, { token: cobrador.token })).body.data.esperado.efectivo;
+  assert.equal(despues, Number((antes + 1).toFixed(2)), 'el cobro está en la caja de hoy');
 });
 
 test('el cierre valida montos y fechas', async () => {

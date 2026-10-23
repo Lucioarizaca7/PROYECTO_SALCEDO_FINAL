@@ -22,6 +22,12 @@ Antes de tocar uno de estos controles, comprobar que sigue igual en el código (
 | Fuga de errores internos | El manejador global traduce errores de PostgreSQL a mensajes genéricos | `http/errorHandler.ts` |
 | Recibos falsos | QR con firma HMAC; PDF del portal con enlace firmado de 30 min | `/publico/verificar/:token`, `reciboPdf.js` |
 | Datos personales (Ley 29733) | Código con 3 dígitos del DNI; portal con documento oculto; PIN fuera de `comerciantes` y nunca auditado | migraciones 0005 y 0007, `portalAcceso.js` |
+| Cobro fuera de toda caja | En línea, la fecha del cobro es la del servidor; sin señal, más de 3 días atrás o en el futuro queda observado | `db.js` (`fechaCobroEnLinea`, `fechaCobroFueraDeRango`), `routes/cobros.ts` |
+| Enumeración de correos | El login siempre ejecuta bcrypt (hash de relleno si el correo no existe) | `auth.ts` (`HASH_DE_RELLENO`) |
+| Atribución falsa | El creador del comerciante y el cobrador del cobro salen del token | `routes/comerciantes.ts`, `routes/cobros.ts` |
+| Inyección CSV | `celdaCsv` antepone `'` a textos que empiezan con `= + - @` | `db.js` (`buildReportCsv`) |
+| Clickjacking | `X-Frame-Options: DENY` y CSP `frame-ancestors 'none'` en la app web (la CSP aún no limita scripts) | `Caddyfile` |
+| Listados enormes | `GET /cobros` con tope `MAX_COBROS_LISTADO`; el cobrador ve solo los suyos | `db.js` (`getCobros`) |
 | Archivos de entorno | `.env`, `apps/server/.env`, `.env.production` en `.gitignore`; plantilla `.env.production.example` sin valores reales | `.gitignore` |
 
 ## Señales de alarma en una revisión (se rechaza el cambio)

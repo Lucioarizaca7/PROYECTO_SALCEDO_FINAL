@@ -12,6 +12,23 @@ test('loginUser acepta credenciales válidas y devuelve usuario', async () => {
   assert.ok(result.token.length > 10);
 });
 
+test('loginUser tarda lo mismo con un correo inexistente que con una clave errada (no revela qué correos existen)', async () => {
+  const db = await initializeDatabase();
+  const medir = async (email) => {
+    const tiempos = [];
+    for (let vez = 0; vez < 3; vez += 1) {
+      const inicio = process.hrtime.bigint();
+      await assert.rejects(() => loginUser({ email, password: 'clave-errada' }, db), /credenciales/i);
+      tiempos.push(Number(process.hrtime.bigint() - inicio) / 1e6);
+    }
+    return tiempos.sort((a, b) => a - b)[1];
+  };
+  const claveErrada = await medir('admin@salcedo.gob.pe');
+  const correoInexistente = await medir('nadie-existe@salcedo.gob.pe');
+  // Sin bcrypt de relleno el correo inexistente respondía en una fracción del tiempo (solo la consulta).
+  assert.ok(correoInexistente >= claveErrada * 0.5, `inexistente ${correoInexistente.toFixed(1)} ms vs clave errada ${claveErrada.toFixed(1)} ms`);
+});
+
 test('loginUser rechaza credenciales inválidas', async () => {
   const db = await initializeDatabase();
   await assert.rejects(async () => loginUser({ email: 'admin@salcedo.gob.pe', password: 'badpass' }, db), /credenciales/i);
@@ -115,7 +132,8 @@ test('syncOfflineCobro detecta duplicados por hash idempotente y evita reinserta
     codigo_operacion: 'OFFLINE-001',
     hash_transaccion: 'hash-offline-001',
     periodo: '2026-09',
-    fecha_cobro: '2026-09-16T10:00:00.000Z'
+    // Hora reciente: sin señal, una fecha de más de 3 días quedaría observada (fechaCobroFueraDeRango).
+    fecha_cobro: new Date().toISOString()
   };
 
   const first = await syncOfflineCobro(db, payload);

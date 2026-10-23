@@ -1,6 +1,6 @@
 // Cobros, sincronización offline, revisión de observados, jornada y comprobantes.
 import express from 'express';
-import { currentPeriod, getCobros, registrarCobro, syncOfflineCobro, syncOfflineBatch, getCobrosObservados, resolveCobroObservado, getSyncErrors, getJornadaPackage, anularCobro, getTiemposCobro, ticketsDelCobrador } from '../db.js';
+import { currentPeriod, getCobros, registrarCobro, syncOfflineCobro, syncOfflineBatch, getCobrosObservados, resolveCobroObservado, getSyncErrors, getJornadaPackage, anularCobro, getTiemposCobro, ticketsDelCobrador, fechaCobroEnLinea } from '../db.js';
 import { requireAuth, requireRoles } from '../auth.js';
 import { handleValidationErrors, validateCobro } from '../validation.js';
 import { staffOnly, auditContext } from '../http/comunes.js';
@@ -19,8 +19,12 @@ router.get('/api/v1/comprobantes/:id/pdf', ...staffOnly, async (req, res) => {
   return res.send(pdf);
 });
 
-router.get('/api/v1/cobros', ...staffOnly, async (_req, res) => {
-  const data = await getCobros(db);
+// Los más recientes (tope MAX_COBROS_LISTADO). El cobrador ve solo los suyos; administrador y auditor, todos.
+router.get('/api/v1/cobros', ...staffOnly, async (req, res) => {
+  const data = await getCobros(db, {
+    cobradorId: req.user.rol === 'cobrador' ? req.user.id : null,
+    limit: Number(req.query.limit) || undefined
+  });
   res.json({ data, total: data.length });
 });
 
@@ -123,8 +127,10 @@ router.post('/api/v1/cobros',
   validateCobro,
   handleValidationErrors,
   async (req, res) => {
-    // cobrador_id sale del token; comprobante, cobro y auditoría se graban en una sola transacción.
-    const data = await registrarCobro(db, { ...(req.body || {}), cobrador_id: req.user.id }, { audit: auditContext(req, 'REGISTRAR_COBRO') });
+    // cobrador_id sale del token y la fecha del reloj del servidor; comprobante, cobro y auditoría se graban
+    // en una sola transacción.
+    const payload = { ...(req.body || {}), cobrador_id: req.user.id, fecha_cobro: fechaCobroEnLinea(req.body?.fecha_cobro) };
+    const data = await registrarCobro(db, payload, { audit: auditContext(req, 'REGISTRAR_COBRO') });
     return res.status(201).json({ data, message: 'Cobro registrado correctamente' });
   }
 );

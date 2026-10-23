@@ -93,6 +93,10 @@ Depende de `tipo_comerciante`:
   - Si recibe el pool, abre su propia transacción. Si recibe un cliente, usa la transacción que ya está abierta.
   - `codigo_operacion` (o `idempotency_key`) evita que el mismo cobro se registre dos veces.
   - Genera la `transaccion` y su `comprobante` (con número correlativo).
+- **Fecha del cobro** (decisión del usuario, 2026-10-22). Decide en qué caja diaria cuenta el cobro:
+  - en línea (`POST /cobros`) manda la hora del servidor; la del celular solo se usa si difiere menos de 5 minutos (`fechaCobroEnLinea`);
+  - sin señal se acepta la hora del celular hasta `DIAS_COBRO_SIN_SENAL = 3` días atrás y 5 minutos en el futuro. Fuera de ese rango el cobro **no se descarta**: queda observado con el motivo "fecha fuera de rango" (`fechaCobroFueraDeRango`).
+- `GET /cobros` (decisión del usuario, 2026-10-22): el cobrador ve solo sus cobros; administrador y auditor, todos. Devuelve los más recientes, con tope `MAX_COBROS_LISTADO = 500`; los totales van por `/reportes`.
 - `syncOfflineCobro` devuelve `SUCCESS`, `IGNORED` (ya se había recibido) u `OBSERVED` (se aceptó y va a revisión, por ejemplo porque excede el saldo).
 - `syncOfflineBatch`: como máximo `MAX_LOTE_COBROS = 100` cobros por lote. Responde 200 con `data.resumen` (sincronizado, observado, duplicado, rechazado), aunque haya cobros rechazados.
 - `resolveCobroObservado`: bloquea la fila con `SELECT … FOR UPDATE` dentro de `withTransaction`.

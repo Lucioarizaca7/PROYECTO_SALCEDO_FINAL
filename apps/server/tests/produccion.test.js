@@ -3,6 +3,8 @@
  */
 import test, { after, before } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 
 import { startServer } from '../src/index.ts';
 import { closeDatabase, createUser, insertPuesto, puestosLejosDelCentro, distanciaKm } from '../src/db.js';
@@ -20,6 +22,13 @@ before(async () => {
 after(async () => {
   await new Promise((resolve) => server.close(resolve));
   await closeDatabase();
+});
+
+test('Caddy impide mostrar la app dentro de un iframe de otro sitio (clickjacking)', () => {
+  const caddyfile = readFileSync(fileURLToPath(new URL('../../../Caddyfile', import.meta.url)), 'utf8');
+  assert.match(caddyfile, /X-Frame-Options "DENY"/);
+  assert.match(caddyfile, /Content-Security-Policy "[^"]*frame-ancestors 'none'/);
+  assert.match(caddyfile, /Content-Security-Policy "[^"]*object-src 'none'/);
 });
 
 test('crear-usuario da de alta cobradores y auditores reales, nunca un rol inventado', async () => {

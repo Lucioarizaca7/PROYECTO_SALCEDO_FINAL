@@ -25,8 +25,13 @@
 	@fresh path /sw.js /index.html /
 	header @fresh Cache-Control "no-cache"
 
+	# Ningún otro sitio puede mostrar SISREC dentro de un iframe (clickjacking): X-Frame-Options para
+	# navegadores viejos y frame-ancestors para los actuales. La CSP aún no limita scripts ni estilos:
+	# hay que probarla antes con el mapa (mapbox-gl usa workers blob:) y las fuentes de Google.
 	header {
 		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Frame-Options "DENY"
+		Content-Security-Policy "frame-ancestors 'none'; base-uri 'self'; object-src 'none'; form-action 'self'"
 		X-Content-Type-Options "nosniff"
 		Referrer-Policy "strict-origin-when-cross-origin"
 		Permissions-Policy "camera=(self), geolocation=(self), bluetooth=(self), microphone=()"

@@ -55,6 +55,12 @@ Pendientes menores:
 - El PDF de `/comprobantes/:id/pdf` siempre imprime "sha256:local", porque `getCobros` no trae `hash_transaccion`, y carga todos los cobros para buscar uno.
 - El hash de auditoría incluye `Date.now()`, que no se guarda: la cadena verifica los enlaces pero no el contenido.
 - `POST /comerciantes/:id/preferencias` reemplaza todas las claves.
+- Auditoría de seguridad del 2026-10-22 (skill appsec-elite-auditor). Quedan pendientes:
+  - la CSP de la app web solo fija `frame-ancestors`, `base-uri`, `object-src` y `form-action`. Falta limitar scripts y estilos, y antes hay que probarlo con el mapa (mapbox-gl usa workers `blob:`) y con Google Fonts;
+  - `jwt.verify` no fija `algorithms: ['HS256']`;
+  - el HMAC de los recibos usa el mismo secreto que el JWT;
+  - `concepto` y `observaciones` del cobro, y el nombre al editar un comerciante, no tienen largo máximo;
+  - el log de accesos de Caddy guarda la URL completa (DNI en `?search=`, enlaces firmados de recibos).
 - Las tarifas por rubro que estén en la base real siguen activas: en una zona sin tipo de vía se siguen usando.
 
 ## Orden de refactorización sugerido (de menor a mayor riesgo)

@@ -144,10 +144,8 @@ router.post('/api/v1/comerciantes',
     serializeResponse: (body) => body?.data ?? body
   }),
   async (req, res) => {
-    const comerciante = await insertComerciante(db, {
-      ...req.body,
-      usuario_creador: req.body.usuario_creador || req.user?.id || 1
-    });
+    // Quién dio de alta al comerciante sale del token, nunca del cuerpo: si no, se podría atribuir a otro.
+    const comerciante = await insertComerciante(db, { ...req.body, usuario_creador: req.user.id });
 
     return res.status(201).json({ data: comerciante, message: 'Comerciante registrado correctamente' });
   }
