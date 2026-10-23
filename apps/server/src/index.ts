@@ -34,6 +34,8 @@ import {
   getTarifas,
   insertTarifa,
   updateTarifa,
+  getZoneTariffs,
+  setZoneTariff,
   calculateLiquidation,
   getCobros,
   insertCobro,
@@ -763,6 +765,35 @@ app.put('/api/v1/tarifas/:id',
       return res.json({ data: await updateTarifa(db, req.params.id, req.body || {}), message: 'Tarifa actualizada correctamente' });
     } catch (error) {
       return res.status(400).json({ message: error.message || 'No se pudo actualizar la tarifa' });
+    }
+  }
+);
+
+// Monto fijo por zona y por día de feria: consulta pública (transparencia) y cambio solo del super admin.
+app.get('/api/v1/tarifas-zona', async (_req, res) => {
+  try {
+    const data = await getZoneTariffs(db);
+    return res.json({ data, total: data.length });
+  } catch (error) {
+    return res.status(500).json({ message: error.message || 'No se pudieron consultar los montos por zona' });
+  }
+});
+
+app.put('/api/v1/tarifas-zona/:zonaId',
+  requireAuth,
+  requireRoles(['super_admin']),
+  auditMutation({
+    db,
+    accion: 'ACTUALIZAR_TARIFA_ZONA',
+    entidad: 'tarifas',
+    getPreviousState: async (req) => (await getZoneTariffs(db)).find((item) => item.zona_id === Number(req.params.zonaId)) || null,
+    serializeResponse: (body) => body?.data ?? body
+  }),
+  async (req, res) => {
+    try {
+      return res.json({ data: await setZoneTariff(db, req.params.zonaId, req.body || {}), message: 'Monto por zona actualizado correctamente' });
+    } catch (error) {
+      return res.status(400).json({ message: error.message || 'No se pudo actualizar el monto de la zona' });
     }
   }
 );

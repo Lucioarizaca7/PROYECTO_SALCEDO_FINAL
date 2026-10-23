@@ -530,6 +530,7 @@ const payments = [];
 const inspectors = [];
 const zones = [];
 const tariffs = [];
+const FRECUENCIA_LABELS = { por_feria: 'Por feria', semanal: 'Semanal (2 ferias)', mensual: 'Mensual' };
 const auditTrail = [];
 const users = [];
 
@@ -604,12 +605,12 @@ function App() {
     zona_id: '1',
     categoria: 'permanente',
     tipo_comerciante: 'permanente',
-    estado: 'activo'
+    estado: 'activo',
+    frecuencia_pago: 'semanal'
   });
-  const [showTariffForm, setShowTariffForm] = useState(false);
   const [editingTariffId, setEditingTariffId] = useState(null);
   const [tariffMessage, setTariffMessage] = useState('');
-  const [tariffForm, setTariffForm] = useState({ rubro_id: '1', tipo_tarifa: 'fija', monto_fijo: '18', monto_variable: '0', unidad_medida: 'diaria', vigencia_inicio: '2026-01-01', vigencia_fin: '' });
+  const [tariffForm, setTariffForm] = useState({ monto_por_feria: '', vigencia_inicio: '' });
   const [showPortal, setShowPortal] = useState(false);
   const [portalIdentifier, setPortalIdentifier] = useState('');
   const [portalData, setPortalData] = useState(null);
@@ -724,7 +725,7 @@ function App() {
       const [dashboard, comerciantes, tarifas, catalogos, cobros, puestos, report, audit, forecast, risk] = await Promise.all([
         request(`${apiBase}/dashboard?periodo=${encodeURIComponent(period)}`),
         request(`${apiBase}/comerciantes?limit=100&includeInactive=true`),
-        request(`${apiBase}/tarifas`),
+        request(`${apiBase}/tarifas-zona`),
         request(`${apiBase}/catalogos`),
         request(`${apiBase}/cobros`),
         request(`${apiBase}/puestos`),
@@ -745,8 +746,8 @@ function App() {
       });
       setOperational(dashboard.operational || { porZona: [], porRubro: [], porCobrador: [] });
 
-      setComerciantes((comerciantes.data || []).map((item) => [item.id, item.nombre, item.rubro, item.dni_ruc, item.zona, item.estado, new Date(item.fecha_registro).toLocaleDateString('es-PE'), item.tipo_comerciante || item.categoria]))
-      setTarifas((tarifas.data || []).map((item) => [item.rubro, `S/ ${Number(item.monto_fijo || 0).toFixed(2)} · ${item.tipo_tarifa}`, item.estado === 1 ? 'Activo' : 'Inactivo']))
+      setComerciantes((comerciantes.data || []).map((item) => [item.id, item.nombre, item.rubro, item.dni_ruc, item.zona, item.estado, new Date(item.fecha_registro).toLocaleDateString('es-PE'), item.tipo_comerciante || item.categoria, item.frecuencia_pago || 'semanal']))
+      setTarifas((tarifas.data || []).map((item) => [item.zona, item.monto_por_feria === null ? 'Sin monto' : `S/ ${Number(item.monto_por_feria).toFixed(2)} por feria`, item.monto_por_feria === null ? 'Inactivo' : 'Activo']))
       setTariffRecords(tarifas.data || []);
       setCobros(cobros.data || []);
       setMapPuestos(puestos.data || []);
@@ -904,7 +905,7 @@ function App() {
       const data = await response.json();
       if (!response.ok) throw new Error(data.message || 'No se pudo registrar el comerciante');
 
-      setMerchantForm({ dni_ruc: '', nombre: '', rubro_id: '1', zona_id: '1', categoria: 'permanente', tipo_comerciante: 'permanente', estado: 'activo' });
+      setMerchantForm({ dni_ruc: '', nombre: '', rubro_id: '1', zona_id: '1', categoria: 'permanente', tipo_comerciante: 'permanente', estado: 'activo', frecuencia_pago: 'semanal' });
       setEditingMerchantId(null);
       setMerchantMessage(data.message);
       setShowMerchantForm(false);
@@ -921,7 +922,7 @@ function App() {
     setEditingMerchantId(id);
     const merchant = comerciantes.find((item) => Number(item[0]) === Number(id));
     const tipoComerciante = merchant?.[7] || 'permanente';
-    setMerchantForm({ dni_ruc: document, nombre: name, rubro_id: String(rubro?.id || 1), zona_id: String(zona?.id || 1), categoria: tipoComerciante, tipo_comerciante: tipoComerciante, estado: String(merchant?.[5] || 'activo').toLowerCase() });
+    setMerchantForm({ dni_ruc: document, nombre: name, rubro_id: String(rubro?.id || 1), zona_id: String(zona?.id || 1), categoria: tipoComerciante, tipo_comerciante: tipoComerciante, estado: String(merchant?.[5] || 'activo').toLowerCase(), frecuencia_pago: merchant?.[8] || 'semanal' });
     setShowMerchantForm(true);
     setMerchantMessage('');
   };
@@ -1009,15 +1010,14 @@ function App() {
     event.preventDefault();
     setTariffMessage('');
     try {
-      const response = await fetch(`${apiBase}/tarifas${editingTariffId ? `/${editingTariffId}` : ''}`, {
-        method: editingTariffId ? 'PUT' : 'POST',
+      const response = await fetch(`${apiBase}/tarifas-zona/${editingTariffId}`, {
+        method: 'PUT',
         headers: getAuthHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify(tariffForm)
       });
       const data = await response.json();
-      if (!response.ok) throw new Error(data.message || 'No se pudo guardar la tarifa');
+      if (!response.ok) throw new Error(data.message || 'No se pudo guardar el monto de la zona');
       setTariffMessage(data.message);
-      setShowTariffForm(false);
       setEditingTariffId(null);
       await fetchData();
     } catch (tariffError) {
@@ -1579,18 +1579,18 @@ function App() {
                         <div className="eyebrow" style={{ color: '#1f9d63' }}>MODO EXPRESS</div>
                         <strong>{paymentMerchant.nombre}</strong>
                       </div>
-                      <button className="primary-button" type="button" onClick={() => setPaymentForm((current) => ({ ...current, monto: String(expressSuggestion.suggestedAmount || paymentBalance.saldo || 0), metodo_pago: expressSuggestion.preferredMethod || current.metodo_pago }))}>Cobrar sugerido</button>
+                      <button className="primary-button" type="button" onClick={() => setPaymentForm((current) => ({ ...current, monto: String(paymentBalance.cuota_sugerida || expressSuggestion.suggestedAmount || paymentBalance.saldo || 0), metodo_pago: expressSuggestion.preferredMethod || current.metodo_pago }))}>Cobrar sugerido</button>
                     </div>
                     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: '12px', marginTop: '14px' }}>
                       <div><span style={{ display: 'block', fontSize: '12px', color: '#64748b' }}>Saldo pendiente</span><strong>S/ {Number(paymentBalance.saldo || 0).toFixed(2)}</strong></div>
-                      <div><span style={{ display: 'block', fontSize: '12px', color: '#64748b' }}>Sugerencia</span><strong>S/ {Number(expressSuggestion.suggestedAmount || 0).toFixed(2)}</strong></div>
+                      <div><span style={{ display: 'block', fontSize: '12px', color: '#64748b' }}>Cuota {FRECUENCIA_LABELS[paymentBalance.frecuencia_pago]?.toLowerCase() || ''}</span><strong>S/ {Number(paymentBalance.cuota_sugerida || 0).toFixed(2)}</strong></div>
                       <div><span style={{ display: 'block', fontSize: '12px', color: '#64748b' }}>Método preferido</span><strong>{String(expressSuggestion.preferredMethod || 'efectivo').toUpperCase()}</strong></div>
                     </div>
                     <div style={{ marginTop: '12px', fontWeight: 600, color: '#0f172a' }}>{expressSuggestion.lastLabel}</div>
                   </div>
                 )}
                 <div className="step-label">02 · Revisar deuda</div>
-                {paymentBalance ? <div className="debt-breakdown"><div><span>Tarifa</span><strong>S/ {(paymentBalance.tarifa?.monto_fijo ?? 0)}</strong></div><div><span>Periodo</span><strong>{paymentBalance.periodo}</strong></div><div><span>Pagado</span><strong>S/ {Number(paymentBalance.monto_pagado || 0).toFixed(2)}</strong></div><div className="debt-total"><span>Saldo pendiente</span><strong>S/ {paymentBalance.saldo.toFixed(2)}</strong></div></div> : <div className="empty-state">Busca un comerciante para mostrar su liquidación.</div>}
+                {paymentBalance ? <div className="debt-breakdown"><div><span>Por día de feria</span><strong>S/ {Number(paymentBalance.monto_por_feria || 0).toFixed(2)}</strong></div><div><span>Periodo</span><strong>{paymentBalance.periodo}</strong></div><div><span>Ferias cobrables</span><strong>{paymentBalance.dias_cobrables ?? 0} de {paymentBalance.dias_feria ?? 0}{paymentBalance.dias_ausente ? ` (${paymentBalance.dias_ausente} faltas)` : ''}</strong></div>{paymentBalance.credito_anterior > 0 && <div><span>A cuenta del mes anterior</span><strong>S/ {Number(paymentBalance.credito_anterior).toFixed(2)}</strong></div>}<div><span>Pagado</span><strong>S/ {Number(paymentBalance.monto_pagado || 0).toFixed(2)}</strong></div><div className="debt-total"><span>Saldo pendiente</span><strong>S/ {paymentBalance.saldo.toFixed(2)}</strong></div></div> : <div className="empty-state">Busca un comerciante para mostrar su liquidación.</div>}
                 <div className="step-label">03 · Confirmar cobro</div>
                 <div className="payment-fields"><input required min="0.01" max={paymentBalance?.saldo || undefined} step="0.01" type="number" placeholder="Monto a cobrar" value={paymentForm.monto} onChange={(event) => setPaymentForm({ ...paymentForm, monto: event.target.value })} /><select value={paymentForm.metodo_pago} onChange={(event) => setPaymentForm({ ...paymentForm, metodo_pago: event.target.value })}><option value="efectivo">Efectivo</option><option value="yape">Yape</option><option value="plin">Plin</option><option value="pos">POS</option></select></div>
                 {paymentForm.metodo_pago !== 'efectivo' && <input required placeholder="Código de operación digital" value={paymentForm.codigo_operacion} onChange={(event) => setPaymentForm({ ...paymentForm, codigo_operacion: event.target.value })} />}
@@ -1615,29 +1615,28 @@ function App() {
             <div className="table-card"><table><thead><tr><th>Fecha</th><th>Usuario</th><th>Entidad</th><th>Acción</th><th>Detalle</th></tr></thead><tbody>{auditRecords.map((item) => <tr key={item.id}><td>{item.fecha}</td><td>{item.usuario || `Usuario ${item.usuario_id}`}</td><td>{item.entidad}</td><td><span className="status paid">{item.accion}</span></td><td>{item.detalle}</td></tr>)}</tbody></table></div>
           </section>
         );
-      case 'tarifas':
+      case 'tarifas': {
+        const editingZone = tariffRecords.find((item) => item.zona_id === editingTariffId);
+        const today = new Date().toISOString().slice(0, 10);
         return (
           <section className="page">
-            <div className="page-heading"><div><div className="eyebrow">CONFIGURACIÓN / TARIFAS</div><h1>Tarifas y categorías</h1><p>Administra montos, unidad de cobro y vigencias del tarifario.</p></div><button className="primary-button" type="button" onClick={() => { setEditingTariffId(null); setTariffMessage(''); setShowTariffForm((current) => !current); }}>＋ Nueva tarifa</button></div>
-            {tariffMessage && <div className="form-error">{tariffMessage}</div>}
-            {showTariffForm && (
+            <div className="page-heading"><div><div className="eyebrow">CONFIGURACIÓN / TARIFAS</div><h1>Cobro por zona</h1><p>Monto fijo por día de feria (martes y miércoles); la semana equivale a 2 ferias. Un cambio rige desde la fecha que indiques y no altera los meses anteriores.</p></div></div>
+            {tariffMessage && <div className="form-message" role="status">{tariffMessage}</div>}
+            {editingZone && (
               <form className="panel merchant-form" onSubmit={handleTariffSubmit}>
-                <div className="panel-heading"><div><div className="panel-title">{editingTariffId ? 'Editar tarifa' : 'Nueva tarifa'}</div><div className="panel-subtitle">Los cambios aplican según la vigencia configurada.</div></div></div>
+                <div className="panel-heading"><div><div className="panel-title">Cambiar monto · {editingZone.zona}</div><div className="panel-subtitle">Monto actual: {editingZone.monto_por_feria === null ? 'sin monto' : `S/ ${editingZone.monto_por_feria.toFixed(2)} por feria`}.</div></div></div>
                 <div className="merchant-form-grid">
-                  <select value={tariffForm.rubro_id} onChange={(event) => setTariffForm({ ...tariffForm, rubro_id: event.target.value })}>{catalogos.rubros.map((item) => <option key={item.id} value={item.id}>{item.nombre}</option>)}</select>
-                  <select value={tariffForm.tipo_tarifa} onChange={(event) => setTariffForm({ ...tariffForm, tipo_tarifa: event.target.value })}><option value="fija">Fija</option><option value="variable">Variable</option><option value="mixta">Mixta</option></select>
-                  <select value={tariffForm.unidad_medida} onChange={(event) => setTariffForm({ ...tariffForm, unidad_medida: event.target.value })}><option value="diaria">Diaria</option><option value="semanal">Semanal</option><option value="mensual">Mensual</option><option value="metro_cuadrado">Por metro cuadrado</option></select>
-                  <input required min="0" step="0.01" type="number" placeholder="Monto fijo" value={tariffForm.monto_fijo} onChange={(event) => setTariffForm({ ...tariffForm, monto_fijo: event.target.value })} />
-                  <input min="0" step="0.01" type="number" placeholder="Monto variable" value={tariffForm.monto_variable} onChange={(event) => setTariffForm({ ...tariffForm, monto_variable: event.target.value })} />
-                  <input required type="date" value={tariffForm.vigencia_inicio} onChange={(event) => setTariffForm({ ...tariffForm, vigencia_inicio: event.target.value })} />
-                  <input type="date" value={tariffForm.vigencia_fin} onChange={(event) => setTariffForm({ ...tariffForm, vigencia_fin: event.target.value })} />
-                  <button className="primary-button" type="submit">Guardar tarifa</button>
+                  <label><span>Monto por día de feria (S/)</span><input required min="0.01" step="0.01" type="number" value={tariffForm.monto_por_feria} onChange={(event) => setTariffForm({ ...tariffForm, monto_por_feria: event.target.value })} /></label>
+                  <label><span>Rige desde</span><input required type="date" min={today} value={tariffForm.vigencia_inicio} onChange={(event) => setTariffForm({ ...tariffForm, vigencia_inicio: event.target.value })} /></label>
+                  <button className="primary-button" type="submit">Guardar monto</button>
+                  <button className="secondary-button" type="button" onClick={() => setEditingTariffId(null)}>Cancelar</button>
                 </div>
               </form>
             )}
-            <div className="table-card"><table><thead><tr><th>Rubro</th><th>Tipo</th><th>Montos</th><th>Unidad</th><th>Vigencia</th><th>Estado</th><th>Acción</th></tr></thead><tbody>{(tariffRecords.length ? tariffRecords : []).map((item) => <tr key={item.id}><td>{item.rubro}</td><td>{item.tipo_tarifa}</td><td>S/ {item.monto_fijo} + S/ {item.monto_variable}</td><td>{item.unidad_medida}</td><td>{item.vigencia_inicio}{item.vigencia_fin ? ` a ${item.vigencia_fin}` : ' en adelante'}</td><td><span className="status paid">Activo</span></td><td><button className="table-action" type="button" onClick={() => { setEditingTariffId(item.id); setTariffForm({ rubro_id: String(item.rubro_id), tipo_tarifa: item.tipo_tarifa, monto_fijo: String(item.monto_fijo), monto_variable: String(item.monto_variable), unidad_medida: item.unidad_medida, vigencia_inicio: item.vigencia_inicio, vigencia_fin: item.vigencia_fin || '' }); setShowTariffForm(true); }}>Editar</button></td></tr>)}</tbody></table></div>
+            <div className="table-card"><table><thead><tr><th>Zona</th><th>Por día de feria</th><th>Por semana (2 ferias)</th><th>Vigente desde</th><th>Próximo cambio</th><th>Acción</th></tr></thead><tbody>{tariffRecords.map((item) => <tr key={item.zona_id}><td>{item.zona}</td><td>{item.monto_por_feria === null ? <span className="status pending">Sin monto: no se puede cobrar</span> : `S/ ${item.monto_por_feria.toFixed(2)}`}</td><td>{item.monto_semanal === null ? '—' : `S/ ${item.monto_semanal.toFixed(2)}`}</td><td>{item.vigente_desde || '—'}</td><td>{item.proximo_cambio ? `S/ ${item.proximo_cambio.monto_por_feria.toFixed(2)} desde ${item.proximo_cambio.vigente_desde}` : '—'}</td><td><button className="table-action" type="button" onClick={() => { setEditingTariffId(item.zona_id); setTariffMessage(''); setTariffForm({ monto_por_feria: item.monto_por_feria === null ? '' : String(item.monto_por_feria), vigencia_inicio: today }); }}>Cambiar monto</button></td></tr>)}</tbody></table></div>
           </section>
         );
+      }
       case 'usuarios':
         return simplePage('usuarios');
       case 'reportes':
@@ -1962,7 +1961,7 @@ function App() {
         </ScrollSnapSection>
 
         <ScrollSnapSection id="tarifas" className="landing-tariff-section">
-          <TariffCalculator onRegister={() => setShowLogin(true)} />
+          <TariffCalculator apiBase={apiBase} onRegister={() => setShowLogin(true)} />
         </ScrollSnapSection>
 
         <ScrollSnapSection id="transparencia" className="landing-transparency-section">

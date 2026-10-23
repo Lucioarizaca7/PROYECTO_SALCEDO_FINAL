@@ -209,7 +209,9 @@ export async function previewPadronSheets(sheets, { filename = '', db }) {
       const value = (column) => column < 0 ? '' : source[column];
       const document = documentValue(value(detected.mapping.document));
       const name = cellText(value(detected.mapping.name));
-      const area = numericArea(value(detected.mapping.area));
+      // El metraje es informativo: el cobro es fijo por zona y por día de feria.
+      const rawArea = numericArea(value(detected.mapping.area));
+      const area = Number.isFinite(rawArea) && rawArea > 0 ? rawArea : null;
       const sector = cellText(value(detected.mapping.sector)) || sheet.name;
       const code = cellText(value(detected.mapping.code)) || generatedCode(sheet.name, rowNumber);
       const rawCategory = cellText(value(detected.mapping.category));
@@ -231,7 +233,6 @@ export async function previewPadronSheets(sheets, { filename = '', db }) {
         }
       }
       if (!name) rowErrors.push('Falta el nombre del titular.');
-      if (!Number.isFinite(area) || area <= 0) rowErrors.push('Falta un metraje mayor que cero.');
       if (!rubroId) rowErrors.push(`No hay un rubro configurado que coincida con "${rubroValue}".`);
       if (!zonaId) rowErrors.push(`No hay una zona configurada para "${zoneValue}".`);
       if (document && seenDocuments.has(document)) rowErrors.push('DNI/RUC duplicado dentro del libro.');
@@ -365,7 +366,7 @@ export async function importPadronPreview(_db, preview, userId = 1) {
       if (knownPosts.length) {
         await client.query(`
           UPDATE puestos p
-          SET zona_id = v.zona_id, direccion = v.direccion, metros_cuadrados = v.metros, estado = v.estado
+          SET zona_id = v.zona_id, direccion = v.direccion, metros_cuadrados = COALESCE(v.metros, p.metros_cuadrados), estado = v.estado
           FROM unnest($1::bigint[], $2::int[], $3::text[], $4::numeric[], $5::text[]) AS v(id, zona_id, direccion, metros, estado)
           WHERE p.id = v.id`,
         [column(knownPosts, (row) => row.existingPostId), column(knownPosts, (row) => row.zonaId),

@@ -32,7 +32,7 @@ if (!existsSync(sourceFile)) {
     console.log(`Correlativos de puesto duplicados (se omite la fila ambigua): ${plan.totals.duplicatePostCodes}`);
     console.log(`Filas vacías o sin correlativo/nombre omitidas: ${plan.totals.skippedRows}`);
     console.log('Metraje: no viene en el Excel; se deja NULL y el registro queda PENDIENTE_REGULARIZACION. No se devenga tasa hasta capturar el área real.');
-    console.log('Tarifa: S/ 2.00 por m² para el rubro Zapatillas/Calzado.');
+    console.log('Cobro: monto fijo por zona y por día de feria (configurable por el super admin).');
 
     if (applyChanges) {
       const result = await seedFeriaZapatillas(db, plan, sourceFile, 1);

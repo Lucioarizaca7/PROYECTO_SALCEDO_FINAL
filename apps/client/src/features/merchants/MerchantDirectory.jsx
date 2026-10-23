@@ -137,6 +137,14 @@ export function MerchantDirectory({
                 <option value="ferial">Ferial</option>
               </select>
             </label>
+            <label>
+              <span>Frecuencia de pago</span>
+              <select name="frecuencia_pago" value={form.frecuencia_pago || 'semanal'} onChange={(event) => setForm({ ...form, frecuencia_pago: event.target.value })}>
+                <option value="por_feria">Por feria</option>
+                <option value="semanal">Semanal (martes y miércoles)</option>
+                <option value="mensual">Mensual</option>
+              </select>
+            </label>
             <button className="primary-button" type="submit">{editingId ? 'Guardar cambios' : 'Guardar comerciante'}</button>
           </div>
         </form>

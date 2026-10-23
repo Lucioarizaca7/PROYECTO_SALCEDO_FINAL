@@ -118,7 +118,6 @@ def libro_errores():
         dict(documento='1234567', titular='DNI CORTO CONDORI', codigo='ERR-C-003', metraje=3),
         dict(documento='30123456789', titular='RUC INVALIDO TICONA', codigo='ERR-C-004', metraje=3),
         dict(documento='45871237', titular='', codigo='ERR-C-005', metraje=3),
-        dict(documento='45871238', titular='SIN METRAJE APAZA', codigo='ERR-C-006', metraje=0),
         dict(documento='45871236', titular='DNI DUPLICADO CHOQUE', codigo='ERR-C-007', metraje=3),
         dict(documento='45871239', titular='CODIGO DUPLICADO HUANCA', codigo='ERR-C-001', metraje=3),
         dict(documento='45871240', titular='RUBRO INEXISTENTE PARI', codigo='ERR-C-009', metraje=3, rubro='ferreteria'),

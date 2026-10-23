@@ -52,7 +52,9 @@ test('seeder crea comerciantes temporales, puestos por bloque y conserva marcas 
   assert.equal((await calculateLiquidation(db, importedMerchant.id, '2026-09')).motivo, 'pendiente_regularizacion_sin_metraje');
 
   const scalar = async (text, params = []) => Number((await db.query(text, params)).rows[0].count);
-  assert.equal(await scalar("SELECT COUNT(*) FROM tarifas t JOIN rubros r ON r.id = t.rubro_id WHERE LOWER(r.nombre) = 'zapatillas' AND t.unidad_medida = 'metro_cuadrado' AND t.monto_variable = 2"), 1);
+  // Ya no se cobra por metro cuadrado: cada bloque importado nace con su monto fijo por día de feria.
+  assert.equal(await scalar("SELECT COUNT(*) FROM tarifas WHERE unidad_medida = 'metro_cuadrado' AND activo"), 0);
+  assert.equal(await scalar("SELECT COUNT(*) FROM tarifas t JOIN zonas z ON z.id = t.zona_id WHERE z.nombre = 'BLOQUE A-I' AND t.rubro_id IS NULL AND t.unidad_medida = 'dia_feria'"), 1);
   assert.equal(await scalar('SELECT COUNT(*) FROM asistencias_feriales'), 5);
   const blockPost = importedPosts.find((post) => post.codigo === 'ZAP-A-I-01');
   assert.equal(await scalar('SELECT COUNT(*) FROM asistencias_feriales WHERE puesto_id = $1 AND fecha = $2', [blockPost.id, '2026-09-08']), 2);

@@ -13,10 +13,10 @@ const COLUMNS = [
   { header: 'Titular', width: 34, note: 'Obligatorio. Nombre completo o razón social.' },
   { header: 'Código Puesto', width: 15, note: 'Único en todo el padrón. Si lo dejas vacío se genera uno con el nombre de la hoja.' },
   { header: 'Sector', width: 22, note: 'Bloque, tramo o ubicación. Si lo dejas vacío se usa el nombre de la hoja.' },
-  { header: 'Zona', width: 20, note: 'Elige una zona de la lista (catálogo actual del sistema).' },
+  { header: 'Zona', width: 20, note: 'Elige una zona de la lista. La zona define el monto fijo que se cobra por día de feria.' },
   { header: 'Tipo Comerciante', width: 17, note: 'permanente, ferial o eventual.' },
-  { header: 'Rubro', width: 14, note: 'Elige un rubro de la lista; define la tarifa que se cobra.' },
-  { header: 'Metraje m2', width: 12, note: 'Obligatorio. Número mayor que 0.' },
+  { header: 'Rubro', width: 14, note: 'Elige un rubro de la lista (clasificación del comerciante).' },
+  { header: 'Metraje m2', width: 12, note: 'Opcional, solo informativo: el cobro es fijo por zona y por día de feria.' },
   { header: 'Estado', width: 11, note: 'Presente o Ausente.' }
 ];
 

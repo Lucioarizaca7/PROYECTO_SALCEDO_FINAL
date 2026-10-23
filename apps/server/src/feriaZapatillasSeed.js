@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { recordAudit } from './db.js';
+import { DEFAULT_ZONE_FERIA_AMOUNT, recordAudit } from './db.js';
 import { withTransaction } from './pg.js';
 
 function normalizeName(value) {
@@ -187,10 +187,12 @@ export async function seedFeriaZapatillas(_db, plan, sourceFile, userId = 1) {
 
     for (const block of plan.blocks.filter((item) => item.candidates > 0)) {
       await c.query('INSERT INTO zonas (nombre, descripcion) SELECT $1::text, $2::text WHERE NOT EXISTS (SELECT 1 FROM zonas WHERE LOWER(nombre) = LOWER($1::text))', [block.sheet, `Sector ferial ${block.sheet}`]);
+      // El cobro es fijo por zona y por día de feria: cada bloque nuevo nace con el monto de referencia.
+      await c.query(`INSERT INTO tarifas (rubro_id, zona_id, tipo_tarifa, monto_fijo, monto_variable, unidad_medida, vigencia_inicio)
+        SELECT NULL, z.id, 'fija', $2, 0, 'dia_feria', '2026-01-01' FROM zonas z
+        WHERE LOWER(z.nombre) = LOWER($1::text)
+          AND NOT EXISTS (SELECT 1 FROM tarifas t WHERE t.zona_id = z.id AND t.rubro_id IS NULL)`, [block.sheet, DEFAULT_ZONE_FERIA_AMOUNT]);
     }
-    await c.query(`INSERT INTO tarifas (rubro_id, tipo_tarifa, monto_fijo, monto_variable, unidad_medida, vigencia_inicio, vigencia_fin, activo, version)
-      SELECT $1::int, 'variable', 0, 2, 'metro_cuadrado', '2026-01-01', NULL, TRUE, 1
-      WHERE NOT EXISTS (SELECT 1 FROM tarifas WHERE rubro_id = $1::int AND tipo_tarifa = 'variable' AND monto_fijo = 0 AND monto_variable = 2 AND unidad_medida = 'metro_cuadrado' AND vigencia_inicio = '2026-01-01')`, [rubroId]);
 
     const userRow = await one('SELECT id FROM usuarios WHERE id = $1', [userId]);
     const creatorId = userRow ? userId : null;
