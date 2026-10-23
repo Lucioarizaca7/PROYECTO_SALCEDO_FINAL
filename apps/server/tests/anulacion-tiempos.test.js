@@ -6,7 +6,7 @@ import test, { after, before } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { startServer } from '../src/index.ts';
-import { closeDatabase, calcularLiquidacion, getComerciantes, getAuditTrail, parseInicioAtencion } from '../src/db.js';
+import { closeDatabase, calcularLiquidacion, getComerciantes, getAuditTrail, parseInicioAtencion, todayInLima } from '../src/db.js';
 import { pool } from '../src/pg.js';
 
 let server;
@@ -98,7 +98,8 @@ test('el tiempo de atención se guarda solo si es creíble y alimenta el indicad
   const cobrador = await login('cobrador@salcedo.gob.pe', 'cobro123');
   const periodo = '2031-04';
   const { merchant } = await merchantWithBalance(periodo);
-  const fecha = inPeriod(periodo);
+  // En línea el cobro lleva la hora del servidor: se mide con la hora actual (el periodo 2031-04 solo aparta el saldo).
+  const fecha = new Date().toISOString();
 
   const medido = await api('/cobros', {
     method: 'POST', token: cobrador,
@@ -108,15 +109,16 @@ test('el tiempo de atención se guarda solo si es creíble y alimenta el indicad
   assert.equal(medido.status, 201, medido.body?.message);
   const invalido = await api('/cobros', {
     method: 'POST', token: cobrador,
-    body: { comerciante_id: merchant.id, monto: 1, metodo_pago: 'efectivo', periodo, fecha_cobro: inPeriod(periodo, 5),
-      inicio_atencion: inPeriod(periodo, 10) }
+    body: { comerciante_id: merchant.id, monto: 1, metodo_pago: 'efectivo', periodo, fecha_cobro: fecha,
+      inicio_atencion: new Date(Date.parse(fecha) + 10 * 60_000).toISOString() }
   });
   assert.equal(invalido.status, 201, 'un inicio inválido no impide cobrar');
   const guardado = (await pool.query('SELECT inicio_atencion FROM transacciones WHERE id = $1', [invalido.body.data.id])).rows[0];
   assert.equal(guardado.inicio_atencion, null);
 
   assert.equal((await api('/cobros/tiempos', { token: cobrador })).status, 403);
-  const tiempos = await api(`/cobros/tiempos?desde=${periodo}-01&hasta=${periodo}-28`, { token: admin });
+  const hoy = todayInLima();
+  const tiempos = await api(`/cobros/tiempos?desde=${hoy}&hasta=${hoy}`, { token: admin });
   assert.equal(tiempos.status, 200, tiempos.body?.message);
   assert.equal(tiempos.body.data.general.cobros, 1);
   assert.equal(tiempos.body.data.general.mediana_segundos, 90);

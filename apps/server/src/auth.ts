@@ -10,6 +10,9 @@ import { recordAudit, findUserByEmail, createDeviceSession, findActiveSessionByT
 // config.ts valida al arrancar que JWT_SECRET exista (y su longitud en producción).
 const jwtSecret = config.jwtSecret;
 
+// Hash contra el que se compara cuando el correo no existe, con el mismo costo que las claves reales.
+const HASH_DE_RELLENO = bcrypt.hashSync('sin-usuario-sisrec', config.bcryptSaltRounds);
+
 const emailAliases: Record<string, string> = {
   'super_admin@salcedo.gob.pe': 'admin@salcedo.gob.pe'
 };
@@ -37,7 +40,10 @@ export async function loginUser({ email, password }: { email: string; password: 
   const lookupEmail = emailAliases[normalizedEmail] || normalizedEmail;
   const user = await findUserByEmail(db, lookupEmail);
 
-  if (!user || !bcrypt.compareSync(String(password || ''), user.password_hash)) {
+  // Siempre se ejecuta bcrypt, aunque el correo no exista: si no, la respuesta rápida delataría qué correos
+  // tienen cuenta. compare (asíncrono) no frena las demás peticiones mientras calcula.
+  const claveCorrecta = await bcrypt.compare(String(password || ''), user?.password_hash || HASH_DE_RELLENO);
+  if (!user || !claveCorrecta) {
     throw new Error('Credenciales inválidas');
   }
 

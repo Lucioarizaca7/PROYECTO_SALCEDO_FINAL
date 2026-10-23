@@ -681,17 +681,25 @@ export async function getReportRows(db, options = {}) {
     ${where} ORDER BY co.fecha_cobro_cliente DESC`, params);
 }
 
+/**
+ * Una celda del CSV. Un texto que empieza con = + - @ (o tabulación / retorno) Excel lo ejecuta como fórmula:
+ * un nombre de comerciante como =HYPERLINK(...) se activaría al abrir el reporte. Se le antepone ' para que
+ * quede como texto. Los montos (números) no se tocan.
+ */
+export function celdaCsv(value) {
+  if (value === null || value === undefined) return '';
+  let texto = String(value);
+  if (typeof value !== 'number' && /^[=+\-@\t\r]/.test(texto)) texto = `'${texto}`;
+  return /[",\n\r]/.test(texto) ? `"${texto.replace(/"/g, '""')}"` : texto;
+}
+
 export async function buildReportCsv(db, options = {}) {
   const data = await getReportRows(db, options);
   const headers = ['fecha', 'comerciante_codigo', 'comerciante', 'rubro', 'zona', 'cobrador', 'monto', 'metodo_pago', 'estado', 'comprobante'];
-  const escapeValue = (value) => {
-    const normalized = value === null || value === undefined ? '' : String(value);
-    return /[",\n]/.test(normalized) ? `"${normalized.replace(/"/g, '""')}"` : normalized;
-  };
 
   if (!data.length) return `${headers.join(',')}\n`;
   const lines = [headers.join(',')];
-  for (const row of data) lines.push(headers.map((header) => escapeValue(row[header])).join(','));
+  for (const row of data) lines.push(headers.map((header) => celdaCsv(row[header])).join(','));
   return lines.join('\n');
 }
 
@@ -1584,7 +1592,16 @@ export async function calcularLiquidacion(db, comercianteId, periodo, { dia = nu
 // Cobros / transacciones
 // ---------------------------------------------------------------------------
 
-export async function getCobros(db) {
+// Listado para las pantallas (cobros recientes, sugerencia express): los más recientes primero. Los totales y
+// los reportes van por /reportes; sin tope, la respuesta crecería con cada cobro del año.
+export const MAX_COBROS_LISTADO = 500;
+
+/** cobradorId: solo los cobros de ese cobrador (el cobrador ve los suyos; decisión del usuario, 2026-10-22). */
+export async function getCobros(db, { cobradorId = null, limit = MAX_COBROS_LISTADO } = {}) {
+  const tope = Math.min(Math.max(Number(limit) || MAX_COBROS_LISTADO, 1), MAX_COBROS_LISTADO);
+  const params = [tope];
+  let filtro = '';
+  if (cobradorId) { params.push(Number(cobradorId)); filtro = `WHERE co.cobrador_id = $${params.length}`; }
   return rows(db, `
     SELECT co.id, co.comerciante_id, c.nombre AS comerciante, co.tarifa_id, co.cobrador_id,
            co.monto, co.concepto, co.metodo_pago, co.codigo_operacion, co.observaciones,
@@ -1597,7 +1614,9 @@ export async function getCobros(db) {
     LEFT JOIN comprobantes cp ON cp.id = co.comprobante_id
     LEFT JOIN cobros_observados ob ON ob.transaccion_id = co.id
     LEFT JOIN usuarios an ON an.id = co.anulado_por
-    ORDER BY co.id DESC`);
+    ${filtro}
+    ORDER BY co.id DESC
+    LIMIT $1`, params);
 }
 
 // Tiempo de atención por cobro (indicador de −50 % frente a la línea base del DAP). Solo cobros con
@@ -1984,6 +2003,33 @@ export function parseInicioAtencion(value, fechaCobro) {
   return diff >= 0 && diff <= MAX_ATENCION_MS ? inicio : null;
 }
 
+// La fecha del cobro decide en qué caja diaria cuenta. Si el celular pudiera poner cualquier fecha, un cobro
+// podría caer en un día sin cierre y su dinero no aparecería en ninguna caja.
+// - Sin señal se acepta la hora del celular hasta DIAS_COBRO_SIN_SENAL días atrás (decisión del usuario,
+//   2026-10-22) y hasta TOLERANCIA_RELOJ_MS en el futuro (relojes desfasados). Fuera de eso el cobro no se
+//   descarta (el dinero ya se recibió): queda observado.
+// - En línea manda la hora del servidor; la del celular solo se usa si difiere menos de TOLERANCIA_RELOJ_MS,
+//   para que el tiempo de atención se mida con el mismo reloj que su inicio.
+export const DIAS_COBRO_SIN_SENAL = 3;
+const TOLERANCIA_RELOJ_MS = 5 * 60 * 1000;
+const DIA_MS = 24 * 60 * 60 * 1000;
+
+/** Motivo por el que la fecha de un cobro sin señal no es creíble, o null si está dentro del rango. */
+export function fechaCobroFueraDeRango(fecha, ahora = new Date()) {
+  const atraso = ahora.getTime() - fecha.getTime();
+  if (atraso < -TOLERANCIA_RELOJ_MS) return 'la fecha del celular está en el futuro';
+  if (atraso > DIAS_COBRO_SIN_SENAL * DIA_MS) return `la fecha del celular tiene más de ${DIAS_COBRO_SIN_SENAL} días`;
+  return null;
+}
+
+/** Fecha (ISO) con la que se registra un cobro en línea. */
+export function fechaCobroEnLinea(valor, ahora = new Date()) {
+  const fecha = Date.parse(valor || '');
+  return Number.isFinite(fecha) && Math.abs(ahora.getTime() - fecha) <= TOLERANCIA_RELOJ_MS
+    ? new Date(fecha).toISOString()
+    : ahora.toISOString();
+}
+
 function createTransactionHash({ comercianteId, cobradorId, monto, concepto, periodo, metodoPago, salt }) {
   const seed = [comercianteId, cobradorId, monto, concepto, periodo || 'sin-periodo', metodoPago, salt || Date.now()].join('|');
   return createHash('sha256').update(seed).digest('hex');
@@ -2063,6 +2109,11 @@ export async function registrarCobro(db, payload, { audit = null, allowExcess = 
   if (tickets.problema) {
     if (!allowExcess) throw new ValidationError(tickets.problema);
     observacion = observacion ? `${observacion}. ${tickets.problema}` : `Cobro offline con tickets observados: ${tickets.problema}`;
+  }
+  // Solo sin señal la fecha viene del celular (en línea la fija fechaCobroEnLinea en la ruta).
+  const fechaDudosa = allowExcess ? fechaCobroFueraDeRango(clientDate) : null;
+  if (fechaDudosa) {
+    observacion = observacion ? `${observacion}. Fecha fuera de rango: ${fechaDudosa}` : `Cobro offline con fecha fuera de rango: ${fechaDudosa}`;
   }
 
   const collector = await first(db, 'SELECT id FROM usuarios WHERE id = $1', [cobradorId]);

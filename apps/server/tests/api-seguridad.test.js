@@ -8,7 +8,7 @@ import assert from 'node:assert/strict';
 
 import { app, startServer } from '../src/index.ts';
 import { loginUser } from '../src/auth.ts';
-import { closeDatabase, currentPeriod, findUserByEmail, getAuditTrail, getComerciantes, getReportRows, registrarCobro } from '../src/db.js';
+import { MAX_COBROS_LISTADO, calcularLiquidacion, celdaCsv, closeDatabase, currentPeriod, findUserByEmail, getAuditTrail, getComerciantes, getReportRows, registrarCobro } from '../src/db.js';
 import { pool } from '../src/pg.js';
 
 // Únicas rutas GET que se pueden consultar sin iniciar sesión.
@@ -122,6 +122,67 @@ test('POST /cobros usa el cobrador del token, rechaza "manual" y audita en la mi
   const entry = audit.find((item) => item.accion === 'REGISTRAR_COBRO' && item.detalle.includes(body.data.comprobante));
   assert.ok(entry, 'el cobro debe quedar en la auditoría');
   assert.equal(Number(entry.usuario_id), Number(cobrador.id));
+});
+
+test('POST /comerciantes registra como creador al usuario del token, no al que diga el navegador', async () => {
+  const cobrador = await findUserByEmail(pool, 'cobrador@salcedo.gob.pe');
+  const admin = await findUserByEmail(pool, 'admin@salcedo.gob.pe');
+  const { rows: [{ rubro_id, zona_id }] } = await pool.query('SELECT (SELECT id FROM rubros ORDER BY id LIMIT 1) AS rubro_id, (SELECT id FROM zonas ORDER BY id LIMIT 1) AS zona_id');
+  const dni = String(70000000 + (process.pid % 1_000_000) * 7 + (Date.now() % 7)).slice(0, 8);
+
+  const response = await fetch(`${baseUrl}/api/v1/comerciantes`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${tokens.admin}` },
+    // El navegador intenta atribuir el alta al cobrador.
+    body: JSON.stringify({ nombre: 'Alta Atribuida Prueba', dni_ruc: dni, rubro_id, zona_id, usuario_creador: cobrador.id })
+  });
+  const body = await response.json();
+  assert.equal(response.status, 201, body.message);
+  const { rows: [guardado] } = await pool.query('SELECT usuario_creador_id FROM comerciantes WHERE id = $1', [body.data.id]);
+  assert.equal(Number(guardado.usuario_creador_id), Number(admin.id));
+});
+
+test('GET /cobros: el cobrador ve solo sus cobros; el administrador ve todos, con tope', async () => {
+  const cobrador = await findUserByEmail(pool, 'cobrador@salcedo.gob.pe');
+  const admin = await findUserByEmail(pool, 'admin@salcedo.gob.pe');
+  // Un periodo futuro propio para no gastar el saldo que usan las demás pruebas.
+  const periodo = '2032-02';
+  let merchant;
+  for (const item of await getComerciantes(pool, { limit: 100 })) {
+    const liquidacion = await calcularLiquidacion(pool, item.id, periodo).catch(() => null);
+    if (liquidacion && !liquidacion.no_devengo && !liquidacion.cobro_diario && liquidacion.saldo >= 2) { merchant = item; break; }
+  }
+  assert.ok(merchant, `la semilla no tiene un comerciante con saldo en ${periodo}`);
+  const cobrar = (cobradorId) => registrarCobro(pool, {
+    comerciante_id: merchant.id, cobrador_id: cobradorId, monto: 1, metodo_pago: 'efectivo', periodo, codigo_operacion: `LIST-${cobradorId}-${Date.now()}`
+  });
+  const delCobrador = await cobrar(cobrador.id);
+  const delAdmin = await cobrar(admin.id);
+
+  const listar = async (token, query = '') => (await (await fetch(`${baseUrl}/api/v1/cobros${query}`, { headers: { Authorization: `Bearer ${token}` } })).json()).data;
+  const vistosPorCobrador = await listar(tokens.cobrador);
+  assert.ok(vistosPorCobrador.length > 0);
+  assert.ok(vistosPorCobrador.every((item) => Number(item.cobrador_id) === Number(cobrador.id)), 'solo los suyos');
+  assert.ok(vistosPorCobrador.some((item) => item.id === delCobrador.id));
+  assert.ok(!vistosPorCobrador.some((item) => item.id === delAdmin.id), 'no ve el cobro de otro');
+
+  const vistosPorAdmin = await listar(tokens.admin);
+  assert.ok(vistosPorAdmin.some((item) => item.id === delCobrador.id) && vistosPorAdmin.some((item) => item.id === delAdmin.id));
+  assert.equal((await listar(tokens.admin, '?limit=1')).length, 1);
+  assert.ok((await listar(tokens.admin, '?limit=999999')).length <= MAX_COBROS_LISTADO, 'el tope no se puede pasar');
+});
+
+test('el reporte CSV no deja fórmulas ejecutables (inyección CSV)', () => {
+  assert.equal(celdaCsv('=HYPERLINK("http://x","ver")'), `"'=HYPERLINK(""http://x"",""ver"")"`);
+  assert.equal(celdaCsv('+51 999'), "'+51 999");
+  assert.equal(celdaCsv('-2+3'), "'-2+3");
+  assert.equal(celdaCsv('@SUM(A1)'), "'@SUM(A1)");
+  assert.equal(celdaCsv('\tcmd'), "'\tcmd");
+  assert.equal(celdaCsv('Mercado Central'), 'Mercado Central');
+  assert.equal(celdaCsv('Pérez, Juan'), '"Pérez, Juan"');
+  assert.equal(celdaCsv(-3), '-3', 'un número no se toca');
+  assert.equal(celdaCsv('12.50'), '12.50');
+  assert.equal(celdaCsv(null), '');
 });
 
 test('un cobro fallido no deja comprobante ni auditoría a medias', async () => {
