@@ -866,7 +866,10 @@ export async function updateComerciante(db, id, payload) {
   const current = await findComerciante(db, id);
   if (!current) throw new Error('Comerciante no encontrado');
 
-  const dniRuc = payload.dni_ruc === undefined ? current.dni_ruc : validateDocument(payload.dni_ruc);
+  const sameDocument = payload.dni_ruc === undefined || String(payload.dni_ruc).trim() === current.dni_ruc;
+  const dniRuc = sameDocument ? current.dni_ruc : validateDocument(payload.dni_ruc);
+  // Regularización: un titular importado sin DNI (documento TEMP_) recibe su DNI real.
+  const regulariza = !sameDocument && String(current.dni_ruc).startsWith('TEMP_');
   const nombre = payload.nombre === undefined ? current.nombre : String(payload.nombre).trim();
   const rubroId = payload.rubro_id === undefined ? current.rubro_id : Number(payload.rubro_id);
   const zonaId = payload.zona_id === undefined ? current.zona_id : Number(payload.zona_id);
@@ -876,7 +879,8 @@ export async function updateComerciante(db, id, payload) {
   const tipoComerciante = payload.tipo_comerciante === undefined
     ? (payload.categoria === undefined ? current.tipo_comerciante : String(payload.categoria).trim())
     : String(payload.tipo_comerciante).trim();
-  const estado = payload.estado === undefined ? current.estado : String(payload.estado).trim();
+  const requestedEstado = payload.estado === undefined ? current.estado : String(payload.estado).trim();
+  const estado = regulariza && requestedEstado === 'pendiente' ? 'activo' : requestedEstado;
   const frecuenciaPago = payload.frecuencia_pago === undefined ? current.frecuencia_pago : String(payload.frecuencia_pago).trim();
 
   if (!nombre || !rubroId || !zonaId) throw new Error('Nombre, rubro y zona son obligatorios');
@@ -888,8 +892,9 @@ export async function updateComerciante(db, id, payload) {
 
   await db.query(`
     UPDATE comerciantes
-    SET dni_ruc = $1, nombre = $2, rubro_id = $3, zona_id = $4, categoria = $5, tipo_comerciante = $6, estado = $7, frecuencia_pago = $9
-    WHERE id = $8`, [dniRuc, nombre, rubroId, zonaId, categoria, tipoComerciante, estado, Number(id), frecuenciaPago]);
+    SET dni_ruc = $1, nombre = $2, rubro_id = $3, zona_id = $4, categoria = $5, tipo_comerciante = $6, estado = $7, frecuencia_pago = $9,
+        estado_empadronamiento = CASE WHEN $10 THEN 'REGULARIZADO' ELSE estado_empadronamiento END
+    WHERE id = $8`, [dniRuc, nombre, rubroId, zonaId, categoria, tipoComerciante, estado, Number(id), frecuenciaPago, regulariza]);
 
   return findComerciante(db, id);
 }
@@ -1168,11 +1173,13 @@ async function getZoneTariffHistory(db, zonaId) {
     ORDER BY t.vigencia_inicio DESC, t.id DESC`, [Number(zonaId)]);
 }
 
-async function findMerchantPost(db, merchantId) {
-  return first(db, `
-    SELECT id, zona_id, metros_cuadrados, estado FROM puestos
-    WHERE comerciante_id = $1 AND estado NOT IN ('disponible', 'inactivo')
-    ORDER BY id LIMIT 1`, [merchantId]);
+// Puestos que generan cobro: los asignados (no disponibles ni dados de baja).
+async function findMerchantPosts(db, merchantId) {
+  return rows(db, `
+    SELECT p.id, p.codigo_puesto AS codigo, p.zona_id, z.nombre AS zona, p.metros_cuadrados, p.estado
+    FROM puestos p JOIN zonas z ON z.id = p.zona_id
+    WHERE p.comerciante_id = $1 AND p.estado NOT IN ('disponible', 'inactivo')
+    ORDER BY p.id`, [merchantId]);
 }
 
 export async function calculateLiquidation(db, comercianteId, periodo) {
@@ -1183,7 +1190,7 @@ export async function calculateLiquidation(db, comercianteId, periodo) {
 
   const merchantType = String(merchant.tipo_comerciante || merchant.categoria || '').trim().toLowerCase();
   const pendingRegularization = String(merchant.estado_empadronamiento || '').toUpperCase() === 'PENDIENTE_REGULARIZACION';
-  const puesto = await findMerchantPost(db, merchant.id);
+  const posts = await findMerchantPosts(db, merchant.id);
   const frecuenciaPago = merchant.frecuencia_pago || 'semanal';
 
   const noDevengo = (motivo, extra = {}) => ({
@@ -1192,6 +1199,7 @@ export async function calculateLiquidation(db, comercianteId, periodo) {
     periodo,
     metros_cuadrados: 0,
     frecuencia_pago: frecuenciaPago,
+    puestos: [],
     monto_por_feria: 0,
     dias_feria: 0,
     dias_ausente: 0,
@@ -1209,26 +1217,35 @@ export async function calculateLiquidation(db, comercianteId, periodo) {
     ...extra
   });
 
-  if (pendingRegularization && (!puesto || puesto.metros_cuadrados === null || puesto.metros_cuadrados === undefined)) {
+  if (pendingRegularization && !posts.some((post) => post.metros_cuadrados !== null && post.metros_cuadrados !== undefined)) {
     return noDevengo('pendiente_regularizacion_sin_metraje', { metros_cuadrados: null, estado: 'pendiente_regularizacion' });
   }
   if (merchantType === 'eventual') return noDevengo('eventual');
-  if (merchantType === 'ferial' && !puesto) {
+  if (merchantType === 'ferial' && !posts.length) {
     return noDevengo('ferial_sin_asistencia', { metros_cuadrados: 0 });
   }
 
-  // El monto depende de la zona donde está el puesto (si no tiene puesto, la del comerciante).
-  const zonaId = Number(puesto?.zona_id || merchant.zona_id);
-  const history = await getZoneTariffHistory(db, zonaId);
-  if (!history.length) throw new Error('La zona del comerciante no tiene un monto por día de feria configurado');
-  const regimeStart = history.reduce((min, tarifa) => (tarifa.vigencia_inicio < min ? tarifa.vigencia_inicio : min), history[0].vigencia_inicio).slice(0, 7);
+  // Cada puesto paga el monto de su propia zona; sin puesto (permanente) se usa la zona del comerciante.
+  const billed = posts.length ? posts : [{ id: null, codigo: null, zona_id: merchant.zona_id, zona: merchant.zona, metros_cuadrados: null }];
+  const histories = new Map();
+  for (const zonaId of new Set(billed.map((post) => Number(post.zona_id)))) {
+    const history = await getZoneTariffHistory(db, zonaId);
+    if (!history.length) {
+      const zona = billed.find((post) => Number(post.zona_id) === zonaId)?.zona || zonaId;
+      throw new Error(`La zona ${zona} no tiene un monto por día de feria configurado`);
+    }
+    histories.set(zonaId, history);
+  }
+  const regimeStart = [...histories.values()].flat()
+    .reduce((min, tarifa) => (tarifa.vigencia_inicio < min ? tarifa.vigencia_inicio : min), '9999-12-31').slice(0, 7);
 
-  // Un día de feria con falta ("F") y sin presencia no se cobra.
-  const absentDays = new Set(puesto ? (await rows(db, `
-    SELECT to_char(fecha, 'YYYY-MM-DD') AS dia FROM asistencias_feriales
-    WHERE puesto_id = $1
-    GROUP BY fecha
-    HAVING bool_or(upper(btrim(marca)) = 'F') AND NOT bool_or(upper(btrim(marca)) LIKE 'P%')`, [puesto.id])).map((row) => row.dia) : []);
+  // Un día de feria con falta ("F") y sin presencia no se cobra en ese puesto.
+  const postIds = billed.map((post) => post.id).filter(Boolean);
+  const absentDays = new Set(postIds.length ? (await rows(db, `
+    SELECT puesto_id || ':' || to_char(fecha, 'YYYY-MM-DD') AS clave FROM asistencias_feriales
+    WHERE puesto_id = ANY($1::bigint[])
+    GROUP BY puesto_id, fecha
+    HAVING bool_or(upper(btrim(marca)) = 'F') AND NOT bool_or(upper(btrim(marca)) LIKE 'P%')`, [postIds])).map((row) => row.clave) : []);
 
   // Los cobros se imputan al periodo indicado al cobrar, sin importar con qué tarifa se registraron.
   const paidByPeriod = new Map((await rows(db, `
@@ -1238,17 +1255,27 @@ export async function calculateLiquidation(db, comercianteId, periodo) {
 
   const accrue = (month) => {
     const days = month < regimeStart ? [] : feriaDaysOfPeriod(month);
-    let total = 0;
-    let absent = 0;
-    let billable = 0;
-    for (const day of days) {
-      if (absentDays.has(day)) { absent += 1; continue; }
-      const tarifa = zoneTariffOn(history, day);
-      if (!tarifa) continue;
-      total += Number(tarifa.monto_fijo);
-      billable += 1;
-    }
-    return { total: Number(total.toFixed(2)), days: days.length, absent, billable };
+    const detail = billed.map((post) => {
+      const history = histories.get(Number(post.zona_id));
+      let total = 0;
+      let absent = 0;
+      let billable = 0;
+      for (const day of days) {
+        if (post.id && absentDays.has(`${post.id}:${day}`)) { absent += 1; continue; }
+        const tarifa = zoneTariffOn(history, day);
+        if (!tarifa) continue;
+        total += Number(tarifa.monto_fijo);
+        billable += 1;
+      }
+      return { post, total, absent, billable };
+    });
+    return {
+      total: Number(detail.reduce((sum, item) => sum + item.total, 0).toFixed(2)),
+      days: days.length,
+      absent: detail.reduce((sum, item) => sum + item.absent, 0),
+      billable: detail.reduce((sum, item) => sum + item.billable, 0),
+      detail
+    };
   };
 
   // Lo pagado de más (por ejemplo, una semana pagada con una falta) queda a cuenta para los meses siguientes.
@@ -1264,8 +1291,22 @@ export async function calculateLiquidation(db, comercianteId, periodo) {
 
   const currentPeriod = new Date().toISOString().slice(0, 7);
   const referenceDay = periodo === currentPeriod ? new Date().toISOString().slice(0, 10) : new Date(Date.UTC(...periodo.split('-').map(Number), 0)).toISOString().slice(0, 10);
-  const tarifa = zoneTariffOn(history, referenceDay) || history[history.length - 1];
-  const montoPorFeria = Number(tarifa.monto_fijo);
+  const tariffOf = (post) => {
+    const history = histories.get(Number(post.zona_id));
+    return zoneTariffOn(history, referenceDay) || history[history.length - 1];
+  };
+  const puestos = devengo.detail.map(({ post, total, absent, billable }) => ({
+    puesto_id: post.id,
+    codigo: post.codigo,
+    zona_id: Number(post.zona_id),
+    zona: post.zona,
+    monto_por_feria: Number(tariffOf(post).monto_fijo),
+    dias_ausente: absent,
+    dias_cobrables: billable,
+    monto_total: Number(total.toFixed(2))
+  }));
+  // Monto de una feria con todos sus puestos: es la base de la cuota por feria y por semana.
+  const montoPorFeria = Number(puestos.reduce((sum, item) => sum + item.monto_por_feria, 0).toFixed(2));
   const cuotaPorFrecuencia = {
     por_feria: montoPorFeria,
     semanal: montoPorFeria * FERIA_WEEKDAYS.length,
@@ -1274,11 +1315,13 @@ export async function calculateLiquidation(db, comercianteId, periodo) {
 
   return {
     comerciante: merchant,
-    tarifa,
+    // Tarifa de referencia del cobro (la de su primer puesto); el detalle por puesto va en "puestos".
+    tarifa: tariffOf(billed[0]),
     periodo,
-    zona_id: zonaId,
-    metros_cuadrados: puesto?.metros_cuadrados ?? null,
+    zona_id: Number(billed[0].zona_id),
+    metros_cuadrados: billed[0].metros_cuadrados ?? null,
     frecuencia_pago: frecuenciaPago,
+    puestos,
     monto_por_feria: montoPorFeria,
     dias_feria: devengo.days,
     dias_ausente: devengo.absent,

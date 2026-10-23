@@ -3,8 +3,8 @@ import assert from 'node:assert/strict';
 
 import ExcelJS from 'exceljs';
 
-import { calculateLiquidation, deactivateComerciante, getComerciantes, getPuestos, initializeDatabase, insertComerciante } from '../src/db.js';
-import { importPadronPreview, previewPadronSheets, readPadronWorkbook } from '../src/padronImport.js';
+import { calculateLiquidation, deactivateComerciante, getComerciantes, getPuestos, initializeDatabase, insertComerciante, updateComerciante } from '../src/db.js';
+import { importPadronPreview, previewPadronSheets, readPadronWorkbook, temporaryDocument } from '../src/padronImport.js';
 import { buildPadronTemplate } from '../src/padronTemplate.js';
 
 const workbook = [{
@@ -31,6 +31,9 @@ test('previsualiza e importa por bloque: el ausente registra una falta de esa fe
   assert.deepEqual(result, {
     createdMerchants: 2,
     updatedMerchants: 0,
+    pendingMerchants: 0,
+    reactivatedMerchants: 0,
+    regularizedMerchants: 0,
     createdPosts: 2,
     updatedPosts: 0,
     absentPosts: 1,
@@ -152,7 +155,7 @@ test('previsualiza e importa en lote: el número de consultas no crece con las f
   assert.equal(posts.find((post) => post.codigo === 'LOTE-001').direccion, 'Bloque L - LOTE-001');
 });
 
-test('un comerciante dado de baja no recibe un puesto nuevo: se marca la fila en vez de abortar el libro', async () => {
+test('un dado de baja que reaparece en el padrón se reactiva y la previsualización lo avisa', async () => {
   const db = await initializeDatabase();
   const rubroId = (await db.query(`SELECT id FROM rubros WHERE nombre = 'ropa'`)).rows[0].id;
   const zonaId = (await db.query(`SELECT id FROM zonas WHERE nombre = 'Zona Norte'`)).rows[0].id;
@@ -168,11 +171,111 @@ test('un comerciante dado de baja no recibe un puesto nuevo: se marca la fila en
     ]
   }], { filename: 'padron.xlsx', db });
 
-  assert.equal(preview.validRows, 1);
-  assert.match(preview.errors[0].message, /dado de baja/);
+  assert.equal(preview.validRows, 2);
+  assert.deepEqual(preview.reactivatedMerchants, [{ nombre: 'Titular de Baja', dni_ruc: '61234567' }]);
   const result = await importPadronPreview(db, preview, 1);
   assert.equal(result.createdMerchants, 1);
-  assert.equal(result.skippedRows, 1);
+  assert.equal(result.reactivatedMerchants, 1);
+  const reactivated = (await db.query('SELECT estado, fecha_baja FROM comerciantes WHERE id = $1', [merchant.id])).rows[0];
+  assert.equal(reactivated.estado, 'activo');
+  assert.equal(reactivated.fecha_baja, null);
+  assert.equal((await getPuestos(db)).find((post) => post.codigo === 'BAJA-01').estado, 'ocupado');
+});
+
+test('sin DNI se importa como pendiente de regularización y se regulariza cuando llega el DNI real', async () => {
+  const db = await initializeDatabase();
+  const header = ['DNI', 'Titular', 'Código Puesto', 'Zona', 'Rubro', 'm2'];
+  const preview = await previewPadronSheets([{
+    name: 'BLOQUE T',
+    rows: [header, [null, 'Rosa Pari Ccama', 'TMP-01', 'Zona Norte', 'ropa', null], [null, null, 'TMP-02', 'Zona Norte', 'ropa', 3]]
+  }], { filename: 'padron.xlsx', db });
+
+  assert.equal(preview.validRows, 1);
+  assert.equal(preview.pendingMerchants, 1);
+  assert.match(preview.errors[0].message, /Faltan el DNI\/RUC y el nombre/);
+  const result = await importPadronPreview(db, preview, 1);
+  assert.equal(result.pendingMerchants, 1);
+
+  const document = temporaryDocument('Rosa Pari Ccama');
+  const pending = (await db.query('SELECT id, estado, estado_empadronamiento FROM comerciantes WHERE dni_ruc = $1', [document])).rows[0];
+  assert.equal(pending.estado, 'pendiente');
+  assert.equal(pending.estado_empadronamiento, 'PENDIENTE_REGULARIZACION');
+  // Pendiente y sin metraje: no se cobra hasta regularizarlo.
+  assert.equal((await calculateLiquidation(db, pending.id, '2026-09')).motivo, 'pendiente_regularizacion_sin_metraje');
+
+  // Reimportar sin DNI no duplica: el documento temporal es estable.
+  const again = await previewPadronSheets([{ name: 'BLOQUE T', rows: [header, [null, 'ROSA PARI CCAMA', 'TMP-01', 'Zona Norte', 'ropa', null]] }], { filename: 'padron.xlsx', db });
+  assert.equal(again.existingMerchants, 1);
+
+  // Un padrón posterior trae el DNI real para el mismo puesto y titular: se regulariza el mismo comerciante.
+  const withDocument = await previewPadronSheets([{
+    name: 'BLOQUE T', rows: [header, ['63456789', 'Rosa Pari Ccama', 'TMP-01', 'Zona Norte', 'ropa', 2]]
+  }], { filename: 'padron.xlsx', db });
+  assert.equal(withDocument.validRows, 1);
+  assert.deepEqual(withDocument.regularizedMerchants, [{ nombre: 'Rosa Pari Ccama', dni_ruc: '63456789' }]);
+  const regularized = await importPadronPreview(db, withDocument, 1);
+  assert.equal(regularized.regularizedMerchants, 1);
+  assert.equal(regularized.createdMerchants, 0);
+  const after = (await db.query('SELECT dni_ruc, estado, estado_empadronamiento FROM comerciantes WHERE id = $1', [pending.id])).rows[0];
+  assert.deepEqual(after, { dni_ruc: '63456789', estado: 'activo', estado_empadronamiento: 'REGULARIZADO' });
+});
+
+test('al editar a un titular temporal con su DNI real queda regularizado', async () => {
+  const db = await initializeDatabase();
+  const preview = await previewPadronSheets([{
+    name: 'BLOQUE R', rows: [['DNI', 'Titular', 'Código Puesto', 'Zona', 'Rubro'], [null, 'Hugo Turpo Vilca', 'TMP-R1', 'Zona Norte', 'ropa']]
+  }], { filename: 'padron.xlsx', db });
+  await importPadronPreview(db, preview, 1);
+  const pending = (await db.query('SELECT id, dni_ruc FROM comerciantes WHERE dni_ruc = $1', [temporaryDocument('Hugo Turpo Vilca')])).rows[0];
+
+  // Guardar otros cambios sin tocar el documento temporal no falla la validación de DNI.
+  await updateComerciante(db, pending.id, { dni_ruc: pending.dni_ruc, frecuencia_pago: 'mensual' });
+  const updated = await updateComerciante(db, pending.id, { dni_ruc: '64567890', estado: 'pendiente' });
+  assert.equal(updated.estado, 'activo');
+  assert.equal(updated.estado_empadronamiento, 'REGULARIZADO');
+});
+
+test('un titular sin DNI con el mismo nombre que otro con DNI genera una advertencia', async () => {
+  const db = await initializeDatabase();
+  const preview = await previewPadronSheets([{
+    name: 'BLOQUE W',
+    rows: [['DNI', 'Titular', 'Código Puesto', 'Zona', 'Rubro'], ['65678901', 'Néstor Apaza Larico', 'W-01', 'Zona Norte', 'ropa'], [null, 'NESTOR APAZA LARICO', 'W-02', 'Zona Norte', 'ropa']]
+  }], { filename: 'padron.xlsx', db });
+  assert.equal(preview.validRows, 2);
+  assert.equal(preview.warnings.length, 1);
+  assert.match(preview.warnings[0].message, /misma persona/);
+});
+
+test('un titular puede tener varios puestos y paga el monto de la zona de cada uno', async () => {
+  const db = await initializeDatabase();
+  const zonaNorte = (await db.query(`SELECT id FROM zonas WHERE nombre = 'Zona Norte'`)).rows[0].id;
+  await db.query("UPDATE tarifas SET monto_fijo = 8 WHERE zona_id = $1 AND rubro_id IS NULL", [zonaNorte]);
+  const preview = await previewPadronSheets([{
+    name: 'BLOQUE M',
+    rows: [
+      ['DNI', 'Titular', 'Código Puesto', 'Zona', 'Rubro'],
+      ['66789012', 'Juan Mamani Quispe', 'MULTI-01', 'Mercado Central', 'comida'],
+      ['66789012', 'Juan Mamani Quispe', 'MULTI-02', 'Zona Norte', 'comida'],
+      ['66789012', 'Otro Nombre', 'MULTI-03', 'Zona Norte', 'comida']
+    ]
+  }], { filename: 'padron.xlsx', db });
+
+  assert.equal(preview.validRows, 2);
+  assert.equal(preview.newMerchants, 1);
+  assert.equal(preview.multiPostMerchants, 1);
+  assert.match(preview.errors[0].message, /con otro titular/);
+  const result = await importPadronPreview(db, preview, 1);
+  assert.equal(result.createdMerchants, 1);
+  assert.equal(result.createdPosts, 2);
+
+  const merchantId = (await db.query(`SELECT id FROM comerciantes WHERE dni_ruc = '66789012'`)).rows[0].id;
+  const liquidation = await calculateLiquidation(db, merchantId, '2026-09');
+  // Septiembre: 10 ferias × (S/ 5 Mercado Central + S/ 8 Zona Norte).
+  assert.equal(liquidation.puestos.length, 2);
+  assert.equal(liquidation.monto_por_feria, 13);
+  assert.equal(liquidation.monto_total, 130);
+  assert.equal(liquidation.cuota_sugerida, 26);
+  assert.deepEqual(liquidation.puestos.map((post) => [post.codigo, post.monto_total]), [['MULTI-01', 50], ['MULTI-02', 80]]);
 });
 
 test('la plantilla oficial trae las listas del catálogo y se importa sin ajustes', async () => {

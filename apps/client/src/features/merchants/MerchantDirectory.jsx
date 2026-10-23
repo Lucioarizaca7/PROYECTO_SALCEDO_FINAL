@@ -84,6 +84,8 @@ export function MerchantDirectory({
                   <div><strong>{importPreview.newPosts}</strong><span>puestos nuevos</span></div>
                   <div><strong>{importPreview.existingMerchants}</strong><span>comerciantes existentes</span></div>
                   <div><strong>{importPreview.absentRows}</strong><span>faltas (esa feria no se cobra)</span></div>
+                  {importPreview.pendingMerchants > 0 && <div><strong>{importPreview.pendingMerchants}</strong><span>sin DNI: pendientes de regularización</span></div>}
+                  {importPreview.multiPostMerchants > 0 && <div><strong>{importPreview.multiPostMerchants}</strong><span>titulares con varios puestos</span></div>}
                 </>
               )}
             </div>
@@ -91,6 +93,24 @@ export function MerchantDirectory({
               {importPreview.sheets.map((sheet) => <span className="status neutral" key={sheet.sheet}>{sheet.sheet}: {sheet.rows}{sheet.attendanceSheet ? ` titulares, ${sheet.attendanceMarks} marcas` : sheet.skipped ? ' (formato no reconocido)' : ' filas'}</span>)}
             </div>
             {importPreview.workbookType === 'attendance' && <div className="attendance-sheet-details">{importPreview.sheets.filter((sheet) => sheet.attendanceSheet).map((sheet) => <p key={sheet.sheet}><strong>{sheet.sheet}</strong>: marcas {Object.entries(sheet.marks || {}).map(([mark, count]) => `${mark.toUpperCase()} ${count}`).join(' · ') || 'ninguna'}{sheet.dates?.length ? ` · fechas: ${sheet.dates.join(', ')}` : ''}</p>)}</div>}
+            {importPreview.reactivatedMerchants?.length > 0 && (
+              <div className="import-format-warning" role="note">
+                <strong>Se reactivarán {importPreview.reactivatedMerchants.length} comerciantes dados de baja al confirmar.</strong>
+                <span>{importPreview.reactivatedMerchants.slice(0, 10).map((item) => `${item.nombre} (${item.dni_ruc})`).join(', ')}{importPreview.reactivatedMerchants.length > 10 ? '…' : ''}. Si alguno no debe volver, quítalo del Excel antes de confirmar.</span>
+              </div>
+            )}
+            {importPreview.regularizedMerchants?.length > 0 && (
+              <div className="import-format-warning" role="note">
+                <strong>Se regularizarán {importPreview.regularizedMerchants.length} titulares que estaban sin DNI.</strong>
+                <span>{importPreview.regularizedMerchants.slice(0, 10).map((item) => `${item.nombre} → ${item.dni_ruc}`).join(', ')}{importPreview.regularizedMerchants.length > 10 ? '…' : ''}.</span>
+              </div>
+            )}
+            {importPreview.warnings?.length > 0 && (
+              <details className="import-errors">
+                <summary>{importPreview.warnings.length} advertencias para revisar (no impiden importar)</summary>
+                <ul>{importPreview.warnings.slice(0, 10).map((warning, index) => <li key={`${warning.sheet}-${warning.row}-${index}`}>{warning.sheet}, fila {warning.row}: {warning.message}</li>)}</ul>
+              </details>
+            )}
             {importPreview.errors.length > 0 && (
               <details className="import-errors">
                 <summary>{importPreview.invalidRows} filas necesitan corrección</summary>
@@ -117,8 +137,9 @@ export function MerchantDirectory({
           <div className="merchant-form-grid">
             <label>
               <span>DNI / RUC</span>
-              <input name="dni_ruc" required pattern="([0-9]{8}|(10|15|17|20)[0-9]{9})" title="DNI de 8 dígitos o RUC válido de 11 dígitos" placeholder="DNI / RUC" value={form.dni_ruc} onChange={(event) => setForm({ ...form, dni_ruc: event.target.value })} />
+              <input name="dni_ruc" required pattern="([0-9]{8}|(10|15|17|20)[0-9]{9}|TEMP_[A-Z0-9_]+)" title="DNI de 8 dígitos o RUC válido de 11 dígitos; si figura TEMP_, reemplázalo por el DNI real para regularizarlo" placeholder="DNI / RUC" value={form.dni_ruc} onChange={(event) => setForm({ ...form, dni_ruc: event.target.value })} />
             </label>
+            {String(form.dni_ruc || '').startsWith('TEMP_') && <p className="import-policy-note">Titular pendiente de regularización: escribe su DNI real para regularizarlo.</p>}
             <label>
               <span>Nombre completo</span>
               <input name="nombre" required placeholder="Nombre completo" value={form.nombre} onChange={(event) => setForm({ ...form, nombre: event.target.value })} />

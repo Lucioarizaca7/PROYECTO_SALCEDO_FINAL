@@ -3,6 +3,8 @@
 Salida (datos-prueba/):
   - padron-prueba-50.xlsx: 50 comerciantes válidos en dos hojas (BLOQUE A y BLOQUE B).
   - padron-prueba-errores.xlsx: filas con errores intencionales para probar la validación.
+  - padron-prueba-casos.xlsx: titulares sin DNI (pendientes de regularización) y un titular con
+    dos puestos en zonas distintas.
 
 Los datos son ficticios y reproducibles (semilla fija). Uso:
   python3 apps/server/scripts/generar-padron-prueba.py
@@ -134,10 +136,29 @@ def libro_errores():
     return wb
 
 
+def libro_casos():
+    wb = Workbook()
+    ws = wb.active
+    ws.title = 'BLOQUE D'
+    base = dict(tipo='Ferial', rubro='ropa', estado='Presente', fecha=date(2026, 10, 20), metraje=None)
+    casos = [
+        # Sin DNI: se importan como pendientes de regularización con un documento temporal.
+        dict(documento='', titular='FELICITAS CHAMBI LARICO', codigo='CAS-D-001', sector='Bloque D - Fila 1', zona='Mercado Central'),
+        dict(documento='', titular='SANTOS CALSIN TURPO', codigo='CAS-D-002', sector='Bloque D - Fila 1', zona='Mercado Central', metraje=3),
+        # Un titular con dos puestos en zonas distintas: cada puesto paga el monto de su zona.
+        dict(documento='47120356', titular='GERMAN YUPANQUI PACOMPIA', codigo='CAS-D-003', sector='Bloque D - Fila 2', zona='Mercado Central'),
+        dict(documento='47120356', titular='GERMAN YUPANQUI PACOMPIA', codigo='CAS-D-004', sector='Bloque D - Fila 2', zona='Zona Norte'),
+    ]
+    filas = [{**base, **caso, 'n': i} for i, caso in enumerate(casos, start=1)]
+    escribir_hoja(ws, 'PADRÓN DE PRUEBA: CASOS ESPECIALES', filas)
+    return wb
+
+
 def main():
     OUT_DIR.mkdir(exist_ok=True)
     libro_valido(random.Random(2026)).save(OUT_DIR / 'padron-prueba-50.xlsx')
     libro_errores().save(OUT_DIR / 'padron-prueba-errores.xlsx')
+    libro_casos().save(OUT_DIR / 'padron-prueba-casos.xlsx')
     print(f'Libros generados en {OUT_DIR}')
 
 

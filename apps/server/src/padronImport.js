@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import readExcelFile from 'read-excel-file/node';
 
 import { withTransaction } from './pg.js';
@@ -20,6 +21,19 @@ const aliases = {
 
 // Marca con la que el padrón registra la asistencia de una fecha; se reemplaza al reimportar.
 const PADRON_ATTENDANCE_SESSION = 'padron';
+const TEMP_DOCUMENT_PREFIX = 'TEMP_DNI_';
+
+// Titular sin DNI: documento temporal estable a partir del nombre, para reconocerlo al reimportar.
+export function temporaryDocument(name) {
+  return `${TEMP_DOCUMENT_PREFIX}${createHash('sha256').update(normalize(name)).digest('hex').slice(0, 12).toUpperCase()}`;
+}
+
+function isTemporaryDocument(document) {
+  return String(document || '').startsWith('TEMP_');
+}
+
+// Nombre comparable en SQL con normalize(): sin tildes, minúsculas y solo letras y números.
+const SQL_NORMALIZED_NAME = `btrim(lower(regexp_replace(translate(nombre, 'áéíóúüñÁÉÍÓÚÜÑ', 'aeiouunAEIOUUN'), '[^A-Za-z0-9]+', ' ', 'g')))`;
 
 function normalize(value) {
   return String(value ?? '')
@@ -190,11 +204,12 @@ export async function previewPadronSheets(sheets, { filename = '', db, fechaFeri
   const zonas = await getZonas(db);
   const defaultRubroId = resolveCatalogId(rubros, filename, null);
   const defaultZonaId = zonas[0]?.id;
-  const seenDocuments = new Set();
+  const firstRowByDocument = new Map();
   const seenCodes = new Set();
   const candidates = [];
   const sheetSummaries = [];
   const errors = [];
+  const warnings = [];
   let attendanceWorkbook = true;
   let attendanceRecords = 0;
   let attendanceMarks = 0;
@@ -232,8 +247,11 @@ export async function previewPadronSheets(sheets, { filename = '', db, fechaFeri
       if (source.every((cell) => cell === null || cell === undefined || cellText(cell) === '')) continue;
       const rowNumber = index + 1;
       const value = (column) => column < 0 ? '' : source[column];
-      const document = documentValue(value(detected.mapping.document));
       const name = cellText(value(detected.mapping.name));
+      const rawDocument = documentValue(value(detected.mapping.document));
+      // Sin DNI/RUC se importa como pendiente de regularización con un documento temporal.
+      const temporary = !rawDocument && Boolean(name);
+      const document = temporary ? temporaryDocument(name) : rawDocument;
       // El metraje es informativo: el cobro es fijo por zona y por día de feria.
       const rawArea = numericArea(value(detected.mapping.area));
       const area = Number.isFinite(rawArea) && rawArea > 0 ? rawArea : null;
@@ -250,20 +268,22 @@ export async function previewPadronSheets(sheets, { filename = '', db, fechaFeri
       const zonaId = resolveCatalogId(zonas, zoneValue, defaultZonaId);
       const rowErrors = [];
 
-      if (!document) {
-        rowErrors.push('Falta DNI/RUC.');
-      } else {
+      if (!name) rowErrors.push(rawDocument ? 'Falta el nombre del titular.' : 'Faltan el DNI/RUC y el nombre del titular.');
+      if (rawDocument) {
         try {
-          validateDocument(document);
+          validateDocument(rawDocument);
         } catch (error) {
           rowErrors.push(error.message);
         }
       }
-      if (!name) rowErrors.push('Falta el nombre del titular.');
       if (!rubroId) rowErrors.push(`No hay un rubro configurado que coincida con "${rubroValue}".`);
       if (!zonaId) rowErrors.push(`No hay una zona configurada para "${zoneValue}".`);
-      if (document && seenDocuments.has(document)) rowErrors.push('DNI/RUC duplicado dentro del libro.');
-      if (document) seenDocuments.add(document);
+      // Un titular puede tener varios puestos: el mismo DNI se acepta si el nombre coincide.
+      const previous = document ? firstRowByDocument.get(document) : null;
+      if (previous && normalize(previous.name) !== normalize(name)) {
+        rowErrors.push(`El DNI/RUC ${document} ya figura en la fila ${previous.row} (${previous.sheet}) con otro titular: ${previous.name}.`);
+      }
+      if (document && !previous) firstRowByDocument.set(document, { name, row: rowNumber, sheet: sheet.name });
       if (seenCodes.has(code)) rowErrors.push(`Código de puesto ${code} duplicado dentro del libro.`);
       seenCodes.add(code);
       // La falta se registra para una feria concreta; sin fecha no se puede saber qué día no se cobra.
@@ -275,6 +295,7 @@ export async function previewPadronSheets(sheets, { filename = '', db, fechaFeri
         sheet: sheet.name,
         row: rowNumber,
         document,
+        temporary,
         name,
         rubroId,
         zonaId,
@@ -288,6 +309,8 @@ export async function previewPadronSheets(sheets, { filename = '', db, fechaFeri
         existingMerchantId: null,
         existingMerchantState: null,
         existingPostId: null,
+        reactivate: false,
+        regularize: false,
         errors: rowErrors
       });
       sheetRows += 1;
@@ -296,22 +319,47 @@ export async function previewPadronSheets(sheets, { filename = '', db, fechaFeri
     sheetSummaries.push({ sheet: sheet.name, rows: sheetRows, columns: detected.header });
   }
 
-  // Cruce con la base en lote: tres consultas para todo el libro en vez de dos por fila.
+  // Cruce con la base en lote: unas pocas consultas para todo el libro en vez de dos por fila.
   const merchantsByDocument = await lookupByKey(db,
-    'SELECT id, estado, dni_ruc AS key FROM comerciantes WHERE dni_ruc = ANY($1::text[])',
+    'SELECT id, estado, nombre, dni_ruc AS key FROM comerciantes WHERE dni_ruc = ANY($1::text[])',
     candidates.map((row) => row.document).filter(Boolean));
-  const postsByCode = await lookupByKey(db,
-    'SELECT id, comerciante_id, codigo_puesto AS key FROM puestos WHERE codigo_puesto = ANY($1::text[])',
-    candidates.map((row) => row.code));
+  const postsByCode = await lookupByKey(db, `
+    SELECT p.id, p.comerciante_id, c.dni_ruc AS dueno_dni, c.nombre AS dueno_nombre, c.estado AS dueno_estado, p.codigo_puesto AS key
+    FROM puestos p JOIN comerciantes c ON c.id = p.comerciante_id
+    WHERE p.codigo_puesto = ANY($1::text[])`,
+  candidates.map((row) => row.code));
   const postsByAddress = await groupByKey(db, `
     SELECT comerciante_id, zona_id || ':' || lower(btrim(direccion)) AS key FROM puestos
     WHERE estado <> 'inactivo' AND lower(btrim(direccion)) = ANY($1::text[])`,
   candidates.map((row) => row.address.trim().toLowerCase()));
+  // Posibles duplicados: un titular sin DNI cuyo nombre ya existe con DNI real.
+  const namesWithDocument = await groupByKey(db, `
+    SELECT id, dni_ruc, nombre, ${SQL_NORMALIZED_NAME} AS key FROM comerciantes
+    WHERE left(dni_ruc, 5) <> 'TEMP_' AND ${SQL_NORMALIZED_NAME} = ANY($1::text[])`,
+  candidates.filter((row) => row.temporary).map((row) => normalize(row.name)));
+
+  // Comerciante de cada DNI del libro: el que ya existe con ese documento o, si un puesto suyo
+  // lo tiene un titular temporal con el mismo nombre, ese titular (se regulariza con el DNI real).
+  const merchantByDocument = new Map();
+  for (const row of candidates) {
+    if (!row.document || merchantByDocument.has(row.document)) continue;
+    const existing = merchantsByDocument.get(row.document);
+    if (existing) {
+      merchantByDocument.set(row.document, { id: Number(existing.id), estado: existing.estado, regularize: false });
+      continue;
+    }
+    if (row.temporary) continue;
+    const temporaryOwner = candidates
+      .filter((other) => other.document === row.document)
+      .map((other) => postsByCode.get(other.code))
+      .find((post) => post && isTemporaryDocument(post.dueno_dni) && normalize(post.dueno_nombre) === normalize(row.name));
+    if (temporaryOwner) merchantByDocument.set(row.document, { id: Number(temporaryOwner.comerciante_id), estado: temporaryOwner.dueno_estado, regularize: true });
+  }
 
   for (const row of candidates) {
-    const existingMerchant = row.document ? merchantsByDocument.get(row.document) : null;
+    const merchant = row.document ? merchantByDocument.get(row.document) : null;
     const existingPost = postsByCode.get(row.code);
-    const merchantId = existingMerchant ? Number(existingMerchant.id) : null;
+    const merchantId = merchant ? merchant.id : null;
     if (existingPost && Number(existingPost.comerciante_id) !== merchantId) {
       row.errors.push(`El código de puesto ${row.code} ya está asignado a otro comerciante.`);
     }
@@ -320,32 +368,48 @@ export async function previewPadronSheets(sheets, { filename = '', db, fechaFeri
       if (samePlace.some((post) => Number(post.comerciante_id) !== merchantId)) {
         row.errors.push(`El puesto físico "${row.address}" ya está asignado a otro comerciante.`);
       }
-      if (existingMerchant?.estado === 'inactivo') {
-        row.errors.push('El comerciante está dado de baja; reactívalo antes de asignarle un puesto nuevo.');
-      }
     }
     row.existingMerchantId = merchantId;
-    row.existingMerchantState = existingMerchant?.estado || null;
+    row.existingMerchantState = merchant?.estado || null;
     row.existingPostId = existingPost ? Number(existingPost.id) : null;
+    // Un dado de baja que vuelve a figurar en el padrón se reactiva; se avisa antes de confirmar.
+    row.reactivate = merchant?.estado === 'inactivo';
+    row.regularize = Boolean(merchant?.regularize);
     if (row.errors.length) errors.push({ sheet: row.sheet, row: row.row, message: row.errors.join(' ') });
+    if (row.temporary && !row.errors.length) {
+      const sameName = namesWithDocument.get(normalize(row.name)) || [];
+      const sameNameInBook = candidates.find((other) => !other.temporary && other.document && normalize(other.name) === normalize(row.name));
+      if (sameName.length || sameNameInBook) {
+        const match = sameName[0] ? `${sameName[0].nombre} (${sameName[0].dni_ruc})` : `${sameNameInBook.name} (${sameNameInBook.document}, fila ${sameNameInBook.row})`;
+        warnings.push({ sheet: row.sheet, row: row.row, message: `Titular sin DNI con el mismo nombre que ${match}: revisa si es la misma persona.` });
+      }
+    }
   }
 
+  const valid = candidates.filter((row) => row.errors.length === 0);
+  const uniqueBy = (list, key) => [...new Map(list.map((row) => [key(row), row])).values()];
+  const validMerchants = uniqueBy(valid, (row) => row.document);
   return {
     workbookType: attendanceWorkbook ? 'attendance' : 'merchant-padron',
     attendanceRecords,
     attendanceMarks,
     sheets: sheetSummaries,
     rows: candidates.length,
-    validRows: candidates.filter((row) => row.errors.length === 0).length,
-    invalidRows: candidates.filter((row) => row.errors.length > 0).length,
-    existingMerchants: candidates.filter((row) => row.existingMerchantId && row.errors.length === 0).length,
-    newMerchants: candidates.filter((row) => !row.existingMerchantId && row.errors.length === 0).length,
-    newPosts: candidates.filter((row) => !row.existingPostId && row.errors.length === 0).length,
-    absentRows: candidates.filter((row) => row.absence && row.errors.length === 0).length,
-    attendanceRows: candidates.filter((row) => row.feriaDate && row.errors.length === 0).length,
-    feriaDates: [...new Set(candidates.filter((row) => row.feriaDate && row.errors.length === 0).map((row) => row.feriaDate))].sort(),
+    validRows: valid.length,
+    invalidRows: candidates.length - valid.length,
+    existingMerchants: validMerchants.filter((row) => row.existingMerchantId).length,
+    newMerchants: validMerchants.filter((row) => !row.existingMerchantId).length,
+    pendingMerchants: validMerchants.filter((row) => row.temporary && !row.existingMerchantId).length,
+    multiPostMerchants: validMerchants.filter((row) => valid.filter((other) => other.document === row.document).length > 1).length,
+    regularizedMerchants: validMerchants.filter((row) => row.regularize).map((row) => ({ nombre: row.name, dni_ruc: row.document })),
+    reactivatedMerchants: validMerchants.filter((row) => row.reactivate).map((row) => ({ nombre: row.name, dni_ruc: row.document })),
+    newPosts: valid.filter((row) => !row.existingPostId).length,
+    absentRows: valid.filter((row) => row.absence).length,
+    attendanceRows: valid.filter((row) => row.feriaDate).length,
+    feriaDates: [...new Set(valid.filter((row) => row.feriaDate).map((row) => row.feriaDate))].sort(),
     source: filename,
     errors,
+    warnings,
     candidates
   };
 }
@@ -354,8 +418,10 @@ export async function previewPadronSheets(sheets, { filename = '', db, fechaFeri
 // Las reglas de insertComerciante/insertPuesto ya se verificaron en previewPadronSheets.
 export async function importPadronPreview(_db, preview, userId = 1) {
   const rows = preview.candidates.filter((row) => row.errors.length === 0);
-  const newMerchants = rows.filter((row) => !row.existingMerchantId);
-  const knownMerchants = rows.filter((row) => row.existingMerchantId);
+  // Un comerciante por DNI (con uno o varios puestos): sus datos salen de su primera fila.
+  const merchants = [...new Map(rows.map((row) => [row.document, row])).values()];
+  const newMerchants = merchants.filter((row) => !row.existingMerchantId);
+  const knownMerchants = merchants.filter((row) => row.existingMerchantId);
   const newPosts = rows.filter((row) => !row.existingPostId);
   const knownPosts = rows.filter((row) => row.existingPostId);
   const attendance = rows.filter((row) => row.feriaDate);
@@ -369,26 +435,38 @@ export async function importPadronPreview(_db, preview, userId = 1) {
 
       if (newMerchants.length) {
         const inserted = await client.query(`
-          INSERT INTO comerciantes (dni_ruc, nombre, rubro_id, zona_id, categoria, tipo_comerciante, estado, usuario_creador_id)
-          SELECT v.dni_ruc, v.nombre, v.rubro_id, v.zona_id, v.categoria, v.categoria, 'activo', $6
-          FROM unnest($1::text[], $2::text[], $3::int[], $4::int[], $5::text[]) AS v(dni_ruc, nombre, rubro_id, zona_id, categoria)
+          INSERT INTO comerciantes (dni_ruc, nombre, rubro_id, zona_id, categoria, tipo_comerciante, estado, estado_empadronamiento, usuario_creador_id)
+          SELECT v.dni_ruc, v.nombre, v.rubro_id, v.zona_id, v.categoria, v.categoria,
+                 CASE WHEN v.temporal THEN 'pendiente' ELSE 'activo' END,
+                 CASE WHEN v.temporal THEN 'PENDIENTE_REGULARIZACION' ELSE 'REGULARIZADO' END, $7
+          FROM unnest($1::text[], $2::text[], $3::int[], $4::int[], $5::text[], $6::boolean[]) AS v(dni_ruc, nombre, rubro_id, zona_id, categoria, temporal)
           RETURNING id, dni_ruc`,
         [column(newMerchants, (row) => row.document), column(newMerchants, (row) => row.name),
           column(newMerchants, (row) => row.rubroId), column(newMerchants, (row) => row.zonaId),
-          column(newMerchants, (row) => row.category), creator ? Number(userId) : null]);
+          column(newMerchants, (row) => row.category), column(newMerchants, (row) => row.temporary),
+          creator ? Number(userId) : null]);
         for (const merchant of inserted.rows) merchantIds.set(merchant.dni_ruc, Number(merchant.id));
       }
 
-      // El estado del comerciante existente se conserva, igual que antes.
+      // Se conserva el estado, salvo al reactivar a un dado de baja o al regularizar con el DNI real.
       if (knownMerchants.length) {
         await client.query(`
           UPDATE comerciantes c
-          SET nombre = v.nombre, rubro_id = v.rubro_id, zona_id = v.zona_id, categoria = v.categoria, tipo_comerciante = v.categoria
-          FROM unnest($1::bigint[], $2::text[], $3::int[], $4::int[], $5::text[]) AS v(id, nombre, rubro_id, zona_id, categoria)
+          SET nombre = v.nombre, rubro_id = v.rubro_id, zona_id = v.zona_id, categoria = v.categoria, tipo_comerciante = v.categoria,
+              dni_ruc = CASE WHEN v.regularizar THEN v.dni_ruc ELSE c.dni_ruc END,
+              estado_empadronamiento = CASE WHEN v.regularizar THEN 'REGULARIZADO' ELSE c.estado_empadronamiento END,
+              estado = CASE
+                WHEN v.regularizar AND c.estado IN ('pendiente', 'inactivo') THEN 'activo'
+                WHEN v.reactivar THEN CASE WHEN c.estado_empadronamiento = 'PENDIENTE_REGULARIZACION' THEN 'pendiente' ELSE 'activo' END
+                ELSE c.estado END,
+              fecha_baja = CASE WHEN v.reactivar THEN NULL ELSE c.fecha_baja END
+          FROM unnest($1::bigint[], $2::text[], $3::int[], $4::int[], $5::text[], $6::text[], $7::boolean[], $8::boolean[])
+            AS v(id, nombre, rubro_id, zona_id, categoria, dni_ruc, regularizar, reactivar)
           WHERE c.id = v.id`,
         [column(knownMerchants, (row) => row.existingMerchantId), column(knownMerchants, (row) => row.name),
           column(knownMerchants, (row) => row.rubroId), column(knownMerchants, (row) => row.zonaId),
-          column(knownMerchants, (row) => row.category)]);
+          column(knownMerchants, (row) => row.category), column(knownMerchants, (row) => row.document),
+          column(knownMerchants, (row) => row.regularize), column(knownMerchants, (row) => row.reactivate)]);
       }
 
       if (newPosts.length) {
@@ -433,6 +511,9 @@ export async function importPadronPreview(_db, preview, userId = 1) {
   return {
     createdMerchants: newMerchants.length,
     updatedMerchants: knownMerchants.length,
+    pendingMerchants: newMerchants.filter((row) => row.temporary).length,
+    reactivatedMerchants: knownMerchants.filter((row) => row.reactivate).length,
+    regularizedMerchants: knownMerchants.filter((row) => row.regularize).length,
     createdPosts: newPosts.length,
     updatedPosts: knownPosts.length,
     absentPosts: rows.filter((row) => row.absence).length,
