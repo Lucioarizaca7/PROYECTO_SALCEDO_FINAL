@@ -1189,7 +1189,6 @@ export async function calculateLiquidation(db, comercianteId, periodo) {
   if (!merchant) throw new Error('Comerciante no encontrado');
 
   const merchantType = String(merchant.tipo_comerciante || merchant.categoria || '').trim().toLowerCase();
-  const pendingRegularization = String(merchant.estado_empadronamiento || '').toUpperCase() === 'PENDIENTE_REGULARIZACION';
   const posts = await findMerchantPosts(db, merchant.id);
   const frecuenciaPago = merchant.frecuencia_pago || 'semanal';
 
@@ -1217,9 +1216,7 @@ export async function calculateLiquidation(db, comercianteId, periodo) {
     ...extra
   });
 
-  if (pendingRegularization && !posts.some((post) => post.metros_cuadrados !== null && post.metros_cuadrados !== undefined)) {
-    return noDevengo('pendiente_regularizacion_sin_metraje', { metros_cuadrados: null, estado: 'pendiente_regularizacion' });
-  }
+  // Un pendiente de regularización paga igual que cualquier otro: el metraje ya no influye en el cobro.
   if (merchantType === 'eventual') return noDevengo('eventual');
   if (merchantType === 'ferial' && !posts.length) {
     return noDevengo('ferial_sin_asistencia', { metros_cuadrados: 0 });

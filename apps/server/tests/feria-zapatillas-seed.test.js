@@ -48,8 +48,12 @@ test('seeder crea comerciantes temporales, puestos por bloque y conserva marcas 
   assert.ok(importedPosts.every((post) => post.metros_cuadrados === null));
   assert.ok(importedPosts.some((post) => post.codigo === 'ZAP-A-I-01'));
   assert.ok(importedPosts.some((post) => post.codigo === 'ZAP-ROPA-01'));
-  assert.equal((await calculateLiquidation(db, importedMerchant.id, '2026-09')).no_devengo, true);
-  assert.equal((await calculateLiquidation(db, importedMerchant.id, '2026-09')).motivo, 'pendiente_regularizacion_sin_metraje');
+  // Pendiente de regularización y sin metraje, paga igual: 10 ferias × 2 puestos × S/ 5 de cada zona.
+  // El 8 de septiembre tiene P y F en el bloque A-I: con presencia ese día se cobra.
+  const liquidation = await calculateLiquidation(db, importedMerchant.id, '2026-09');
+  assert.equal(liquidation.no_devengo, false);
+  assert.equal(liquidation.dias_ausente, 0);
+  assert.equal(liquidation.monto_total, 100);
 
   const scalar = async (text, params = []) => Number((await db.query(text, params)).rows[0].count);
   // Ya no se cobra por metro cuadrado: cada bloque importado nace con su monto fijo por día de feria.

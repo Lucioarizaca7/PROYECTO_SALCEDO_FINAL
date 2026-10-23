@@ -9,7 +9,7 @@ const ESTADOS = ['Presente', 'Ausente'];
 
 // Encabezados que reconoce padronImport.js sin depender de alias aproximados.
 const COLUMNS = [
-  { header: 'DNI/RUC', width: 14, note: 'Obligatorio. DNI de 8 dígitos o RUC de 11 que empiece con 10, 15, 17 o 20. Se guarda como texto para no perder ceros.' },
+  { header: 'DNI/RUC', width: 14, note: 'DNI de 8 dígitos o RUC de 11 que empiece con 10, 15, 17 o 20; se guarda como texto para no perder ceros. Si falta, el titular se importa como pendiente de regularización (paga igual).' },
   { header: 'Titular', width: 34, note: 'Obligatorio. Nombre completo o razón social.' },
   { header: 'Código Puesto', width: 15, note: 'Único en todo el padrón. Si lo dejas vacío se genera uno con el nombre de la hoja.' },
   { header: 'Sector', width: 22, note: 'Bloque, tramo o ubicación. Si lo dejas vacío se usa el nombre de la hoja.' },

@@ -200,8 +200,10 @@ test('sin DNI se importa como pendiente de regularización y se regulariza cuand
   const pending = (await db.query('SELECT id, estado, estado_empadronamiento FROM comerciantes WHERE dni_ruc = $1', [document])).rows[0];
   assert.equal(pending.estado, 'pendiente');
   assert.equal(pending.estado_empadronamiento, 'PENDIENTE_REGULARIZACION');
-  // Pendiente y sin metraje: no se cobra hasta regularizarlo.
-  assert.equal((await calculateLiquidation(db, pending.id, '2026-09')).motivo, 'pendiente_regularizacion_sin_metraje');
+  // Pendiente y sin metraje, paga igual que cualquier otro: 10 ferias de septiembre × S/ 5.
+  const pendingLiquidation = await calculateLiquidation(db, pending.id, '2026-09');
+  assert.equal(pendingLiquidation.no_devengo, false);
+  assert.equal(pendingLiquidation.monto_total, 50);
 
   // Reimportar sin DNI no duplica: el documento temporal es estable.
   const again = await previewPadronSheets([{ name: 'BLOQUE T', rows: [header, [null, 'ROSA PARI CCAMA', 'TMP-01', 'Zona Norte', 'ropa', null]] }], { filename: 'padron.xlsx', db });
