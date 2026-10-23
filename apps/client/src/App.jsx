@@ -960,16 +960,24 @@ function App() {
     }
   };
 
+  const sendPadronImport = async (fields) => {
+    const body = new FormData();
+    Object.entries(fields).forEach(([key, value]) => body.append(key, value));
+    body.append('dryRun', 'false');
+    const response = await fetch(`${apiBase}/comerciantes/importar-padron`, { method: 'POST', headers: getAuthHeaders(), body });
+    return { response, data: await response.json() };
+  };
+
   const handlePadronImport = async () => {
     if (!padronFile) return;
     setPadronImportLoading(true);
     setPadronImportMessage('');
     try {
-      const body = new FormData();
-      body.append('file', padronFile);
-      body.append('dryRun', 'false');
-      const response = await fetch(`${apiBase}/comerciantes/importar-padron`, { method: 'POST', headers: getAuthHeaders(), body });
-      const data = await response.json();
+      // Con el token el servidor reutiliza el libro ya leído; si expiró, se vuelve a enviar el archivo.
+      let { response, data } = padronPreview?.previewToken
+        ? await sendPadronImport({ previewToken: padronPreview.previewToken })
+        : await sendPadronImport({ file: padronFile });
+      if (response.status === 410) ({ response, data } = await sendPadronImport({ file: padronFile }));
       if (!response.ok) throw new Error(data.message || 'No se pudo importar el padrón');
       setPadronPreview(data.data);
       setPadronImportMessage(`${data.message} Nuevos: ${data.data.result.createdMerchants} comerciantes y ${data.data.result.createdPosts} puestos; omitidos: ${data.data.result.skippedRows}.`);
@@ -979,6 +987,21 @@ function App() {
       setPadronImportMessage(importError.message || 'No se pudo importar el padrón');
     } finally {
       setPadronImportLoading(false);
+    }
+  };
+
+  const handlePadronTemplate = async () => {
+    try {
+      const response = await fetch(`${apiBase}/comerciantes/plantilla-padron`, { headers: getAuthHeaders() });
+      if (!response.ok) throw new Error((await response.json()).message || 'No se pudo descargar la plantilla');
+      const url = URL.createObjectURL(await response.blob());
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = 'plantilla-padron-sisrec.xlsx';
+      link.click();
+      setTimeout(() => URL.revokeObjectURL(url), 0);
+    } catch (templateError) {
+      setPadronImportMessage(templateError.message || 'No se pudo descargar la plantilla');
     }
   };
 
@@ -1490,6 +1513,7 @@ function App() {
           importLoading={padronImportLoading}
           onPreviewFile={handlePadronPreview}
           onImport={handlePadronImport}
+          onDownloadTemplate={handlePadronTemplate}
           onSubmit={handleMerchantSubmit}
           onEdit={handleMerchantEdit}
           onDeactivate={handleMerchantDeactivate}

@@ -4,6 +4,7 @@ import dotenv from 'dotenv';
 import multer from 'multer';
 import rateLimit from 'express-rate-limit';
 import { pathToFileURL } from 'node:url';
+import { randomUUID } from 'node:crypto';
 
 import { loginUser, hasRoleAccess, requireAuth, requireRoles, auditMutation } from './auth';
 import { validateLogin, handleValidationErrors, validateComerciante, validateCobro } from './validation';
@@ -50,6 +51,7 @@ import {
   getRiskDashboard
 } from './db.js';
 import { importPadronPreview, previewPadronSheets, readPadronWorkbook } from './padronImport.js';
+import { buildPadronTemplate } from './padronTemplate.js';
 
 dotenv.config();
 
@@ -130,6 +132,30 @@ function receivePadronWorkbook(req, res, next) {
     if (error) return res.status(400).json({ message: error.message || 'No se pudo recibir el archivo' });
     return next();
   });
+}
+
+// Libros ya leídos en la previsualización: la confirmación envía el token y no vuelve a subir el Excel.
+// La validación contra la base se repite al confirmar (son pocas consultas) por si algo cambió entretanto.
+const PADRON_PREVIEW_TTL_MS = 15 * 60 * 1000;
+const PADRON_PREVIEW_MAX = 20;
+const padronPreviews = new Map();
+
+function rememberPadronSheets(userId, filename, sheets) {
+  const now = Date.now();
+  for (const [token, entry] of padronPreviews) {
+    if (entry.expiresAt <= now) padronPreviews.delete(token);
+  }
+  while (padronPreviews.size >= PADRON_PREVIEW_MAX) padronPreviews.delete(padronPreviews.keys().next().value);
+  const token = randomUUID();
+  padronPreviews.set(token, { userId, filename, sheets, expiresAt: now + PADRON_PREVIEW_TTL_MS });
+  return token;
+}
+
+function takePadronSheets(token, userId) {
+  const entry = padronPreviews.get(token);
+  if (!entry || entry.expiresAt <= Date.now() || entry.userId !== userId) return null;
+  padronPreviews.delete(token);
+  return entry;
 }
 
 const roles = ['super_admin', 'cobrador', 'auditor', 'comerciante'];
@@ -418,18 +444,46 @@ app.get('/api/v1/comerciantes', async (req, res) => {
   res.json({ data: result, total, page, limit, totalPages: Math.max(Math.ceil(total / limit), 1) });
 });
 
+app.get('/api/v1/comerciantes/plantilla-padron',
+  requireAuth,
+  requireRoles(['super_admin', 'auditor']),
+  async (_req, res) => {
+    try {
+      const buffer = await buildPadronTemplate(db);
+      res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+      res.setHeader('Content-Disposition', 'attachment; filename="plantilla-padron-sisrec.xlsx"');
+      return res.send(buffer);
+    } catch (error) {
+      return res.status(500).json({ message: error.message || 'No se pudo generar la plantilla' });
+    }
+  }
+);
+
 app.post('/api/v1/comerciantes/importar-padron',
   requireAuth,
   requireRoles(['super_admin', 'auditor']),
   receivePadronWorkbook,
   async (req, res) => {
-    if (!req.file) return res.status(400).json({ message: 'Selecciona un archivo .xlsx para importar' });
+    const userId = Number(req.user?.id || 1);
+    const dryRun = String(req.body?.dryRun).toLowerCase() === 'true';
+    const previewToken = String(req.body?.previewToken || '');
+    let filename;
+    let sheets;
+    if (req.file) {
+      filename = req.file.originalname;
+    } else if (previewToken && !dryRun) {
+      const cached = takePadronSheets(previewToken, userId);
+      if (!cached) return res.status(410).json({ message: 'La previsualización expiró; vuelve a seleccionar el archivo.' });
+      ({ filename, sheets } = cached);
+    } else {
+      return res.status(400).json({ message: 'Selecciona un archivo .xlsx para importar' });
+    }
 
     try {
-      const sheets = await readPadronWorkbook(req.file.buffer);
-      const preview = await previewPadronSheets(sheets, { filename: req.file.originalname, db });
+      sheets = sheets || await readPadronWorkbook(req.file.buffer);
+      const preview = await previewPadronSheets(sheets, { filename, db });
       const publicPreview = {
-        filename: req.file.originalname,
+        filename,
         workbookType: preview.workbookType,
         attendanceRecords: preview.attendanceRecords,
         attendanceMarks: preview.attendanceMarks,
@@ -444,20 +498,21 @@ app.post('/api/v1/comerciantes/importar-padron',
         errors: preview.errors.slice(0, 100)
       };
 
-      if (String(req.body?.dryRun).toLowerCase() === 'true') {
-        return res.json({ data: publicPreview, message: 'Previsualización lista; aún no se modificó el padrón.' });
+      if (dryRun) {
+        const token = preview.validRows ? rememberPadronSheets(userId, filename, sheets) : null;
+        return res.json({ data: { ...publicPreview, previewToken: token }, message: 'Previsualización lista; aún no se modificó el padrón.' });
       }
       if (!preview.validRows) {
         return res.status(422).json({ data: publicPreview, message: 'No hay filas válidas para importar. Corrige los errores del libro.' });
       }
 
-      const result = await importPadronPreview(db, preview, req.user?.id || 1);
+      const result = await importPadronPreview(db, preview, userId);
       await recordAudit(db, {
-        usuarioId: Number(req.user?.id || 1),
+        usuarioId: userId,
         usuarioRol: req.user?.rol || 'anonimo',
         entidad: 'padron',
         accion: 'IMPORTAR_PADRON_EXCEL',
-        detalle: `Importación ${req.file.originalname}: ${result.createdMerchants} comerciantes nuevos, ${result.createdPosts} puestos nuevos, ${result.absentPosts} ausentes sin devengo`,
+        detalle: `Importación ${filename}: ${result.createdMerchants} comerciantes nuevos, ${result.createdPosts} puestos nuevos, ${result.absentPosts} ausentes sin devengo`,
         metodoHttp: 'POST',
         ipOrigen: req.ip || 'unknown',
         rutaEndpoint: req.originalUrl,

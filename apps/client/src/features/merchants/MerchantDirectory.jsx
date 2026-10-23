@@ -17,6 +17,7 @@ export function MerchantDirectory({
   importLoading,
   onPreviewFile,
   onImport,
+  onDownloadTemplate,
   onSubmit,
   onEdit,
   onDeactivate
@@ -49,6 +50,7 @@ export function MerchantDirectory({
             <span>Seleccionar archivo Excel</span>
             <input type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" disabled={importLoading} onChange={(event) => onPreviewFile(event.target.files?.[0] || null)} />
           </label>
+          <button className="secondary-button" type="button" disabled={importLoading} onClick={onDownloadTemplate}>Descargar plantilla oficial</button>
           {importLoading && <span className="import-progress" role="status">Procesando libro...</span>}
         </div>
         {importMessage && <div className="form-message" role="status" aria-live="polite">{importMessage}</div>}

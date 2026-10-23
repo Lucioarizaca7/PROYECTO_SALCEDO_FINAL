@@ -1,8 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { calculateLiquidation, getComerciantes, getPuestos, initializeDatabase } from '../src/db.js';
-import { importPadronPreview, previewPadronSheets } from '../src/padronImport.js';
+import ExcelJS from 'exceljs';
+
+import { calculateLiquidation, deactivateComerciante, getComerciantes, getPuestos, initializeDatabase, insertComerciante } from '../src/db.js';
+import { importPadronPreview, previewPadronSheets, readPadronWorkbook } from '../src/padronImport.js';
+import { buildPadronTemplate } from '../src/padronTemplate.js';
 
 const workbook = [{
   name: 'BLOQUE A',
@@ -86,4 +89,71 @@ test('reconoce hojas de control de asistencia por bloque sin inventar DNI ni met
   assert.equal(preview.sheets[0].dates.length, 2);
   assert.equal(preview.validRows, 0);
   assert.match(preview.sheets[0].reason, /faltan DNI\/RUC y metraje/);
+});
+
+test('previsualiza e importa en lote: el número de consultas no crece con las filas', async () => {
+  const db = await initializeDatabase();
+  const rows = Array.from({ length: 60 }, (_, index) => [
+    `7${String(index).padStart(7, '0')}`, `Titular Lote ${index}`, `LOTE-${String(index).padStart(3, '0')}`, 'Bloque L', 'Zona Norte', 'ferial', 'ropa', 3, index % 10 === 0 ? 'Ausente' : 'Presente'
+  ]);
+  const workbook = [{ name: 'BLOQUE L', rows: [['DNI/RUC', 'Titular', 'Código Puesto', 'Sector', 'Zona', 'Tipo Comerciante', 'Rubro', 'Metraje m2', 'Estado'], ...rows] }];
+  let queries = 0;
+  const countingDb = { query: (...args) => { queries += 1; return db.query(...args); } };
+
+  const preview = await previewPadronSheets(workbook, { filename: 'padron.xlsx', db: countingDb });
+  assert.equal(preview.validRows, 60);
+  assert.ok(queries <= 5, `la previsualización hizo ${queries} consultas`);
+
+  const result = await importPadronPreview(db, preview, 1);
+  assert.equal(result.createdMerchants, 60);
+  assert.equal(result.createdPosts, 60);
+  assert.equal(result.absentPosts, 6);
+  const posts = (await getPuestos(db)).filter((post) => post.codigo.startsWith('LOTE-'));
+  assert.equal(posts.length, 60);
+  assert.equal(posts.filter((post) => post.estado === 'disponible').length, 6);
+  assert.equal(posts.find((post) => post.codigo === 'LOTE-001').direccion, 'Bloque L - LOTE-001');
+});
+
+test('un comerciante dado de baja no recibe un puesto nuevo: se marca la fila en vez de abortar el libro', async () => {
+  const db = await initializeDatabase();
+  const rubroId = (await db.query(`SELECT id FROM rubros WHERE nombre = 'ropa'`)).rows[0].id;
+  const zonaId = (await db.query(`SELECT id FROM zonas WHERE nombre = 'Zona Norte'`)).rows[0].id;
+  const merchant = await insertComerciante(db, { dni_ruc: '61234567', nombre: 'Titular de Baja', rubro_id: rubroId, zona_id: zonaId, tipo_comerciante: 'ferial' });
+  await deactivateComerciante(db, merchant.id);
+
+  const preview = await previewPadronSheets([{
+    name: 'BLOQUE D',
+    rows: [
+      ['DNI', 'Titular', 'Código Puesto', 'Zona', 'Rubro', 'm2'],
+      ['61234567', 'Titular de Baja', 'BAJA-01', 'Zona Norte', 'ropa', 2],
+      ['61234568', 'Titular Nuevo', 'BAJA-02', 'Zona Norte', 'ropa', 2]
+    ]
+  }], { filename: 'padron.xlsx', db });
+
+  assert.equal(preview.validRows, 1);
+  assert.match(preview.errors[0].message, /dado de baja/);
+  const result = await importPadronPreview(db, preview, 1);
+  assert.equal(result.createdMerchants, 1);
+  assert.equal(result.skippedRows, 1);
+});
+
+test('la plantilla oficial trae las listas del catálogo y se importa sin ajustes', async () => {
+  const db = await initializeDatabase();
+  const template = new ExcelJS.Workbook();
+  await template.xlsx.load(await buildPadronTemplate(db));
+
+  const lists = template.getWorksheet('LISTAS');
+  assert.equal(lists.state, 'veryHidden');
+  const zonas = lists.getColumn(1).values.filter(Boolean);
+  assert.ok(zonas.includes('Mercado Central'));
+  const sheet = template.getWorksheet('PADRON');
+  assert.equal(sheet.getCell('G2').dataValidation.type, 'list');
+
+  sheet.addRow(['04512345', 'Titular Plantilla', 'PLT-001', 'Bloque P', 'Mercado Central', 'permanente', 'comida', 4, 'Presente']);
+  const sheets = await readPadronWorkbook(Buffer.from(await template.xlsx.writeBuffer()));
+  const preview = await previewPadronSheets(sheets, { filename: 'plantilla-padron-sisrec.xlsx', db });
+
+  assert.equal(preview.validRows, 1);
+  assert.equal(preview.candidates[0].document, '04512345');
+  assert.deepEqual(preview.sheets.map((item) => item.sheet), ['PADRON']);
 });
