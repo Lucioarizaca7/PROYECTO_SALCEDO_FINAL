@@ -344,15 +344,17 @@ export async function previewPadronSheets(sheets, { filename = '', db, fechaFeri
   const merchantsByDocument = await lookupByKey(db,
     'SELECT id, estado, nombre, dni_ruc AS key FROM comerciantes WHERE dni_ruc = ANY($1::text[])',
     candidates.map((row) => row.document).filter(Boolean));
-  // Por puesto: dueño, asignación abierta (zona y tarifa), desde cuándo está asignado y la fecha
-  // más reciente ya registrada (asistencia o cambio de asignación).
+  // Por puesto: dueño, asignación abierta (zona y tarifa; vacía si fue liberado o dado de baja), desde
+  // cuándo está asignado y la fecha más reciente ya registrada (asistencia, asignación o baja).
   const postsByCode = await lookupByKey(db, `
     SELECT p.id, p.comerciante_id, c.dni_ruc AS dueno_dni, c.nombre AS dueno_nombre, c.estado AS dueno_estado, p.codigo_puesto AS key,
            ph.zona_id AS asignado_zona_id, ph.categoria_id AS asignado_categoria_id,
            (SELECT to_char(min(h.desde), 'YYYY-MM-DD') FROM puestos_historial h WHERE h.puesto_id = p.id) AS asignado_desde,
            to_char(GREATEST(
              (SELECT max(a.fecha) FROM asistencias_feriales a WHERE a.puesto_id = p.id),
-             (SELECT max(h.desde) FROM puestos_historial h WHERE h.puesto_id = p.id)
+             (SELECT max(h.desde) FROM puestos_historial h WHERE h.puesto_id = p.id),
+             -- Fecha de la baja o liberación: un archivo anterior a ella no reabre el puesto.
+             (SELECT max(h.hasta) + 1 FROM puestos_historial h WHERE h.puesto_id = p.id)
            ), 'YYYY-MM-DD') AS ultima_fecha
     FROM puestos p JOIN comerciantes c ON c.id = p.comerciante_id
     LEFT JOIN LATERAL (

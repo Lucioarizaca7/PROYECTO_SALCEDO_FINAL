@@ -655,6 +655,24 @@ export async function recordPostAssignment(db, puestoId, { zonaId, categoriaId, 
     [Number(puestoId), Number(zonaId), categoriaId, desde]);
 }
 
+// Baja o puesto liberado: la asignación abierta termina el día previo a "desde"; lo anterior se conserva.
+// Si la asignación empezaba ese mismo día o después, nunca llegó a cobrarse y se elimina.
+export async function closePostAssignment(db, puestoId, desde) {
+  const open = await first(db, `
+    SELECT id, ${DAY('desde')} AS desde FROM puestos_historial
+    WHERE puesto_id = $1 AND hasta IS NULL ORDER BY desde DESC LIMIT 1`, [Number(puestoId)]);
+  if (!open) return;
+  if (open.desde >= desde) await db.query('DELETE FROM puestos_historial WHERE id = $1', [open.id]);
+  else await db.query('UPDATE puestos_historial SET hasta = $1::date - 1 WHERE id = $2', [desde, open.id]);
+}
+
+// Última tarifa que tuvo el puesto (abierta o cerrada), para reasignarlo con la misma.
+async function lastPostCategory(db, puestoId, zonaId) {
+  const last = await first(db, `
+    SELECT categoria_id FROM puestos_historial WHERE puesto_id = $1 AND zona_id = $2 ORDER BY desde DESC LIMIT 1`, [Number(puestoId), Number(zonaId)]);
+  return last?.categoria_id ? Number(last.categoria_id) : null;
+}
+
 export async function insertZona(db, payload) {
   const nombre = String(payload.nombre || '').trim();
   const descripcion = String(payload.descripcion || '').trim();
@@ -788,7 +806,7 @@ export async function updateComerciantePreferencias(db, comercianteId, payload) 
 const COMERCIANTE_COLUMNS = `
   c.id, c.dni_ruc, c.nombre, COALESCE(c.categoria, c.tipo_comerciante) AS categoria, c.tipo_comerciante,
   c.estado, c.estado_empadronamiento, ${TS('c.creado_en')} AS fecha_registro,
-  c.rubro_id, c.zona_id, r.nombre AS rubro, z.nombre AS zona, c.frecuencia_pago,
+  c.rubro_id, c.zona_id, r.nombre AS rubro, z.nombre AS zona, c.frecuencia_pago, ${DAY('c.fecha_baja')} AS fecha_baja,
   ${CODE('c.id')} AS codigo, 'SISREC://comerciante/' || c.id AS qr_code`;
 
 async function findComerciante(db, id) {
@@ -950,8 +968,14 @@ export async function updateComerciante(db, id, payload) {
 export async function deactivateComerciante(db, id) {
   const merchantId = Number(id);
   if (!(await first(db, 'SELECT id FROM comerciantes WHERE id = $1', [merchantId]))) throw new Error('Comerciante no encontrado');
-  await db.query(`UPDATE puestos SET estado = 'inactivo' WHERE comerciante_id = $1`, [merchantId]);
-  await db.query(`UPDATE comerciantes SET estado = 'inactivo', fecha_baja = now() WHERE id = $1`, [merchantId]);
+  await withTransaction(async (client) => {
+    // Desde hoy no se cobran sus puestos; lo devengado antes de la baja se conserva.
+    for (const post of await rows(client, `SELECT id FROM puestos WHERE comerciante_id = $1`, [merchantId])) {
+      await closePostAssignment(client, post.id, today());
+    }
+    await client.query(`UPDATE puestos SET estado = 'inactivo' WHERE comerciante_id = $1`, [merchantId]);
+    await client.query(`UPDATE comerciantes SET estado = 'inactivo', fecha_baja = now() WHERE id = $1`, [merchantId]);
+  });
   return { id: merchantId, eliminado: true };
 }
 
@@ -971,7 +995,7 @@ const PUESTO_SELECT = `
   JOIN comerciantes c ON c.id = p.comerciante_id
   JOIN zonas z ON z.id = p.zona_id
   LEFT JOIN LATERAL (
-    SELECT h.categoria_id FROM puestos_historial h WHERE h.puesto_id = p.id AND h.hasta IS NULL ORDER BY h.desde DESC LIMIT 1
+    SELECT h.categoria_id FROM puestos_historial h WHERE h.puesto_id = p.id ORDER BY h.desde DESC LIMIT 1
   ) ph ON TRUE
   LEFT JOIN categorias_cobro cc ON cc.id = ph.categoria_id`;
 
@@ -1044,21 +1068,27 @@ export async function updatePuesto(db, id, payload) {
   }
   if (!['ocupado', 'disponible', 'reservado', 'inactivo'].includes(estado)) throw new Error('Estado de puesto no válido');
 
-  // Cambiar de zona o de tarifa rige desde "vigente_desde" (hoy por defecto); el pasado conserva la anterior.
-  const zoneChanged = zonaId !== Number(current.zona_id);
-  const categoriaId = payload.categoria_cobro_id !== undefined || zoneChanged
-    ? await resolvePostCategory(db, zonaId, payload.categoria_cobro_id)
-    : current.categoria_cobro_id;
+  // Cambios de zona, de tarifa o de estado rigen desde "vigente_desde" (hoy por defecto); el pasado se conserva.
   const vigenteDesde = String(payload.vigente_desde || today()).trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(vigenteDesde)) throw new Error('La fecha de vigencia debe usar formato AAAA-MM-DD');
+  const freed = ['disponible', 'inactivo'];
+  const nowAssigned = !freed.includes(estado);
+  const zoneChanged = zonaId !== Number(current.zona_id);
+  const categoriaId = payload.categoria_cobro_id !== undefined
+    ? await resolvePostCategory(db, zonaId, payload.categoria_cobro_id)
+    : (zoneChanged ? null : current.categoria_cobro_id) || await lastPostCategory(db, puestoId, zonaId) || await getDefaultCategoryId(db, zonaId);
 
-  await db.query(`
-    UPDATE puestos
-    SET zona_id = $1, direccion = $2, metros_cuadrados = $3, estado = $4, latitud = $5, longitud = $6
-    WHERE id = $7`,
-  [zonaId, direccion, metros, estado, Number.isFinite(latitud) ? latitud : null, Number.isFinite(longitud) ? longitud : null, puestoId]);
-  if (zoneChanged || Number(categoriaId) !== Number(current.categoria_cobro_id)) {
-    await recordPostAssignment(db, puestoId, { zonaId, categoriaId, desde: vigenteDesde });
-  }
+  await withTransaction(async (client) => {
+    await client.query(`
+      UPDATE puestos
+      SET zona_id = $1, direccion = $2, metros_cuadrados = $3, estado = $4, latitud = $5, longitud = $6
+      WHERE id = $7`,
+    [zonaId, direccion, metros, estado, Number.isFinite(latitud) ? latitud : null, Number.isFinite(longitud) ? longitud : null, puestoId]);
+    // Liberado o dado de baja: deja de cobrarse desde esa fecha. Asignado: se cobra con su zona y tarifa
+    // desde esa fecha (si ya estaba asignado igual, no cambia nada).
+    if (nowAssigned) await recordPostAssignment(client, puestoId, { zonaId, categoriaId, desde: vigenteDesde });
+    else await closePostAssignment(client, puestoId, vigenteDesde);
+  });
 
   return findPuesto(db, puestoId);
 }
@@ -1066,7 +1096,10 @@ export async function updatePuesto(db, id, payload) {
 export async function deactivatePuesto(db, id) {
   const puestoId = Number(id);
   if (!(await findPuesto(db, puestoId))) throw new Error('Puesto no encontrado');
-  await db.query(`UPDATE puestos SET estado = 'inactivo' WHERE id = $1`, [puestoId]);
+  await withTransaction(async (client) => {
+    await closePostAssignment(client, puestoId, today());
+    await client.query(`UPDATE puestos SET estado = 'inactivo' WHERE id = $1`, [puestoId]);
+  });
   return findPuesto(db, puestoId);
 }
 
@@ -1285,12 +1318,14 @@ function assignmentOn(assignments, day) {
   return assignments.find((item) => item.desde <= day && (!item.hasta || item.hasta >= day)) || null;
 }
 
-// Puestos que generan cobro: los asignados (no disponibles ni dados de baja).
+// Puestos que generan cobro: los asignados hoy y los que tuvieron asignación (liberados o dados de baja
+// después), que se cobran solo por los días en que estuvieron asignados.
 async function findMerchantPosts(db, merchantId) {
   return rows(db, `
     SELECT p.id, p.codigo_puesto AS codigo, p.zona_id, p.metros_cuadrados, p.estado
     FROM puestos p
-    WHERE p.comerciante_id = $1 AND p.estado NOT IN ('disponible', 'inactivo')
+    WHERE p.comerciante_id = $1
+      AND (p.estado NOT IN ('disponible', 'inactivo') OR EXISTS (SELECT 1 FROM puestos_historial h WHERE h.puesto_id = p.id))
     ORDER BY p.id`, [merchantId]);
 }
 
@@ -1340,14 +1375,18 @@ export async function calculateLiquidation(db, comercianteId, periodo) {
     SELECT puesto_id, zona_id, categoria_id, ${DAY('desde')} AS desde, ${DAY('hasta')} AS hasta
     FROM puestos_historial WHERE puesto_id = ANY($1::bigint[]) ORDER BY desde`, [postIds]) : [];
   const registeredOn = String(merchant.fecha_registro || '').slice(0, 10) || today();
+  // Un comerciante dado de baja sin historial de puestos deja de cobrarse el día de su baja.
+  const unregisteredOn = merchant.estado === 'inactivo' && merchant.fecha_baja
+    ? new Date(Date.parse(`${merchant.fecha_baja}T00:00:00Z`) - 86400000).toISOString().slice(0, 10)
+    : null;
   // Sin puesto (permanente) se cobra la tarifa predeterminada de su zona desde que se registró.
   const billed = posts.length
     ? posts.map((post) => {
       const assignments = historyRows.filter((row) => Number(row.puesto_id) === Number(post.id));
       // Un puesto sin historial (creado fuera del sistema) se toma asignado desde el registro del comerciante.
-      return { ...post, assignments: assignments.length ? assignments : [{ zona_id: post.zona_id, categoria_id: null, desde: registeredOn, hasta: null }] };
+      return { ...post, assignments: assignments.length ? assignments : [{ zona_id: post.zona_id, categoria_id: null, desde: registeredOn, hasta: unregisteredOn }] };
     })
-    : [{ id: null, codigo: null, zona_id: merchant.zona_id, metros_cuadrados: null, assignments: [{ zona_id: merchant.zona_id, categoria_id: null, desde: registeredOn, hasta: null }] }];
+    : [{ id: null, codigo: null, zona_id: merchant.zona_id, metros_cuadrados: null, assignments: [{ zona_id: merchant.zona_id, categoria_id: null, desde: registeredOn, hasta: unregisteredOn }] }];
 
   // Asignaciones sin tarifa indicada toman la predeterminada de su zona.
   const defaults = new Map();
@@ -1429,7 +1468,9 @@ export async function calculateLiquidation(db, comercianteId, periodo) {
 
   const currentPeriod = new Date().toISOString().slice(0, 7);
   const referenceDay = periodo === currentPeriod ? today() : new Date(Date.UTC(...periodo.split('-').map(Number), 0)).toISOString().slice(0, 10);
-  const puestos = devengo.detail.map(({ post, total, absent, billable }) => {
+  // Se listan los puestos asignados hoy o con días asignados en el periodo.
+  const shown = devengo.detail.filter(({ post, absent, billable }) => absent + billable > 0 || assignmentOn(post.assignments, referenceDay));
+  const puestos = (shown.length ? shown : devengo.detail.slice(0, 1)).map(({ post, total, absent, billable }) => {
     // Asignación a la fecha de referencia o, si ya no estaba asignado, la última que tuvo.
     const assignment = assignmentOn(post.assignments, referenceDay) || post.assignments.at(-1);
     const history = histories.get(Number(assignment.categoria_id));

@@ -4,6 +4,8 @@ import assert from 'node:assert/strict';
 import {
   addZoneTariff,
   calculateLiquidation,
+  deactivateComerciante,
+  deactivatePuesto,
   deleteZona,
   feriaDaysOfPeriod,
   getZoneTariffs,
@@ -17,6 +19,7 @@ import {
   updateComerciante,
   updatePuesto
 } from '../src/db.js';
+import { importPadronPreview, previewPadronSheets } from '../src/padronImport.js';
 
 let sequence = 0;
 
@@ -212,4 +215,74 @@ test('cambiar el puesto de zona rige desde su fecha y no recalcula los días ant
     { zona_id: Number(barata.id), desde: '2026-01-01', hasta: '2026-09-14' },
     { zona_id: Number(cara.id), desde: '2026-09-15', hasta: null }
   ]);
+});
+
+const historyOf = async (db, puestoId) => (await db.query(
+  "SELECT to_char(desde, 'YYYY-MM-DD') AS desde, to_char(hasta, 'YYYY-MM-DD') AS hasta FROM puestos_historial WHERE puesto_id = $1 ORDER BY desde", [puestoId])).rows;
+
+test('liberar un puesto deja de cobrarlo desde esa fecha y reasignarlo vuelve a cobrarlo desde la suya', async () => {
+  const db = await initializeDatabase();
+  const zona = await zoneWithAmount(db, 5);
+  const { merchant, puesto } = await merchantWithPost(db, zona.id);
+
+  await updatePuesto(db, puesto.id, { estado: 'disponible', vigente_desde: '2026-09-15' });
+  // Agosto completo (8 ferias) y septiembre hasta el 9 (1, 2, 8 y 9); octubre nada.
+  assert.equal((await calculateLiquidation(db, merchant.id, '2026-08')).monto_total, 40);
+  assert.equal((await calculateLiquidation(db, merchant.id, '2026-09')).monto_total, 20);
+  assert.equal((await calculateLiquidation(db, merchant.id, '2026-10')).monto_total, 0);
+
+  await updatePuesto(db, puesto.id, { estado: 'ocupado', vigente_desde: '2026-10-13' });
+  // Desde el martes 13 de octubre: 13, 14, 20, 21, 27 y 28.
+  assert.equal((await calculateLiquidation(db, merchant.id, '2026-10')).monto_total, 30);
+  assert.equal((await calculateLiquidation(db, merchant.id, '2026-09')).monto_total, 20);
+  assert.deepEqual(await historyOf(db, puesto.id), [
+    { desde: '2026-01-01', hasta: '2026-09-14' },
+    { desde: '2026-10-13', hasta: null }
+  ]);
+});
+
+test('dar de baja un puesto o a un comerciante conserva lo devengado antes de la baja', async () => {
+  const db = await initializeDatabase();
+  const zona = await zoneWithAmount(db, 5);
+  const one = await merchantWithPost(db, zona.id);
+  const two = await merchantWithPost(db, zona.id);
+  await insertCobro(db, { comerciante_id: two.merchant.id, cobrador_id: 2, monto: 20, metodo_pago: 'efectivo', periodo: '2026-09' });
+
+  await deactivatePuesto(db, one.puesto.id);
+  await deactivateComerciante(db, two.merchant.id);
+
+  for (const { merchant, puesto } of [one, two]) {
+    assert.equal((await calculateLiquidation(db, merchant.id, '2026-09')).monto_total, 50);
+    const [assignment] = await historyOf(db, puesto.id);
+    assert.equal(assignment.desde, '2026-01-01');
+    assert.ok(assignment.hasta, 'la asignación queda cerrada');
+  }
+  // El saldo pendiente del comerciante dado de baja sigue a la vista.
+  assert.equal((await calculateLiquidation(db, two.merchant.id, '2026-09')).saldo, 30);
+});
+
+test('un dado de baja que vuelve en el padrón se cobra desde la feria del archivo', async () => {
+  const db = await initializeDatabase();
+  const zona = await zoneWithAmount(db, 5);
+  const { merchant, puesto } = await merchantWithPost(db, zona.id);
+  await deactivateComerciante(db, merchant.id);
+
+  // Próximo martes: posterior a la baja, así que el archivo es más nuevo que lo registrado.
+  const next = new Date();
+  next.setUTCDate(next.getUTCDate() + ((2 - next.getUTCDay() + 7) % 7 || 7));
+  const fecha = next.toISOString().slice(0, 10);
+  const code = (await db.query('SELECT codigo_puesto FROM puestos WHERE id = $1', [puesto.id])).rows[0].codigo_puesto;
+  const zoneName = (await db.query('SELECT nombre FROM zonas WHERE id = $1', [zona.id])).rows[0].nombre;
+  const preview = await previewPadronSheets([{
+    name: 'BLOQUE R',
+    rows: [['DNI', 'Titular', 'Código Puesto', 'Zona', 'Rubro', 'Fecha Feria'], [merchant.dni_ruc, merchant.nombre, code, zoneName, 'comida', fecha]]
+  }], { filename: 'padron.xlsx', db });
+  assert.equal(preview.reactivatedMerchants.length, 1);
+  assert.equal(preview.olderRows, 0);
+  await importPadronPreview(db, preview, 1);
+
+  const history = await historyOf(db, puesto.id);
+  assert.equal(history.length, 2);
+  assert.deepEqual(history[1], { desde: fecha, hasta: null });
+  assert.equal((await calculateLiquidation(db, merchant.id, '2026-09')).monto_total, 50);
 });
