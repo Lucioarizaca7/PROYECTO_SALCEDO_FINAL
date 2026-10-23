@@ -18,6 +18,8 @@ export function MerchantDirectory({
   onPreviewFile,
   onImport,
   onDownloadTemplate,
+  feriaDate,
+  onFeriaDateChange,
   onSubmit,
   onEdit,
   onDeactivate
@@ -50,6 +52,10 @@ export function MerchantDirectory({
             <span>Seleccionar archivo Excel</span>
             <input type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" disabled={importLoading} onChange={(event) => onPreviewFile(event.target.files?.[0] || null)} />
           </label>
+          <label className="padron-file-control">
+            <span>Fecha de la feria (martes o miércoles)</span>
+            <input type="date" disabled={importLoading} value={feriaDate || ''} onChange={(event) => onFeriaDateChange(event.target.value)} />
+          </label>
           <button className="secondary-button" type="button" disabled={importLoading} onClick={onDownloadTemplate}>Descargar plantilla oficial</button>
           {importLoading && <span className="import-progress" role="status">Procesando libro...</span>}
         </div>
@@ -77,7 +83,7 @@ export function MerchantDirectory({
                   <div><strong>{importPreview.newMerchants}</strong><span>comerciantes nuevos</span></div>
                   <div><strong>{importPreview.newPosts}</strong><span>puestos nuevos</span></div>
                   <div><strong>{importPreview.existingMerchants}</strong><span>comerciantes existentes</span></div>
-                  <div><strong>{importPreview.absentRows}</strong><span>ausentes, sin devengo</span></div>
+                  <div><strong>{importPreview.absentRows}</strong><span>faltas (esa feria no se cobra)</span></div>
                 </>
               )}
             </div>
@@ -92,7 +98,7 @@ export function MerchantDirectory({
                 {importPreview.errors.length > 10 && <span>Se muestran los primeros 10 errores.</span>}
               </details>
             )}
-            <p className="import-policy-note">Las filas “Ausente” se importan como puestos feriales disponibles para que la liquidación aplique no devengo. No se crean deudas ni cobros durante esta importación.</p>
+            <p className="import-policy-note">Las filas “Ausente” registran una falta en la feria {importPreview.feriaDates?.length ? importPreview.feriaDates.join(', ') : 'indicada'}: ese día no se cobra y el puesto sigue asignado al titular; si ya estaba pagado, queda a cuenta. Las filas con fecha también registran la asistencia. No se crean deudas ni cobros durante esta importación.</p>
             <button className="primary-button" type="button" disabled={importLoading || importPreview.validRows === 0 || importPreview.workbookType === 'attendance'} onClick={onImport}>Confirmar importación de {importPreview.validRows} filas</button>
           </div>
         )}

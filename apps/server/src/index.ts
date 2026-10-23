@@ -142,14 +142,14 @@ const PADRON_PREVIEW_TTL_MS = 15 * 60 * 1000;
 const PADRON_PREVIEW_MAX = 20;
 const padronPreviews = new Map();
 
-function rememberPadronSheets(userId, filename, sheets) {
+function rememberPadronSheets(userId, filename, sheets, fechaFeria) {
   const now = Date.now();
   for (const [token, entry] of padronPreviews) {
     if (entry.expiresAt <= now) padronPreviews.delete(token);
   }
   while (padronPreviews.size >= PADRON_PREVIEW_MAX) padronPreviews.delete(padronPreviews.keys().next().value);
   const token = randomUUID();
-  padronPreviews.set(token, { userId, filename, sheets, expiresAt: now + PADRON_PREVIEW_TTL_MS });
+  padronPreviews.set(token, { userId, filename, sheets, fechaFeria, expiresAt: now + PADRON_PREVIEW_TTL_MS });
   return token;
 }
 
@@ -469,6 +469,7 @@ app.post('/api/v1/comerciantes/importar-padron',
     const userId = Number(req.user?.id || 1);
     const dryRun = String(req.body?.dryRun).toLowerCase() === 'true';
     const previewToken = String(req.body?.previewToken || '');
+    let fechaFeria = String(req.body?.fechaFeria || '').trim();
     let filename;
     let sheets;
     if (req.file) {
@@ -476,14 +477,15 @@ app.post('/api/v1/comerciantes/importar-padron',
     } else if (previewToken && !dryRun) {
       const cached = takePadronSheets(previewToken, userId);
       if (!cached) return res.status(410).json({ message: 'La previsualización expiró; vuelve a seleccionar el archivo.' });
-      ({ filename, sheets } = cached);
+      // La fecha de feria es la que se usó al previsualizar, para confirmar exactamente lo que se revisó.
+      ({ filename, sheets, fechaFeria } = cached);
     } else {
       return res.status(400).json({ message: 'Selecciona un archivo .xlsx para importar' });
     }
 
     try {
       sheets = sheets || await readPadronWorkbook(req.file.buffer);
-      const preview = await previewPadronSheets(sheets, { filename, db });
+      const preview = await previewPadronSheets(sheets, { filename, db, fechaFeria });
       const publicPreview = {
         filename,
         workbookType: preview.workbookType,
@@ -497,11 +499,13 @@ app.post('/api/v1/comerciantes/importar-padron',
         newMerchants: preview.newMerchants,
         newPosts: preview.newPosts,
         absentRows: preview.absentRows,
+        attendanceRows: preview.attendanceRows,
+        feriaDates: preview.feriaDates,
         errors: preview.errors.slice(0, 100)
       };
 
       if (dryRun) {
-        const token = preview.validRows ? rememberPadronSheets(userId, filename, sheets) : null;
+        const token = preview.validRows ? rememberPadronSheets(userId, filename, sheets, fechaFeria) : null;
         return res.json({ data: { ...publicPreview, previewToken: token }, message: 'Previsualización lista; aún no se modificó el padrón.' });
       }
       if (!preview.validRows) {
@@ -514,7 +518,7 @@ app.post('/api/v1/comerciantes/importar-padron',
         usuarioRol: req.user?.rol || 'anonimo',
         entidad: 'padron',
         accion: 'IMPORTAR_PADRON_EXCEL',
-        detalle: `Importación ${filename}: ${result.createdMerchants} comerciantes nuevos, ${result.createdPosts} puestos nuevos, ${result.absentPosts} ausentes sin devengo`,
+        detalle: `Importación ${filename}: ${result.createdMerchants} comerciantes nuevos, ${result.createdPosts} puestos nuevos, ${result.attendanceMarks} asistencias registradas (${result.absentPosts} faltas que no se cobran)`,
         metodoHttp: 'POST',
         ipOrigen: req.ip || 'unknown',
         rutaEndpoint: req.originalUrl,

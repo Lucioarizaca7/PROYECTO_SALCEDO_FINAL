@@ -17,7 +17,8 @@ const COLUMNS = [
   { header: 'Tipo Comerciante', width: 17, note: 'permanente, ferial o eventual.' },
   { header: 'Rubro', width: 14, note: 'Elige un rubro de la lista (clasificación del comerciante).' },
   { header: 'Metraje m2', width: 12, note: 'Opcional, solo informativo: el cobro es fijo por zona y por día de feria.' },
-  { header: 'Estado', width: 11, note: 'Presente o Ausente.' }
+  { header: 'Estado', width: 11, note: 'Presente o Ausente. Ausente registra una falta en esa feria: ese día no se cobra y el puesto sigue asignado.' },
+  { header: 'Fecha Feria', width: 13, note: 'Fecha de la feria (martes o miércoles). Si la dejas vacía se usa la fecha elegida al subir el archivo; es obligatoria para los ausentes.' }
 ];
 
 function listRange(column, count) {
@@ -46,6 +47,7 @@ export async function buildPadronTemplate(db) {
     cell.alignment = { horizontal: 'center' };
   });
   sheet.getColumn(1).numFmt = '@';
+  sheet.getColumn(10).numFmt = 'yyyy-mm-dd';
 
   const listRule = (formula, title) => ({
     type: 'list', allowBlank: true, formulae: [formula],
@@ -63,7 +65,12 @@ export async function buildPadronTemplate(db) {
       type: 'decimal', operator: 'greaterThan', allowBlank: true, formulae: [0],
       showErrorMessage: true, errorTitle: 'Metraje', error: 'El metraje debe ser un número mayor que 0.'
     },
-    I: listRule(listRange('D', ESTADOS.length), 'Estado')
+    I: listRule(listRange('D', ESTADOS.length), 'Estado'),
+    // WEEKDAY: domingo = 1, así que martes = 3 y miércoles = 4.
+    J: {
+      type: 'custom', allowBlank: true, formulae: ['OR(WEEKDAY(J2)=3,WEEKDAY(J2)=4)'],
+      showErrorMessage: true, errorTitle: 'Fecha de feria', error: 'Las ferias son martes y miércoles.'
+    }
   };
   for (let row = 2; row <= TEMPLATE_ROWS + 1; row += 1) {
     for (const [column, rule] of Object.entries(rules)) sheet.getCell(`${column}${row}`).dataValidation = rule;

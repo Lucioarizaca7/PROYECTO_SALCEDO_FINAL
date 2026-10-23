@@ -597,6 +597,7 @@ function App() {
   const [padronPreview, setPadronPreview] = useState(null);
   const [padronImportMessage, setPadronImportMessage] = useState('');
   const [padronImportLoading, setPadronImportLoading] = useState(false);
+  const [padronFeriaDate, setPadronFeriaDate] = useState('');
   const [editingMerchantId, setEditingMerchantId] = useState(null);
   const [merchantForm, setMerchantForm] = useState({
     dni_ruc: '',
@@ -939,7 +940,7 @@ function App() {
     }
   };
 
-  const handlePadronPreview = async (file) => {
+  const handlePadronPreview = async (file, feriaDate = padronFeriaDate) => {
     setPadronFile(file);
     setPadronPreview(null);
     setPadronImportMessage('');
@@ -949,6 +950,7 @@ function App() {
       const body = new FormData();
       body.append('file', file);
       body.append('dryRun', 'true');
+      if (feriaDate) body.append('fechaFeria', feriaDate);
       const response = await fetch(`${apiBase}/comerciantes/importar-padron`, { method: 'POST', headers: getAuthHeaders(), body });
       const data = await response.json();
       if (!response.ok) throw new Error(data.message || 'No se pudo leer el padrón');
@@ -977,11 +979,11 @@ function App() {
       // Con el token el servidor reutiliza el libro ya leído; si expiró, se vuelve a enviar el archivo.
       let { response, data } = padronPreview?.previewToken
         ? await sendPadronImport({ previewToken: padronPreview.previewToken })
-        : await sendPadronImport({ file: padronFile });
-      if (response.status === 410) ({ response, data } = await sendPadronImport({ file: padronFile }));
+        : await sendPadronImport({ file: padronFile, fechaFeria: padronFeriaDate });
+      if (response.status === 410) ({ response, data } = await sendPadronImport({ file: padronFile, fechaFeria: padronFeriaDate }));
       if (!response.ok) throw new Error(data.message || 'No se pudo importar el padrón');
       setPadronPreview(data.data);
-      setPadronImportMessage(`${data.message} Nuevos: ${data.data.result.createdMerchants} comerciantes y ${data.data.result.createdPosts} puestos; omitidos: ${data.data.result.skippedRows}.`);
+      setPadronImportMessage(`${data.message} Nuevos: ${data.data.result.createdMerchants} comerciantes y ${data.data.result.createdPosts} puestos; asistencias: ${data.data.result.attendanceMarks} (${data.data.result.absentPosts} faltas); omitidos: ${data.data.result.skippedRows}.`);
       setPadronFile(null);
       await fetchData();
     } catch (importError) {
@@ -989,6 +991,12 @@ function App() {
     } finally {
       setPadronImportLoading(false);
     }
+  };
+
+  // Cambiar la fecha de la feria vuelve a previsualizar: las faltas dependen de esa fecha.
+  const handlePadronFeriaDate = (value) => {
+    setPadronFeriaDate(value);
+    if (padronFile) handlePadronPreview(padronFile, value);
   };
 
   const handlePadronTemplate = async () => {
@@ -1514,6 +1522,8 @@ function App() {
           onPreviewFile={handlePadronPreview}
           onImport={handlePadronImport}
           onDownloadTemplate={handlePadronTemplate}
+          feriaDate={padronFeriaDate}
+          onFeriaDateChange={handlePadronFeriaDate}
           onSubmit={handleMerchantSubmit}
           onEdit={handleMerchantEdit}
           onDeactivate={handleMerchantDeactivate}

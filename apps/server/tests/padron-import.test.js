@@ -16,14 +16,16 @@ const workbook = [{
   ]
 }];
 
-test('previsualiza e importa hojas por bloque, reimporta sin duplicar y no devenga para ausente ferial', async () => {
+test('previsualiza e importa por bloque: el ausente registra una falta de esa feria y conserva su puesto', async () => {
   const db = await initializeDatabase();
-  const preview = await previewPadronSheets(workbook, { filename: 'FERIA ZAPATILLAS 2026.xlsx', db });
+  const options = { filename: 'FERIA ZAPATILLAS 2026.xlsx', db, fechaFeria: '2026-09-08' };
+  const preview = await previewPadronSheets(workbook, options);
 
   assert.equal(preview.rows, 2);
   assert.equal(preview.validRows, 2);
   assert.equal(preview.absentRows, 1);
   assert.equal(preview.newMerchants, 2);
+  assert.deepEqual(preview.feriaDates, ['2026-09-08']);
 
   const result = await importPadronPreview(db, preview, 1);
   assert.deepEqual(result, {
@@ -32,6 +34,7 @@ test('previsualiza e importa hojas por bloque, reimporta sin duplicar y no deven
     createdPosts: 2,
     updatedPosts: 0,
     absentPosts: 1,
+    attendanceMarks: 2,
     skippedRows: 0
   });
 
@@ -39,10 +42,17 @@ test('previsualiza e importa hojas por bloque, reimporta sin duplicar y no deven
   const absentPost = (await getPuestos(db)).find((item) => item.codigo === 'ZAP-TEST-01');
   assert.equal(absentMerchant.tipo_comerciante, 'ferial');
   assert.equal(absentPost.metros_cuadrados, 4.5);
-  assert.equal(absentPost.estado, 'disponible');
-  assert.equal((await calculateLiquidation(db, absentMerchant.id, '2026-09')).no_devengo, true);
+  assert.equal(absentPost.estado, 'ocupado');
+  const marks = (await db.query("SELECT marca FROM asistencias_feriales WHERE puesto_id = $1 AND fecha = '2026-09-08'", [absentPost.id])).rows;
+  assert.deepEqual(marks.map((row) => row.marca), ['F']);
 
-  const secondPreview = await previewPadronSheets(workbook, { filename: 'FERIA ZAPATILLAS 2026.xlsx', db });
+  // Septiembre tiene 10 ferias; la del martes 8 no se cobra.
+  const liquidation = await calculateLiquidation(db, absentMerchant.id, '2026-09');
+  assert.equal(liquidation.no_devengo, false);
+  assert.equal(liquidation.dias_ausente, 1);
+  assert.equal(liquidation.monto_total, 45);
+
+  const secondPreview = await previewPadronSheets(workbook, options);
   assert.equal(secondPreview.validRows, 2);
   assert.equal(secondPreview.newMerchants, 0);
   const secondResult = await importPadronPreview(db, secondPreview, 1);
@@ -51,6 +61,31 @@ test('previsualiza e importa hojas por bloque, reimporta sin duplicar y no deven
   assert.equal(secondResult.updatedMerchants, 2);
   assert.equal(secondResult.updatedPosts, 2);
   assert.equal(Number((await db.query("SELECT COUNT(*) FROM comerciantes WHERE dni_ruc IN ('20123456781', '20123456782')")).rows[0].count), 2);
+  assert.equal(Number((await db.query('SELECT COUNT(*) FROM asistencias_feriales WHERE puesto_id = $1', [absentPost.id])).rows[0].count), 1);
+});
+
+test('el ausente necesita una fecha de feria válida (martes o miércoles)', async () => {
+  const db = await initializeDatabase();
+  const rows = [
+    ['DNI', 'Titular', 'Código Puesto', 'Zona', 'Rubro', 'Estado', 'Fecha Feria'],
+    ['62345671', 'Ausente Sin Fecha', 'FEC-01', 'Zona Norte', 'ropa', 'Ausente', null],
+    ['62345672', 'Fecha Jueves', 'FEC-02', 'Zona Norte', 'ropa', 'Presente', '2026-09-10'],
+    ['62345673', 'Fecha Propia', 'FEC-03', 'Zona Norte', 'ropa', 'Ausente', new Date('2026-09-09T00:00:00Z')],
+    ['62345674', 'Presente Sin Fecha', 'FEC-04', 'Zona Norte', 'ropa', 'Presente', '']
+  ];
+  const preview = await previewPadronSheets([{ name: 'BLOQUE F', rows }], { filename: 'padron.xlsx', db });
+
+  assert.equal(preview.validRows, 2);
+  assert.match(preview.errors.find((error) => error.row === 2).message, /Ausente sin fecha de feria/);
+  assert.match(preview.errors.find((error) => error.row === 3).message, /no es día de feria/);
+  assert.equal(preview.candidates.find((row) => row.code === 'FEC-03').feriaDate, '2026-09-09');
+  assert.equal(preview.candidates.find((row) => row.code === 'FEC-04').feriaDate, null);
+
+  // La fecha de la columna manda sobre la elegida al subir el archivo.
+  const withDefault = await previewPadronSheets([{ name: 'BLOQUE F', rows }], { filename: 'padron.xlsx', db, fechaFeria: '2026-09-15' });
+  assert.equal(withDefault.candidates.find((row) => row.code === 'FEC-01').feriaDate, '2026-09-15');
+  assert.equal(withDefault.candidates.find((row) => row.code === 'FEC-03').feriaDate, '2026-09-09');
+  await assert.rejects(() => previewPadronSheets([{ name: 'BLOQUE F', rows }], { filename: 'padron.xlsx', db, fechaFeria: '2026-09-11' }), /martes o miércoles/);
 });
 
 test('marca documentos y códigos de puesto duplicados dentro del mismo libro', async () => {
@@ -100,7 +135,7 @@ test('previsualiza e importa en lote: el número de consultas no crece con las f
   let queries = 0;
   const countingDb = { query: (...args) => { queries += 1; return db.query(...args); } };
 
-  const preview = await previewPadronSheets(workbook, { filename: 'padron.xlsx', db: countingDb });
+  const preview = await previewPadronSheets(workbook, { filename: 'padron.xlsx', db: countingDb, fechaFeria: '2026-09-08' });
   assert.equal(preview.validRows, 60);
   assert.ok(queries <= 5, `la previsualización hizo ${queries} consultas`);
 
@@ -110,7 +145,10 @@ test('previsualiza e importa en lote: el número de consultas no crece con las f
   assert.equal(result.absentPosts, 6);
   const posts = (await getPuestos(db)).filter((post) => post.codigo.startsWith('LOTE-'));
   assert.equal(posts.length, 60);
-  assert.equal(posts.filter((post) => post.estado === 'disponible').length, 6);
+  assert.ok(posts.every((post) => post.estado === 'ocupado'));
+  assert.equal(result.attendanceMarks, 60);
+  const faltas = (await db.query("SELECT COUNT(*) FROM asistencias_feriales a JOIN puestos p ON p.id = a.puesto_id WHERE p.codigo_puesto LIKE 'LOTE-%' AND a.marca = 'F'")).rows[0].count;
+  assert.equal(Number(faltas), 6);
   assert.equal(posts.find((post) => post.codigo === 'LOTE-001').direccion, 'Bloque L - LOTE-001');
 });
 
@@ -149,11 +187,13 @@ test('la plantilla oficial trae las listas del catálogo y se importa sin ajuste
   const sheet = template.getWorksheet('PADRON');
   assert.equal(sheet.getCell('G2').dataValidation.type, 'list');
 
-  sheet.addRow(['04512345', 'Titular Plantilla', 'PLT-001', 'Bloque P', 'Mercado Central', 'permanente', 'comida', 4, 'Presente']);
+  sheet.addRow(['04512345', 'Titular Plantilla', 'PLT-001', 'Bloque P', 'Mercado Central', 'permanente', 'comida', null, 'Ausente', new Date('2026-09-15T00:00:00Z')]);
   const sheets = await readPadronWorkbook(Buffer.from(await template.xlsx.writeBuffer()));
   const preview = await previewPadronSheets(sheets, { filename: 'plantilla-padron-sisrec.xlsx', db });
 
   assert.equal(preview.validRows, 1);
   assert.equal(preview.candidates[0].document, '04512345');
+  assert.equal(preview.candidates[0].feriaDate, '2026-09-15');
+  assert.equal(preview.candidates[0].area, null);
   assert.deepEqual(preview.sheets.map((item) => item.sheet), ['PADRON']);
 });

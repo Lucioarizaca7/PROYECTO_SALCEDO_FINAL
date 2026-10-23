@@ -1,7 +1,7 @@
 import readExcelFile from 'read-excel-file/node';
 
 import { withTransaction } from './pg.js';
-import { getRubros, getZonas, validateDocument } from './db.js';
+import { FERIA_WEEKDAYS, getRubros, getZonas, validateDocument } from './db.js';
 
 export const TEMPLATE_LISTS_SHEET = 'LISTAS';
 
@@ -14,8 +14,12 @@ const aliases = {
   category: ['tipo comerciante', 'categoria comerciante', 'categoria'],
   rubro: ['rubro', 'giro', 'actividad'],
   area: ['m2', 'm²', 'area', 'metraje', 'metros cuadrados', 'superficie'],
-  status: ['asistencia', 'estado', 'presencia', 'incidencia', 'situacion', 'condicion', 'observacion', 'observaciones']
+  status: ['asistencia', 'estado', 'presencia', 'incidencia', 'situacion', 'condicion', 'observacion', 'observaciones'],
+  date: ['fecha feria', 'fecha de feria', 'dia feria', 'fecha']
 };
+
+// Marca con la que el padrón registra la asistencia de una fecha; se reemplaza al reimportar.
+const PADRON_ATTENDANCE_SESSION = 'padron';
 
 function normalize(value) {
   return String(value ?? '')
@@ -133,6 +137,23 @@ function generatedCode(sheetName, rowNumber) {
   return `${prefix}-${String(rowNumber).padStart(4, '0')}`.toUpperCase();
 }
 
+// Fecha de feria desde una celda o del formulario: Date, AAAA-MM-DD o DD/MM/AAAA.
+export function parseFeriaDate(value) {
+  if (value instanceof Date && !Number.isNaN(value.getTime())) return value.toISOString().slice(0, 10);
+  const text = cellText(value);
+  let match = text.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (match) return `${match[1]}-${match[2]}-${match[3]}`;
+  match = text.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{2,4})$/);
+  if (!match) return null;
+  const year = match[3].length === 2 ? `20${match[3]}` : match[3];
+  return `${year}-${match[2].padStart(2, '0')}-${match[1].padStart(2, '0')}`;
+}
+
+function isFeriaDay(date) {
+  const parsed = new Date(`${date}T00:00:00Z`);
+  return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === date && FERIA_WEEKDAYS.includes(parsed.getUTCDay());
+}
+
 function isAbsent(value) {
   const status = normalize(value);
   return ['ausente', 'inasistente', 'inasistencia', 'no asistio', 'no asistencia'].some((term) => status.includes(term));
@@ -160,7 +181,11 @@ export async function readPadronWorkbook(buffer) {
   return sheets.map(({ sheet, data }) => ({ name: sheet, rows: data }));
 }
 
-export async function previewPadronSheets(sheets, { filename = '', db }) {
+export async function previewPadronSheets(sheets, { filename = '', db, fechaFeria = '' }) {
+  const defaultFeriaDate = fechaFeria ? parseFeriaDate(fechaFeria) : null;
+  if (fechaFeria && (!defaultFeriaDate || !isFeriaDay(defaultFeriaDate))) {
+    throw new Error('La fecha de la feria debe ser un martes o miércoles válido (AAAA-MM-DD).');
+  }
   const rubros = await getRubros(db);
   const zonas = await getZonas(db);
   const defaultRubroId = resolveCatalogId(rubros, filename, null);
@@ -217,6 +242,8 @@ export async function previewPadronSheets(sheets, { filename = '', db }) {
       const rawCategory = cellText(value(detected.mapping.category));
       const category = validCategory(rawCategory, 'ferial');
       const absence = isAbsent(value(detected.mapping.status));
+      const rawDate = value(detected.mapping.date);
+      const feriaDate = cellText(rawDate) ? parseFeriaDate(rawDate) : defaultFeriaDate;
       const rubroValue = cellText(value(detected.mapping.rubro)) || (defaultRubroId ? filename : sheet.name);
       const zoneValue = cellText(value(detected.mapping.zone)) || sheet.name;
       const rubroId = resolveCatalogId(rubros, rubroValue, defaultRubroId);
@@ -239,6 +266,10 @@ export async function previewPadronSheets(sheets, { filename = '', db }) {
       if (document) seenDocuments.add(document);
       if (seenCodes.has(code)) rowErrors.push(`Código de puesto ${code} duplicado dentro del libro.`);
       seenCodes.add(code);
+      // La falta se registra para una feria concreta; sin fecha no se puede saber qué día no se cobra.
+      if (cellText(rawDate) && !feriaDate) rowErrors.push(`La fecha "${cellText(rawDate)}" no es válida.`);
+      else if (feriaDate && !isFeriaDay(feriaDate)) rowErrors.push(`La fecha ${feriaDate} no es día de feria (martes o miércoles).`);
+      else if (absence && !feriaDate) rowErrors.push('Ausente sin fecha de feria: agrega la columna "Fecha Feria" o elige la fecha al subir el archivo.');
 
       candidates.push({
         sheet: sheet.name,
@@ -253,6 +284,7 @@ export async function previewPadronSheets(sheets, { filename = '', db }) {
         address: `${sector} - ${code}`,
         area,
         absence,
+        feriaDate,
         existingMerchantId: null,
         existingMerchantState: null,
         existingPostId: null,
@@ -310,6 +342,9 @@ export async function previewPadronSheets(sheets, { filename = '', db }) {
     newMerchants: candidates.filter((row) => !row.existingMerchantId && row.errors.length === 0).length,
     newPosts: candidates.filter((row) => !row.existingPostId && row.errors.length === 0).length,
     absentRows: candidates.filter((row) => row.absence && row.errors.length === 0).length,
+    attendanceRows: candidates.filter((row) => row.feriaDate && row.errors.length === 0).length,
+    feriaDates: [...new Set(candidates.filter((row) => row.feriaDate && row.errors.length === 0).map((row) => row.feriaDate))].sort(),
+    source: filename,
     errors,
     candidates
   };
@@ -323,12 +358,14 @@ export async function importPadronPreview(_db, preview, userId = 1) {
   const knownMerchants = rows.filter((row) => row.existingMerchantId);
   const newPosts = rows.filter((row) => !row.existingPostId);
   const knownPosts = rows.filter((row) => row.existingPostId);
+  const attendance = rows.filter((row) => row.feriaDate);
   const column = (list, pick) => list.map(pick);
 
   try {
     await withTransaction(async (client) => {
       const creator = (await client.query('SELECT id FROM usuarios WHERE id = $1', [Number(userId)])).rows[0];
       const merchantIds = new Map(knownMerchants.map((row) => [row.document, row.existingMerchantId]));
+      const postIds = new Map(knownPosts.map((row) => [row.code, row.existingPostId]));
 
       if (newMerchants.length) {
         const inserted = await client.query(`
@@ -355,23 +392,36 @@ export async function importPadronPreview(_db, preview, userId = 1) {
       }
 
       if (newPosts.length) {
-        await client.query(`
+        const inserted = await client.query(`
           INSERT INTO puestos (comerciante_id, zona_id, codigo_puesto, direccion, metros_cuadrados, estado)
-          SELECT * FROM unnest($1::bigint[], $2::int[], $3::text[], $4::text[], $5::numeric[], $6::text[])`,
+          SELECT v.comerciante_id, v.zona_id, v.codigo, v.direccion, v.metros, 'ocupado'
+          FROM unnest($1::bigint[], $2::int[], $3::text[], $4::text[], $5::numeric[]) AS v(comerciante_id, zona_id, codigo, direccion, metros)
+          RETURNING id, codigo_puesto`,
         [column(newPosts, (row) => merchantIds.get(row.document)), column(newPosts, (row) => row.zonaId),
           column(newPosts, (row) => row.code), column(newPosts, (row) => row.address),
-          column(newPosts, (row) => row.area), column(newPosts, (row) => (row.absence ? 'disponible' : 'ocupado'))]);
+          column(newPosts, (row) => row.area)]);
+        for (const post of inserted.rows) postIds.set(post.codigo_puesto, Number(post.id));
       }
 
       if (knownPosts.length) {
         await client.query(`
           UPDATE puestos p
-          SET zona_id = v.zona_id, direccion = v.direccion, metros_cuadrados = COALESCE(v.metros, p.metros_cuadrados), estado = v.estado
-          FROM unnest($1::bigint[], $2::int[], $3::text[], $4::numeric[], $5::text[]) AS v(id, zona_id, direccion, metros, estado)
+          SET zona_id = v.zona_id, direccion = v.direccion, metros_cuadrados = COALESCE(v.metros, p.metros_cuadrados), estado = 'ocupado'
+          FROM unnest($1::bigint[], $2::int[], $3::text[], $4::numeric[]) AS v(id, zona_id, direccion, metros)
           WHERE p.id = v.id`,
         [column(knownPosts, (row) => row.existingPostId), column(knownPosts, (row) => row.zonaId),
-          column(knownPosts, (row) => row.address), column(knownPosts, (row) => row.area),
-          column(knownPosts, (row) => (row.absence ? 'disponible' : 'ocupado'))]);
+          column(knownPosts, (row) => row.address), column(knownPosts, (row) => row.area)]);
+      }
+
+      // Ausente = falta (F) en esa feria, que no se cobra; presente = P. El puesto sigue asignado al titular.
+      if (attendance.length) {
+        await client.query(`
+          INSERT INTO asistencias_feriales (puesto_id, fecha, sesion, marca, fuente)
+          SELECT v.puesto_id, v.fecha, $4, v.marca, $5
+          FROM unnest($1::bigint[], $2::date[], $3::text[]) AS v(puesto_id, fecha, marca)
+          ON CONFLICT (puesto_id, fecha, sesion) DO UPDATE SET marca = EXCLUDED.marca, fuente = EXCLUDED.fuente, registrado_en = now()`,
+        [column(attendance, (row) => postIds.get(row.code)), column(attendance, (row) => row.feriaDate),
+          column(attendance, (row) => (row.absence ? 'F' : 'P')), PADRON_ATTENDANCE_SESSION, preview.source || 'padron']);
       }
     });
   } catch (error) {
@@ -386,6 +436,7 @@ export async function importPadronPreview(_db, preview, userId = 1) {
     createdPosts: newPosts.length,
     updatedPosts: knownPosts.length,
     absentPosts: rows.filter((row) => row.absence).length,
+    attendanceMarks: attendance.length,
     skippedRows: preview.invalidRows
   };
 }

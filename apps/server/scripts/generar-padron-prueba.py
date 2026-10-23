@@ -8,6 +8,7 @@ Los datos son ficticios y reproducibles (semilla fija). Uso:
   python3 apps/server/scripts/generar-padron-prueba.py
 """
 import random
+from datetime import date
 from pathlib import Path
 
 from openpyxl import Workbook
@@ -17,7 +18,7 @@ OUT_DIR = Path(__file__).resolve().parents[3] / 'datos-prueba'
 
 # Encabezados reconocidos por los alias de apps/server/src/padronImport.js.
 HEADER = ['N°', 'DNI/RUC', 'Titular', 'Código Puesto', 'Sector', 'Zona',
-          'Tipo Comerciante', 'Rubro', 'Metraje m2', 'Estado']
+          'Tipo Comerciante', 'Rubro', 'Metraje m2', 'Estado', 'Fecha Feria']
 
 NOMBRES = ['Yolanda', 'Rosa', 'Juana', 'Nidia', 'Maribel', 'Elena', 'Lourdes', 'Gladys',
            'Marina', 'Sonia', 'Felicitas', 'Teodora', 'Ruth', 'Hilda', 'Delia', 'Vilma',
@@ -30,9 +31,10 @@ APELLIDOS = ['Mamani', 'Quispe', 'Condori', 'Choque', 'Ticona', 'Apaza', 'Huanca
 RUBROS = ['comida', 'ropa', 'zapatillas', 'otros']
 TIPOS = ['Permanente', 'Ferial', 'Eventual']
 
+# Cada bloque corresponde a una feria: martes 20 y miércoles 21 de octubre de 2026.
 BLOQUES = [
-    ('BLOQUE A', 'A', ['Mercado Central']),
-    ('BLOQUE B', 'B', ['Parque Principal', 'Zona Norte']),
+    ('BLOQUE A', 'A', ['Mercado Central'], date(2026, 10, 20)),
+    ('BLOQUE B', 'B', ['Parque Principal', 'Zona Norte'], date(2026, 10, 21)),
 ]
 
 
@@ -47,7 +49,7 @@ def ruc_persona_natural(dni):
 def generar_filas(rng, total_por_bloque=25):
     usados = set()
     filas = {}
-    for hoja, letra, zonas in BLOQUES:
+    for hoja, letra, zonas, fecha in BLOQUES:
         filas[hoja] = []
         for i in range(1, total_por_bloque + 1):
             while True:
@@ -68,10 +70,11 @@ def generar_filas(rng, total_por_bloque=25):
                 'rubro': rng.choices(RUBROS, weights=[3, 3, 3, 1])[0],
                 'metraje': rng.choice([2, 2.5, 3, 3.5, 4, 4.5, 6, 8, 9, 12]),
                 'estado': 'Presente',
+                'fecha': fecha,
             }
             filas[hoja].append(fila)
 
-    # 6 ausentes (3 por bloque): el sistema los importa con el puesto "disponible".
+    # 6 ausentes (3 por bloque): se registra la falta de esa feria, que no se cobra; el puesto sigue asignado.
     for hoja in filas:
         for fila in rng.sample(filas[hoja], 3):
             fila['estado'] = 'Ausente'
@@ -88,11 +91,13 @@ def escribir_hoja(ws, titulo, filas):
         celda.alignment = Alignment(horizontal='center')
     for f in filas:
         ws.append([f['n'], f['documento'], f['titular'], f['codigo'], f['sector'], f['zona'],
-                   f['tipo'], f['rubro'], f['metraje'], f['estado']])
+                   f['tipo'], f['rubro'], f['metraje'], f['estado'], f.get('fecha')])
     # El documento va como texto para conservar ceros a la izquierda.
     for fila in ws.iter_rows(min_row=3, min_col=2, max_col=2):
         fila[0].number_format = '@'
-    for col, ancho in zip('ABCDEFGHIJ', [5, 14, 34, 15, 22, 18, 17, 12, 11, 10]):
+    for fila in ws.iter_rows(min_row=3, min_col=11, max_col=11):
+        fila[0].number_format = 'yyyy-mm-dd'
+    for col, ancho in zip('ABCDEFGHIJK', [5, 14, 34, 15, 22, 18, 17, 12, 11, 10, 12]):
         ws.column_dimensions[col].width = ancho
     ws.freeze_panes = 'A3'
 
@@ -121,6 +126,8 @@ def libro_errores():
         dict(documento='45871236', titular='DNI DUPLICADO CHOQUE', codigo='ERR-C-007', metraje=3),
         dict(documento='45871239', titular='CODIGO DUPLICADO HUANCA', codigo='ERR-C-001', metraje=3),
         dict(documento='45871240', titular='RUBRO INEXISTENTE PARI', codigo='ERR-C-009', metraje=3, rubro='ferreteria'),
+        dict(documento='45871241', titular='AUSENTE SIN FECHA COAQUIRA', codigo='ERR-C-010', metraje=3, estado='Ausente'),
+        dict(documento='45871242', titular='FECHA NO ES FERIA LAYME', codigo='ERR-C-011', metraje=3, fecha=date(2026, 10, 22)),
     ]
     filas = [{**base, **caso, 'n': i} for i, caso in enumerate(casos, start=1)]
     escribir_hoja(ws, 'PADRÓN DE PRUEBA CON ERRORES INTENCIONALES', filas)
