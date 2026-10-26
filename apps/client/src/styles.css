@@ -330,6 +330,18 @@ a:focus-visible {
   margin-bottom: 14px;
 }
 
+.portal-field {
+  display: grid;
+  gap: 6px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.portal-login p.portal-help {
+  margin: 16px 0 0;
+  font-size: 0.85rem;
+}
+
 .portal-debt {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
@@ -1628,6 +1640,116 @@ tbody td {
   font-size: 0.78rem;
 }
 
+/* Carnet del comerciante: frente (QR del cobrador) y reverso (llave del portal), 85,6 × 54 mm. */
+.merchant-card-dialog {
+  width: min(100%, 760px);
+  max-height: calc(100vh - 36px);
+  overflow-y: auto;
+}
+
+.merchant-card-intro {
+  margin: 0;
+  color: var(--muted);
+}
+
+.merchant-card-list {
+  margin: 0;
+  padding-left: 18px;
+  display: grid;
+  gap: 4px;
+}
+
+.merchant-card-warning {
+  padding: 10px 12px;
+  border: 1px solid #b26a00;
+  border-radius: 10px;
+  background: #fff6e5;
+  color: #6b3f00;
+  font-size: 0.9rem;
+}
+
+.merchant-card-sheet {
+  display: grid;
+  gap: 14px;
+}
+
+.merchant-card {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.merchant-card-face {
+  display: grid;
+  justify-items: center;
+  align-content: start;
+  gap: 4px;
+  padding: 10px;
+  border: 1px dashed var(--border);
+  border-radius: 10px;
+  background: #fff;
+  color: var(--text);
+  text-align: center;
+}
+
+.merchant-card-face svg {
+  width: 112px;
+  height: 112px;
+}
+
+.merchant-card-face strong {
+  color: var(--primary);
+  font-size: 0.9rem;
+}
+
+.merchant-card-face small {
+  color: var(--muted);
+  font-size: 0.7rem;
+}
+
+.merchant-card-brand {
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--primary-2);
+}
+
+.merchant-card-key {
+  font-size: 1.15rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  color: var(--text);
+}
+
+.merchant-card-qr-loading {
+  display: grid;
+  place-items: center;
+  width: 112px;
+  height: 112px;
+  background: var(--panel-alt);
+}
+
+.merchant-batch-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.merchant-batch-bar span {
+  margin-right: auto;
+  font-weight: 600;
+}
+
+@media (max-width: 560px) {
+  .merchant-card {
+    grid-template-columns: 1fr;
+  }
+}
+
 .payment-workspace {
   display: grid;
   grid-template-columns: minmax(0, 1.15fr) minmax(300px, 0.85fr);
@@ -1972,6 +2094,57 @@ tbody td {
   .merchant-qr-actions,
   .merchant-qr-note {
     display: none;
+  }
+
+  /* Carnets: cada frente y reverso a tamaño tarjeta, uno por fila, sin cortarse entre páginas. */
+  .merchant-card-backdrop {
+    position: absolute;
+    inset: auto;
+    height: auto;
+    overflow: visible;
+    backdrop-filter: none;
+  }
+
+  .merchant-card-dialog {
+    width: auto;
+    max-height: none;
+    overflow: visible;
+    padding: 0;
+  }
+
+  .merchant-card-dialog .merchant-qr-heading,
+  .merchant-card-dialog .merchant-card-warning {
+    display: none;
+  }
+
+  .merchant-card-sheet {
+    gap: 6mm;
+  }
+
+  .merchant-card {
+    grid-template-columns: 85.6mm 85.6mm;
+    gap: 4mm;
+    justify-content: center;
+    break-inside: avoid;
+  }
+
+  .merchant-card-face {
+    width: 85.6mm;
+    height: 54mm;
+    box-sizing: border-box;
+    padding: 2mm;
+    gap: 1mm;
+    border: 0.3mm dashed #555;
+    border-radius: 3mm;
+  }
+
+  .merchant-card-face svg {
+    width: 26mm;
+    height: 26mm;
+  }
+
+  .merchant-card-face small {
+    font-size: 6.5pt;
   }
 
   .receipt-actions {

@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { createHash, randomInt, timingSafeEqual } from 'node:crypto';
 import { readFileSync, readdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -807,7 +807,8 @@ const COMERCIANTE_COLUMNS = `
   c.id, c.dni_ruc, c.nombre, COALESCE(c.categoria, c.tipo_comerciante) AS categoria, c.tipo_comerciante,
   c.estado, c.estado_empadronamiento, ${TS('c.creado_en')} AS fecha_registro,
   c.rubro_id, c.zona_id, r.nombre AS rubro, z.nombre AS zona, c.frecuencia_pago, ${DAY('c.fecha_baja')} AS fecha_baja,
-  ${CODE('c.id')} AS codigo, 'SISREC://comerciante/' || c.id AS qr_code`;
+  ${CODE('c.id')} AS codigo, 'SISREC://comerciante/' || c.id AS qr_code,
+  c.llave_hash IS NOT NULL AS tiene_llave, ${TS('c.llave_emitida_en')} AS llave_emitida_en`;
 
 async function findComerciante(db, id) {
   return first(db, `
@@ -974,7 +975,8 @@ export async function deactivateComerciante(db, id) {
       await closePostAssignment(client, post.id, today());
     }
     await client.query(`UPDATE puestos SET estado = 'inactivo' WHERE comerciante_id = $1`, [merchantId]);
-    await client.query(`UPDATE comerciantes SET estado = 'inactivo', fecha_baja = now() WHERE id = $1`, [merchantId]);
+    // La baja anula su carnet: si vuelve, se le emite uno nuevo.
+    await client.query(`UPDATE comerciantes SET estado = 'inactivo', fecha_baja = now(), llave_hash = NULL, llave_version = llave_version + 1 WHERE id = $1`, [merchantId]);
   });
   return { id: merchantId, eliminado: true };
 }
@@ -1538,16 +1540,121 @@ export async function getCobros(db) {
     ORDER BY co.id DESC`);
 }
 
-export async function getMerchantPortal(db, identifier) {
+// ---------------------------------------------------------------------------
+// Portal del comerciante: carnet con llave de acceso
+// ---------------------------------------------------------------------------
+
+// Sin 0/O ni 1/I/L para que la llave impresa no se lea mal: 31^10 ≈ 50 bits, imposible de adivinar.
+const PORTAL_KEY_ALPHABET = '23456789ABCDEFGHJKMNPQRSTUVWXYZ';
+const PORTAL_KEY_LENGTH = 10;
+export const PORTAL_MAX_ATTEMPTS = 5;
+const PORTAL_LOCK_MINUTES = 15;
+export const PORTAL_LOGIN_ERROR = 'DNI/código o llave incorrectos';
+
+export const normalizePortalKey = (value) => String(value || '').toUpperCase().replace(/[^0-9A-Z]/g, '');
+// La llave es aleatoria y larga: basta su huella SHA-256 (no hace falta bcrypt).
+const hashPortalKey = (key) => createHash('sha256').update(normalizePortalKey(key)).digest('hex');
+const formatPortalKey = (key) => `${key.slice(0, 4)}-${key.slice(4, 8)}-${key.slice(8)}`;
+
+function sameHash(a, b) {
+  const left = Buffer.from(String(a || ''), 'hex');
+  const right = Buffer.from(String(b || ''), 'hex');
+  return left.length === right.length && left.length > 0 && timingSafeEqual(left, right);
+}
+
+// Emite el carnet de uno o varios comerciantes: la llave en claro solo sale en esta respuesta;
+// la anterior y las sesiones abiertas con ella dejan de valer.
+export async function issuePortalKeys(db, comercianteIds) {
+  const ids = [...new Set((Array.isArray(comercianteIds) ? comercianteIds : [comercianteIds]).map(Number))]
+    .filter((id) => Number.isInteger(id) && id > 0);
+  if (!ids.length) throw new Error('Indique al menos un comerciante');
+  if (ids.length > 500) throw new Error('Se pueden emitir hasta 500 carnets a la vez');
+
+  return withTransaction(async (client) => {
+    const merchants = await rows(client, `
+      SELECT id, nombre, estado, ${CODE('id')} AS codigo FROM comerciantes WHERE id = ANY($1::bigint[]) FOR UPDATE`, [ids]);
+    const missing = ids.filter((id) => !merchants.some((item) => Number(item.id) === id));
+    if (missing.length) throw new Error(`Comerciante no encontrado: ${missing.join(', ')}`);
+    const inactive = merchants.filter((item) => item.estado === 'inactivo');
+    if (inactive.length) throw new Error(`No se emite carnet a comerciantes dados de baja: ${inactive.map((item) => item.codigo).join(', ')}`);
+
+    const issued = [];
+    for (const id of ids) {
+      const merchant = merchants.find((item) => Number(item.id) === id);
+      const key = Array.from({ length: PORTAL_KEY_LENGTH }, () => PORTAL_KEY_ALPHABET[randomInt(PORTAL_KEY_ALPHABET.length)]).join('');
+      const updated = await first(client, `
+        UPDATE comerciantes
+        SET llave_hash = $2, llave_version = llave_version + 1, llave_emitida_en = now(),
+            llave_intentos = 0, llave_bloqueada_hasta = NULL
+        WHERE id = $1
+        RETURNING llave_version, ${TS('llave_emitida_en')} AS llave_emitida_en`, [id, hashPortalKey(key)]);
+      issued.push({
+        id, codigo: merchant.codigo, nombre: merchant.nombre, llave: formatPortalKey(key),
+        llave_version: Number(updated.llave_version), llave_emitida_en: updated.llave_emitida_en
+      });
+    }
+    return issued;
+  });
+}
+
+// Valida el ingreso al portal con DNI o código CM más la llave, o con la llave sola (QR del carnet).
+// Tras PORTAL_MAX_ATTEMPTS llaves erradas, el comerciante queda bloqueado PORTAL_LOCK_MINUTES.
+export async function authenticatePortal(db, { identifier, llave } = {}) {
+  const key = normalizePortalKey(llave);
   const value = String(identifier || '').trim();
-  const code = value.toUpperCase().replace(/^CM-/, '');
+  if (key.length !== PORTAL_KEY_LENGTH) throw new Error(PORTAL_LOGIN_ERROR);
+  const keyHash = hashPortalKey(key);
+
+  if (!value) {
+    const merchant = await first(db, `
+      SELECT id, llave_version FROM comerciantes
+      WHERE llave_hash = $1 AND estado <> 'inactivo' AND (llave_bloqueada_hasta IS NULL OR llave_bloqueada_hasta <= now())`, [keyHash]);
+    if (!merchant) throw new Error(PORTAL_LOGIN_ERROR);
+    await db.query('UPDATE comerciantes SET llave_intentos = 0 WHERE id = $1', [merchant.id]);
+    return { id: Number(merchant.id), llave_version: Number(merchant.llave_version) };
+  }
+
+  const code = value.toUpperCase().replace(/^CM-?/, '');
+  const merchant = await first(db, `
+    SELECT id, llave_hash, llave_version, llave_bloqueada_hasta > now() AS bloqueado
+    FROM comerciantes
+    WHERE estado <> 'inactivo' AND (dni_ruc = $1 OR (id = $2 AND $2 > 0))
+    ORDER BY (dni_ruc = $1) DESC, id DESC
+    LIMIT 1`, [value, /^\d+$/.test(code) ? Number(code) : 0]);
+  if (!merchant || !merchant.llave_hash) throw new Error(PORTAL_LOGIN_ERROR);
+  if (merchant.bloqueado) throw new Error(`Demasiados intentos. Vuelva a intentar en ${PORTAL_LOCK_MINUTES} minutos o solicite un carnet nuevo en caja.`);
+
+  if (!sameHash(merchant.llave_hash, keyHash)) {
+    await db.query(`
+      UPDATE comerciantes
+      SET llave_intentos = CASE WHEN llave_intentos + 1 >= $2 THEN 0 ELSE llave_intentos + 1 END,
+          llave_bloqueada_hasta = CASE WHEN llave_intentos + 1 >= $2 THEN now() + make_interval(mins => $3) ELSE llave_bloqueada_hasta END
+      WHERE id = $1`, [merchant.id, PORTAL_MAX_ATTEMPTS, PORTAL_LOCK_MINUTES]);
+    throw new Error(PORTAL_LOGIN_ERROR);
+  }
+  await db.query('UPDATE comerciantes SET llave_intentos = 0, llave_bloqueada_hasta = NULL WHERE id = $1', [merchant.id]);
+  return { id: Number(merchant.id), llave_version: Number(merchant.llave_version) };
+}
+
+// Una sesión del portal vale mientras el comerciante siga activo y no se le haya emitido otro carnet.
+export async function isPortalSessionValid(db, comercianteId, llaveVersion) {
+  const merchant = await first(db, `
+    SELECT id FROM comerciantes
+    WHERE id = $1 AND llave_version = $2 AND llave_hash IS NOT NULL AND estado <> 'inactivo'`,
+  [Number(comercianteId), Number(llaveVersion)]);
+  return Boolean(merchant);
+}
+
+export async function getMerchantPortal(db, comercianteId) {
   const merchant = await first(db, `
     SELECT c.id, c.dni_ruc, c.nombre, COALESCE(c.categoria, c.tipo_comerciante) AS categoria, c.tipo_comerciante, c.estado,
-           ${TS('c.creado_en')} AS fecha_registro, ${CODE('c.id')} AS codigo, r.nombre AS rubro, z.nombre AS zona
-    FROM comerciantes c JOIN rubros r ON r.id = c.rubro_id JOIN zonas z ON z.id = c.zona_id
-    WHERE c.estado <> 'inactivo' AND (c.dni_ruc = $1 OR c.id = $2)
-    LIMIT 1`, [value, Number(code) || 0]);
-  if (!merchant) throw new Error('DNI o código de comerciante no encontrado');
+           ${TS('c.creado_en')} AS fecha_registro, ${CODE('c.id')} AS codigo, r.nombre AS rubro, z.nombre AS zona,
+           c.frecuencia_pago
+    FROM comerciantes c LEFT JOIN rubros r ON r.id = c.rubro_id LEFT JOIN zonas z ON z.id = c.zona_id
+    WHERE c.estado <> 'inactivo' AND c.id = $1`, [Number(comercianteId)]);
+  if (!merchant) throw new Error('Comerciante no encontrado');
+  // El documento temporal de un pendiente de regularización no se muestra.
+  if (String(merchant.dni_ruc).startsWith('TEMP_')) merchant.dni_ruc = null;
 
   const payments = await rows(db, `
     SELECT co.id, ${PAYMENT_DAY} AS fecha, co.concepto, co.monto, co.metodo_pago, co.estado,

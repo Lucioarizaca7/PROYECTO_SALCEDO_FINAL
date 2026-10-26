@@ -5,7 +5,7 @@ import { resolve } from 'node:path';
 import { Request, Response, NextFunction } from './types';
 
 // @ts-ignore
-import { recordAudit, findUserByEmail } from './db.js';
+import { recordAudit, findUserByEmail, isPortalSessionValid } from './db.js';
 
 // Cargar variables de entorno desde el directorio raíz del proyecto
 // Desde apps/server:
@@ -41,6 +41,50 @@ export async function loginUser({ email, password }: { email: string; password: 
   };
 }
 
+// Sesión del portal del comerciante: dura 30 días en su celular y se anula al emitirle otro carnet.
+const PORTAL_TOKEN_TYPE = 'portal_comerciante';
+
+export function signPortalToken({ id, llave_version }: { id: number; llave_version: number }) {
+  return jwt.sign(
+    { tipo: PORTAL_TOKEN_TYPE, rol: 'comerciante', comerciante_id: Number(id), llave_version: Number(llave_version) },
+    jwtSecret,
+    { expiresIn: '30d' }
+  );
+}
+
+function bearerToken(req: Request) {
+  const authHeader = req.headers.authorization;
+  return authHeader && authHeader.startsWith('Bearer ') ? authHeader.replace('Bearer ', '').trim() : '';
+}
+
+// Acepta al personal municipal (req.user) o al comerciante con su sesión del portal (req.portal);
+// cada ruta comprueba luego que el comerciante solo vea lo suyo. Recibe la base o una función que
+// la entrega, porque en index.ts la conexión se abre después de declarar las rutas.
+export function requirePortalOrStaff(dbOrGetter: any) {
+  return async (req: Request, res: Response, next: NextFunction) => {
+    const token = bearerToken(req);
+    if (!token) {
+      return res.status(401).json({ error: 'Acceso denegado. Token no proporcionado.', message: 'Acceso denegado. Token no proporcionado.' });
+    }
+    let decoded: any;
+    try {
+      decoded = jwt.verify(token, jwtSecret);
+    } catch (error) {
+      return res.status(401).json({ error: 'Token inválido o expirado.', message: 'Token inválido o expirado.' });
+    }
+    if (decoded?.tipo !== PORTAL_TOKEN_TYPE) {
+      req.user = decoded as { id: number; email: string; rol: string };
+      return next();
+    }
+    const db = typeof dbOrGetter === 'function' ? dbOrGetter() : dbOrGetter;
+    if (!(await isPortalSessionValid(db, decoded.comerciante_id, decoded.llave_version))) {
+      return res.status(401).json({ error: 'Sesión del portal vencida.', message: 'Su sesión ya no es válida: ingrese con la llave de su carnet vigente.' });
+    }
+    req.portal = { comercianteId: Number(decoded.comerciante_id) };
+    return next();
+  };
+}
+
 export function hasRoleAccess(currentRole: string, requiredRole: string): boolean {
   const accessMap: Record<string, string[]> = {
     super_admin: ['super_admin', 'cobrador', 'auditor', 'comerciante'],
@@ -64,6 +108,10 @@ export function requireAuth(req: Request, res: Response, next: NextFunction) {
 
   try {
     const decoded = jwt.verify(token, jwtSecret);
+    // La sesión del portal del comerciante no abre las rutas del personal.
+    if (typeof decoded === 'object' && decoded !== null && (decoded as any).tipo === PORTAL_TOKEN_TYPE) {
+      return res.status(403).json({ error: 'No tiene permisos para realizar esta acción.', message: 'No tiene permisos para realizar esta acción.' });
+    }
     // jwt.verify puede devolver un string o un objeto según el token
     if (typeof decoded === 'object' && decoded !== null) {
       req.user = decoded as { id: number; email: string; rol: string };

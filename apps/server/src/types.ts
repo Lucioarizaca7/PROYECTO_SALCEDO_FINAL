@@ -4,6 +4,7 @@ declare global {
   namespace Express {
     interface Request {
       user?: { id: number; email: string; rol: string };
+      portal?: { comercianteId: number };
     }
   }
 }
@@ -14,6 +15,8 @@ export interface AuthRequest extends ExpressRequest {
     email: string;
     rol: string;
   };
+  // Sesión del portal del comerciante (carnet): solo lectura de sus propios datos.
+  portal?: { comercianteId: number };
 }
 
 export type Request = AuthRequest;

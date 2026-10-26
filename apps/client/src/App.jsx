@@ -65,6 +65,26 @@ function hashHistory(history) {
 }
 const getStoredToken = () => localStorage.getItem('sisrec-token');
 
+// Sesión del portal del comerciante (carnet): el celular la recuerda 30 días. El almacenamiento
+// puede estar bloqueado, así que el portal funciona igual sin él.
+const PORTAL_TOKEN_KEY = 'sisrec-portal-token';
+const readPortalToken = () => {
+  try { return localStorage.getItem(PORTAL_TOKEN_KEY) || ''; } catch { return ''; }
+};
+const writePortalToken = (token) => {
+  try {
+    if (token) localStorage.setItem(PORTAL_TOKEN_KEY, token);
+    else localStorage.removeItem(PORTAL_TOKEN_KEY);
+  } catch {
+    // Sin almacenamiento, la sesión dura mientras la página esté abierta.
+  }
+};
+// "#portal?llave=XXXX" del QR del reverso del carnet.
+const portalHashKey = () => {
+  const match = window.location.hash.match(/^#portal(?:\?(.*))?$/);
+  return match ? { open: true, llave: new URLSearchParams(match[1] || '').get('llave') || '' } : { open: false, llave: '' };
+};
+
 const getAuthHeaders = (extraHeaders = {}) => {
   const token = getStoredToken();
   return {
@@ -613,8 +633,11 @@ function App() {
   const [tariffMessage, setTariffMessage] = useState('');
   const [tariffForm, setTariffForm] = useState({ monto_por_feria: '', vigencia_inicio: '' });
   const [newTariffForm, setNewTariffForm] = useState(null);
-  const [showPortal, setShowPortal] = useState(false);
+  const [showPortal, setShowPortal] = useState(() => portalHashKey().open);
   const [portalIdentifier, setPortalIdentifier] = useState('');
+  const [portalKey, setPortalKey] = useState('');
+  const [portalToken, setPortalToken] = useState('');
+  const [portalLoading, setPortalLoading] = useState(false);
   const [portalData, setPortalData] = useState(null);
   const [portalError, setPortalError] = useState('');
   const [paymentForm, setPaymentForm] = useState({ search: '', comercianteId: '', periodo: new Date().toISOString().slice(0, 7), monto: '', metodo_pago: 'efectivo', codigo_operacion: '', observaciones: '' });
@@ -748,7 +771,7 @@ function App() {
       });
       setOperational(dashboard.operational || { porZona: [], porRubro: [], porCobrador: [] });
 
-      setComerciantes((comerciantes.data || []).map((item) => [item.id, item.nombre, item.rubro, item.dni_ruc, item.zona, item.estado, new Date(item.fecha_registro).toLocaleDateString('es-PE'), item.tipo_comerciante || item.categoria, item.frecuencia_pago || 'semanal']))
+      setComerciantes((comerciantes.data || []).map((item) => [item.id, item.nombre, item.rubro, item.dni_ruc, item.zona, item.estado, new Date(item.fecha_registro).toLocaleDateString('es-PE'), item.tipo_comerciante || item.categoria, item.frecuencia_pago || 'semanal', Boolean(item.tiene_llave), item.llave_emitida_en || null]))
       setTarifas((tarifas.data || []).flatMap((zona) => zona.tarifas.map((item) => [`${zona.zona} · ${item.nombre}`, item.monto_por_feria === null ? 'Sin monto' : `S/ ${Number(item.monto_por_feria).toFixed(2)} por feria`, item.monto_por_feria === null ? 'Inactivo' : 'Activo'])))
       setTariffRecords(tarifas.data || []);
       setCobros(cobros.data || []);
@@ -880,16 +903,80 @@ function App() {
     localStorage.removeItem('sisrec-token');
   };
 
-  const handlePortalLogin = async (event) => {
-    event.preventDefault();
+  const startPortalSession = (token, data) => {
+    writePortalToken(token);
+    setPortalToken(token);
+    setPortalData(data);
+    setPortalKey('');
+  };
+
+  const closePortalSession = (message = '') => {
+    writePortalToken('');
+    setPortalToken('');
+    setPortalData(null);
+    setPortalError(message);
+  };
+
+  const portalLogin = async (credentials) => {
     setPortalError('');
+    setPortalLoading(true);
     try {
-      const response = await fetch(`${apiBase}/portal/login`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ identifier: portalIdentifier }) });
+      const response = await fetch(`${apiBase}/portal/login`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(credentials) });
       const data = await response.json();
       if (!response.ok) throw new Error(data.message || 'No se pudo consultar el portal');
-      setPortalData(data.data);
+      startPortalSession(data.token, data.data);
     } catch (error) {
       setPortalData(null);
+      setPortalError(error.message);
+    } finally {
+      setPortalLoading(false);
+    }
+  };
+
+  const handlePortalLogin = (event) => {
+    event.preventDefault();
+    portalLogin({ identifier: portalIdentifier, llave: portalKey });
+  };
+
+  // Al abrir el QR del carnet entra solo y quita la llave de la barra de direcciones;
+  // si no, retoma la sesión guardada en el celular.
+  useEffect(() => {
+    const { open, llave } = portalHashKey();
+    if (open && llave) {
+      window.history.replaceState(null, '', `${window.location.pathname}${window.location.search}#portal`);
+      setShowPortal(true);
+      portalLogin({ llave });
+      return;
+    }
+    const saved = readPortalToken();
+    if (!saved) return;
+    fetch(`${apiBase}/portal/me`, { headers: { Authorization: `Bearer ${saved}` } })
+      .then(async (response) => {
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.message || 'Ingrese con la llave de su carnet');
+        startPortalSession(saved, data.data);
+        if (open) setShowPortal(true);
+      })
+      .catch((error) => closePortalSession(open ? error.message : ''));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const downloadPortalReceipt = async (payment) => {
+    try {
+      const response = await fetch(`${apiBase}/comprobantes/${payment.id}/pdf`, { headers: { Authorization: `Bearer ${portalToken}` } });
+      if (response.status === 401) {
+        const data = await response.json().catch(() => ({}));
+        closePortalSession(data.message || 'Su sesión venció: ingrese otra vez con la llave de su carnet.');
+        return;
+      }
+      if (!response.ok) throw new Error('No se pudo descargar el comprobante');
+      const url = URL.createObjectURL(await response.blob());
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `comprobante-${payment.comprobante || payment.id}.pdf`;
+      link.click();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    } catch (error) {
       setPortalError(error.message);
     }
   };
@@ -939,6 +1026,21 @@ function App() {
     } catch (deactivateError) {
       setMerchantMessage(deactivateError.message);
     }
+  };
+
+  // Emite el carnet (uno o en lote): la respuesta trae la llave en claro una sola vez.
+  const handleIssueCards = async (ids) => {
+    const single = ids.length === 1;
+    const response = await fetch(`${apiBase}/comerciantes/${single ? `${ids[0]}/llave` : 'llaves'}`, {
+      method: 'POST',
+      headers: getAuthHeaders({ 'Content-Type': 'application/json' }),
+      body: single ? undefined : JSON.stringify({ comerciante_ids: ids })
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.message || 'No se pudo emitir el carnet');
+    setMerchantMessage(data.message);
+    fetchData();
+    return data.data;
   };
 
   const handlePadronPreview = async (file, feriaDate = padronFeriaDate) => {
@@ -1541,6 +1643,8 @@ function App() {
           onSubmit={handleMerchantSubmit}
           onEdit={handleMerchantEdit}
           onDeactivate={handleMerchantDeactivate}
+          onIssueCards={['super_admin', 'cobrador'].includes(user?.rol) ? handleIssueCards : undefined}
+          canIssueBatch={user?.rol === 'super_admin'}
         />;
       case 'sitios':
         return (
@@ -1906,8 +2010,8 @@ function App() {
     if (showPortal) {
       return (
         <section className="portal-screen">
-          <div className="portal-header"><a className="landing-brand" href="#portal"><span className="brand-mark">S</span><span><strong>SISREC</strong><small>Portal del comerciante</small></span></a><button className="login-back" type="button" onClick={() => { setShowPortal(false); setPortalData(null); }}>← Volver a inicio</button></div>
-          {!portalData ? <form className="portal-login panel" onSubmit={handlePortalLogin}><div className="eyebrow">PORTAL DEL COMERCIANTE</div><h1>Consulta tus pagos</h1><p>Ingresa tu DNI o código de comerciante para revisar tu información.</p><input required placeholder="DNI o código CM-001" value={portalIdentifier} onChange={(event) => setPortalIdentifier(event.target.value)} />{portalError && <div className="form-error">{portalError}</div>}<button className="primary-button" type="submit">Consultar información →</button></form> : <div className="portal-content"><div className="page-heading"><div><div className="eyebrow">MI CUENTA / INFORMACIÓN MUNICIPAL</div><h1>Hola, {portalData.comerciante.nombre}</h1><p>{portalData.comerciante.codigo} · {portalData.comerciante.rubro} · {portalData.comerciante.zona}</p></div><span className="status pending">{portalData.deuda.saldo > 0 ? `Saldo: S/ ${portalData.deuda.saldo.toFixed(2)}` : 'Cuenta al día'}</span></div><div className="portal-debt panel"><div><span>Periodo</span><strong>{portalData.deuda.periodo}</strong></div><div><span>Total</span><strong>S/ {portalData.deuda.monto_total.toFixed(2)}</strong></div><div><span>Pagado</span><strong>S/ {portalData.deuda.monto_pagado.toFixed(2)}</strong></div><div><span>Saldo pendiente</span><strong>S/ {portalData.deuda.saldo.toFixed(2)}</strong></div></div><div className="table-card"><table><thead><tr><th>Fecha</th><th>Concepto</th><th>Monto</th><th>Método</th><th>Comprobante</th><th>Acción</th></tr></thead><tbody>{portalData.pagos.length ? portalData.pagos.map((payment) => <tr key={payment.id}><td>{payment.fecha}</td><td>{payment.concepto}</td><td>S/ {Number(payment.monto).toFixed(2)}</td><td>{payment.metodo_pago}</td><td>{payment.comprobante}</td><td><button className="table-action" type="button" onClick={() => window.print()}>Descargar PDF</button></td></tr>) : <tr><td colSpan="6">Aún no tienes pagos registrados.</td></tr>}</tbody></table></div>{portalData.deuda.saldo > 0 && <div className="portal-reminder"><strong>Recordatorio de deuda</strong><span>Tu saldo pendiente es de S/ {portalData.deuda.saldo.toFixed(2)}.</span><button className="secondary-button" type="button" onClick={() => window.open(`https://wa.me/?text=${encodeURIComponent(`Recordatorio SISREC: saldo pendiente S/ ${portalData.deuda.saldo.toFixed(2)}`)}`, '_blank')}>Enviar recordatorio por WhatsApp</button></div>}</div>}
+          <div className="portal-header"><a className="landing-brand" href="#portal"><span className="brand-mark">S</span><span><strong>SISREC</strong><small>Portal del comerciante</small></span></a><button className="login-back" type="button" onClick={() => { setShowPortal(false); if (window.location.hash.startsWith('#portal')) window.history.replaceState(null, '', `${window.location.pathname}${window.location.search}`); }}>← Volver a inicio</button></div>
+          {!portalData ? <form className="portal-login panel" onSubmit={handlePortalLogin}><div className="eyebrow">PORTAL DEL COMERCIANTE</div><h1>Consulta tus pagos</h1><p>Escanea con tu celular el QR del reverso de tu carnet, o escribe tu DNI o código y la llave impresa en el carnet.</p><label className="portal-field"><span>DNI o código de comerciante</span><input required autoComplete="username" placeholder="DNI o código CM-001" value={portalIdentifier} onChange={(event) => setPortalIdentifier(event.target.value)} /></label><label className="portal-field"><span>Llave del carnet</span><input required autoComplete="current-password" autoCapitalize="characters" spellCheck="false" placeholder="XXXX-XXXX-XX" value={portalKey} onChange={(event) => setPortalKey(event.target.value.toUpperCase())} /></label>{portalError && <div className="form-error" role="alert">{portalError}</div>}<button className="primary-button" type="submit" disabled={portalLoading}>{portalLoading ? 'Consultando…' : 'Consultar información →'}</button><p className="portal-help">¿No tienes carnet o lo perdiste? Solicítalo en caja de la municipalidad: el anterior dejará de funcionar.</p></form> : <div className="portal-content"><div className="page-heading"><div><div className="eyebrow">MI CUENTA / INFORMACIÓN MUNICIPAL</div><h1>Hola, {portalData.comerciante.nombre}</h1><p>{[portalData.comerciante.codigo, portalData.comerciante.rubro, portalData.comerciante.zona].filter(Boolean).join(' · ')}</p><button className="link-button" type="button" onClick={() => closePortalSession()}>Cerrar sesión en este celular</button></div><span className="status pending">{portalData.deuda.saldo > 0 ? `Saldo: S/ ${portalData.deuda.saldo.toFixed(2)}` : 'Cuenta al día'}</span></div>{portalError && <div className="form-error" role="alert">{portalError}</div>}<div className="portal-debt panel"><div><span>Periodo</span><strong>{portalData.deuda.periodo}</strong></div><div><span>Total</span><strong>S/ {portalData.deuda.monto_total.toFixed(2)}</strong></div><div><span>Pagado</span><strong>S/ {portalData.deuda.monto_pagado.toFixed(2)}</strong></div><div><span>Saldo pendiente</span><strong>S/ {portalData.deuda.saldo.toFixed(2)}</strong></div></div><div className="table-card"><table><thead><tr><th>Fecha</th><th>Concepto</th><th>Monto</th><th>Método</th><th>Comprobante</th><th>Acción</th></tr></thead><tbody>{portalData.pagos.length ? portalData.pagos.map((payment) => <tr key={payment.id}><td>{payment.fecha}</td><td>{payment.concepto}</td><td>S/ {Number(payment.monto).toFixed(2)}</td><td>{payment.metodo_pago}</td><td>{payment.comprobante}</td><td><button className="table-action" type="button" onClick={() => downloadPortalReceipt(payment)}>Descargar PDF</button></td></tr>) : <tr><td colSpan="6">Aún no tienes pagos registrados.</td></tr>}</tbody></table></div>{portalData.deuda.saldo > 0 && <div className="portal-reminder"><strong>Recordatorio de deuda</strong><span>Tu saldo pendiente es de S/ {portalData.deuda.saldo.toFixed(2)}.</span><button className="secondary-button" type="button" onClick={() => window.open(`https://wa.me/?text=${encodeURIComponent(`Recordatorio SISREC: saldo pendiente S/ ${portalData.deuda.saldo.toFixed(2)}`)}`, '_blank')}>Enviar recordatorio por WhatsApp</button></div>}</div>}
         </section>
       );
     }

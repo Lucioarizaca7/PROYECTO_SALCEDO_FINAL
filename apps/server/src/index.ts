@@ -6,7 +6,7 @@ import rateLimit from 'express-rate-limit';
 import { pathToFileURL } from 'node:url';
 import { randomUUID } from 'node:crypto';
 
-import { loginUser, hasRoleAccess, requireAuth, requireRoles, auditMutation } from './auth';
+import { loginUser, hasRoleAccess, requireAuth, requireRoles, auditMutation, signPortalToken, requirePortalOrStaff } from './auth';
 import { validateLogin, handleValidationErrors, validateComerciante, validateCobro } from './validation';
 import {
   initializeDatabase,
@@ -49,6 +49,9 @@ import {
   getReportRows,
   buildReportCsv,
   getMerchantPortal,
+  authenticatePortal,
+  issuePortalKeys,
+  PORTAL_LOGIN_ERROR,
   createNotification,
   getNotifications,
   generateForecastProjection,
@@ -315,29 +318,83 @@ app.delete('/api/v1/calles/:id', requireAuth, requireRoles(['super_admin', 'audi
   }
 });
 
-app.post('/api/v1/portal/login', async (req, res) => {
-  try {
-    const identifier = String(req.body?.identifier || '').trim();
-    if (!identifier) {
-      return res.status(400).json({ message: 'Debe ingresar su DNI o código de comerciante' });
-    }
+// Ingreso al portal con el carnet: DNI o código CM más la llave, o la llave sola (QR del reverso).
+// Límite propio por IP además del general; el error no revela si el comerciante existe.
+const portalLoginLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: Number(process.env.PORTAL_LOGIN_MAX_REQUESTS || 20),
+  skip: (req) => process.env.NODE_ENV !== 'production' && /^(::1|127\.0\.0\.1|::ffff:127\.0\.0\.1)$/.test(req.ip || ''),
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { message: 'Demasiados intentos de ingreso desde esta red. Intente de nuevo en 15 minutos.' }
+});
 
-    const data = await getMerchantPortal(db, identifier);
-    return res.json({ data, message: 'Portal del comerciante consultado correctamente' });
+app.post('/api/v1/portal/login', portalLoginLimiter, async (req, res) => {
+  const identifier = String(req.body?.identifier || '').trim();
+  const llave = String(req.body?.llave || '').trim();
+  if (!llave) {
+    return res.status(400).json({ message: 'Ingrese la llave impresa en su carnet. Si no tiene carnet, solicítelo en caja.' });
+  }
+  try {
+    const session = await authenticatePortal(db, { identifier, llave });
+    const data = await getMerchantPortal(db, session.id);
+    return res.json({ token: signPortalToken(session), data, message: 'Portal del comerciante consultado correctamente' });
   } catch (error) {
-    return res.status(404).json({ message: error.message || 'No se encontró el comerciante en el padrón' });
+    const message = error.message || PORTAL_LOGIN_ERROR;
+    return res.status(message === PORTAL_LOGIN_ERROR ? 401 : 429).json({ message });
   }
 });
 
-app.get('/api/v1/portal/:comercianteId/notificaciones', async (req, res) => {
+app.get('/api/v1/portal/me', requirePortalOrStaff(() => db), async (req, res) => {
+  if (!req.portal) return res.status(403).json({ message: 'Esta consulta es solo para el comerciante con su carnet' });
+  try {
+    return res.json({ data: await getMerchantPortal(db, req.portal.comercianteId) });
+  } catch (error) {
+    return res.status(404).json({ message: error.message || 'Comerciante no encontrado' });
+  }
+});
+
+app.get('/api/v1/portal/:comercianteId/notificaciones', requirePortalOrStaff(() => db), async (req, res) => {
   try {
     const comercianteId = Number(req.params.comercianteId || 0);
+    if (req.portal && req.portal.comercianteId !== comercianteId) {
+      return res.status(403).json({ message: 'Solo puede consultar sus propias notificaciones' });
+    }
     const data = await getNotifications(db, comercianteId);
     return res.json({ data, total: data.length });
   } catch (error) {
     return res.status(400).json({ message: error.message || 'No se pudieron consultar las notificaciones' });
   }
 });
+
+// Emite el carnet: la llave sale una sola vez en la respuesta y anula la anterior.
+app.post('/api/v1/comerciantes/:id/llave',
+  requireAuth,
+  requireRoles(['super_admin', 'cobrador']),
+  auditMutation({ db, accion: 'EMITIR_CARNET', entidad: 'comerciantes', serializeResponse: (body) => ({ emitidos: (body?.data || []).map((item) => ({ id: item.id, codigo: item.codigo, llave_version: item.llave_version })) }) }),
+  async (req, res) => {
+    try {
+      const data = await issuePortalKeys(db, [Number(req.params.id)]);
+      return res.status(201).json({ data, message: 'Carnet emitido: entregue la llave al comerciante, no se volverá a mostrar' });
+    } catch (error) {
+      return res.status(400).json({ message: error.message || 'No se pudo emitir el carnet' });
+    }
+  }
+);
+
+app.post('/api/v1/comerciantes/llaves',
+  requireAuth,
+  requireRoles(['super_admin']),
+  auditMutation({ db, accion: 'EMITIR_CARNETS', entidad: 'comerciantes', resourceIdResolver: () => null, serializeResponse: (body) => ({ emitidos: (body?.data || []).map((item) => ({ id: item.id, codigo: item.codigo, llave_version: item.llave_version })) }) }),
+  async (req, res) => {
+    try {
+      const data = await issuePortalKeys(db, req.body?.comerciante_ids);
+      return res.status(201).json({ data, total: data.length, message: `${data.length} carnets emitidos: entregue cada llave a su comerciante, no se volverán a mostrar` });
+    } catch (error) {
+      return res.status(400).json({ message: error.message || 'No se pudieron emitir los carnets' });
+    }
+  }
+);
 
 app.post('/api/v1/notificaciones',
   requireAuth,
@@ -352,10 +409,14 @@ app.post('/api/v1/notificaciones',
   }
 );
 
-app.get('/api/v1/comprobantes/:id/pdf', async (req, res) => {
+app.get('/api/v1/comprobantes/:id/pdf', requirePortalOrStaff(() => db), async (req, res) => {
   try {
     const payment = (await getCobros(db)).find((item) => item.id === Number(req.params.id) || String(item.comprobante) === String(req.params.id) || String(item.codigo_operacion) === String(req.params.id));
     if (!payment) {
+      return res.status(404).json({ message: 'Comprobante no encontrado' });
+    }
+    // El comerciante solo descarga sus propios comprobantes; para él, uno ajeno "no existe".
+    if (req.portal && req.portal.comercianteId !== Number(payment.comerciante_id)) {
       return res.status(404).json({ message: 'Comprobante no encontrado' });
     }
 
@@ -412,7 +473,7 @@ app.get('/api/v1/comprobantes/:id/pdf', async (req, res) => {
   }
 });
 
-app.get('/api/v1/reportes', async (req, res) => {
+app.get('/api/v1/reportes', requireAuth, async (req, res) => {
   const options = {
     periodo: req.query.periodo,
     zona_id: req.query.zona_id,
@@ -432,7 +493,7 @@ app.get('/api/v1/reportes', async (req, res) => {
   return res.json({ data, total: data.length, periodo: options.periodo || null });
 });
 
-app.get('/api/v1/comerciantes', async (req, res) => {
+app.get('/api/v1/comerciantes', requireAuth, async (req, res) => {
   const page = Math.max(Number(req.query.page || 1), 1);
   const limit = Math.min(Math.max(Number(req.query.limit || 10), 1), 100);
   const filters = {
@@ -541,7 +602,7 @@ app.post('/api/v1/comerciantes/importar-padron',
   }
 );
 
-app.get('/api/v1/comerciantes/:id', async (req, res) => {
+app.get('/api/v1/comerciantes/:id', requireAuth, async (req, res) => {
   const comerciante = (await getComerciantes(db, { search: String(Number(req.params.id)), limit: 100 })).find((item) => item.id === Number(req.params.id));
 
   if (!comerciante) {
@@ -551,7 +612,7 @@ app.get('/api/v1/comerciantes/:id', async (req, res) => {
   return res.json({ data: comerciante });
 });
 
-app.get('/api/v1/comerciantes/:id/preferencias', async (req, res) => {
+app.get('/api/v1/comerciantes/:id/preferencias', requireAuth, async (req, res) => {
   try {
     const comercianteId = Number(req.params.id || 0);
     const data = await getComerciantePreferencias(db, comercianteId);
@@ -849,7 +910,7 @@ app.put('/api/v1/tarifas-zona/:categoriaId/predeterminada',
   }
 );
 
-app.get('/api/v1/liquidaciones/:comercianteId', async (req, res) => {
+app.get('/api/v1/liquidaciones/:comercianteId', requireAuth, async (req, res) => {
   try {
     return res.json({ data: await calculateLiquidation(db, req.params.comercianteId, String(req.query.periodo || '')) });
   } catch (error) {
@@ -857,7 +918,7 @@ app.get('/api/v1/liquidaciones/:comercianteId', async (req, res) => {
   }
 });
 
-app.get('/api/v1/comerciantes/:comercianteId/saldo', async (req, res) => {
+app.get('/api/v1/comerciantes/:comercianteId/saldo', requireAuth, async (req, res) => {
   try {
     return res.json({ data: await calculateLiquidation(db, req.params.comercianteId, String(req.query.periodo || '')) });
   } catch (error) {
@@ -865,7 +926,7 @@ app.get('/api/v1/comerciantes/:comercianteId/saldo', async (req, res) => {
   }
 });
 
-app.get('/api/v1/cobros', async (_req, res) => {
+app.get('/api/v1/cobros', requireAuth, async (_req, res) => {
   const data = await getCobros(db);
   res.json({ data, total: data.length });
 });

@@ -1,6 +1,13 @@
 import { useState } from 'react';
 import { useMerchantDirectory } from '../../hooks/useMerchantDirectory';
 import { MerchantQrDialog } from './MerchantQrDialog';
+import { MerchantCardDialog } from './MerchantCardDialog';
+
+const codeOf = (id) => `CM-${String(id).padStart(3, '0')}`;
+const isInactive = (state) => String(state).toLowerCase() === 'inactivo';
+const cardInfo = ([id, name, , , , , , , , tieneLlave, llaveEmitidaEn]) => ({
+  id, codigo: codeOf(id), nombre: name, tiene_llave: Boolean(tieneLlave), llave_emitida_en: llaveEmitidaEn || null
+});
 
 export function MerchantDirectory({
   merchants,
@@ -22,10 +29,28 @@ export function MerchantDirectory({
   onFeriaDateChange,
   onSubmit,
   onEdit,
-  onDeactivate
+  onDeactivate,
+  onIssueCards,
+  canIssueBatch = false
 }) {
   const directory = useMerchantDirectory(merchants);
   const [qrMerchant, setQrMerchant] = useState(null);
+  const [cardMerchants, setCardMerchants] = useState(null);
+  const [selected, setSelected] = useState(() => new Set());
+  const selectableVisible = directory.visibleMerchants.filter((row) => !isInactive(row[5])).map((row) => row[0]);
+  const allVisibleSelected = selectableVisible.length > 0 && selectableVisible.every((id) => selected.has(id));
+  const selectedRows = merchants.filter((row) => selected.has(row[0]) && !isInactive(row[5]));
+
+  const toggleSelected = (id) => setSelected((current) => {
+    const next = new Set(current);
+    if (next.has(id)) next.delete(id); else next.add(id);
+    return next;
+  });
+  const toggleVisible = () => setSelected((current) => {
+    const next = new Set(current);
+    selectableVisible.forEach((id) => (allVisibleSelected ? next.delete(id) : next.add(id)));
+    return next;
+  });
 
   return (
     <section className="page" aria-labelledby="merchant-heading">
@@ -199,6 +224,14 @@ export function MerchantDirectory({
         </select>
       </div>
 
+      {canIssueBatch && selectedRows.length > 0 && (
+        <div className="merchant-batch-bar" role="region" aria-label="Acciones sobre la selección">
+          <span>{selectedRows.length} seleccionados</span>
+          <button type="button" className="secondary-button" onClick={() => setSelected(new Set())}>Quitar selección</button>
+          <button type="button" className="primary-button" onClick={() => setCardMerchants(selectedRows.map(cardInfo))}>Emitir carnets ({selectedRows.length})</button>
+        </div>
+      )}
+
       <div className="table-card" aria-busy={loading}>
         {loading ? (
           <div className="merchant-list-skeleton" role="status" aria-label="Cargando comerciantes">
@@ -210,24 +243,28 @@ export function MerchantDirectory({
           <table>
             <caption className="sr-only">Padrón de comerciantes filtrado</caption>
             <thead>
-              <tr><th scope="col">Código</th><th scope="col">Nombre</th><th scope="col">Rubro</th><th scope="col">Documento</th><th scope="col">Zona</th><th scope="col">Estado</th><th scope="col">Fecha</th><th scope="col">Acciones</th></tr>
+              <tr>{canIssueBatch && <th scope="col"><input type="checkbox" aria-label="Seleccionar los comerciantes de esta página" checked={allVisibleSelected} disabled={!selectableVisible.length} onChange={toggleVisible} /></th>}<th scope="col">Código</th><th scope="col">Nombre</th><th scope="col">Rubro</th><th scope="col">Documento</th><th scope="col">Zona</th><th scope="col">Estado</th><th scope="col">Fecha</th><th scope="col">Carnet</th><th scope="col">Acciones</th></tr>
             </thead>
             <tbody>
               {directory.visibleMerchants.map((row) => {
-                const [code, name, category, document, zone, state, date] = row;
+                const [code, name, category, document, zone, state, date, , , tieneLlave, llaveEmitidaEn] = row;
+                const inactive = isInactive(state);
                 const statusClass = state === 'Pendiente' ? 'pending' : state === 'Inactivo' ? 'neutral' : 'paid';
                 return (
                   <tr key={code}>
-                    <td>CM-{String(code).padStart(3, '0')}</td>
+                    {canIssueBatch && <td><input type="checkbox" aria-label={`Seleccionar a ${name}`} checked={selected.has(code)} disabled={inactive} onChange={() => toggleSelected(code)} /></td>}
+                    <td>{codeOf(code)}</td>
                     <td>{name}</td>
                     <td>{category}</td>
                     <td>{document}</td>
                     <td>{zone}</td>
                     <td><span className={`status ${statusClass}`}>{state}</span></td>
                     <td>{date}</td>
+                    <td>{tieneLlave ? `Emitido ${llaveEmitidaEn ? new Date(String(llaveEmitidaEn).replace(' ', 'T')).toLocaleDateString('es-PE') : ''}` : 'Sin carnet'}</td>
                     <td>
                       <div className="table-actions">
-                        <button className="table-action qr-table-action" type="button" aria-label={`Ver código QR de ${name}`} onClick={() => setQrMerchant({ id: code, codigo: `CM-${String(code).padStart(3, '0')}`, nombre: name, qr_code: `SISREC://comerciante/${code}` })}>Ver QR</button>
+                        <button className="table-action qr-table-action" type="button" aria-label={`Ver código QR de ${name}`} onClick={() => setQrMerchant({ id: code, codigo: codeOf(code), nombre: name, qr_code: `SISREC://comerciante/${code}` })}>Ver QR</button>
+                        {onIssueCards && !inactive && <button className="table-action" type="button" aria-label={`${tieneLlave ? 'Emitir carnet nuevo' : 'Emitir carnet'} para ${name}`} onClick={() => setCardMerchants([cardInfo(row)])}>{tieneLlave ? 'Nuevo carnet' : 'Emitir carnet'}</button>}
                         <button className="table-action" type="button" aria-label={`Editar ${name}`} onClick={() => onEdit(row)}>Editar</button>
                         <button className="table-action" type="button" aria-label={`Dar de baja a ${name}`} onClick={() => onDeactivate(code)}>Dar de baja</button>
                       </div>
@@ -249,6 +286,17 @@ export function MerchantDirectory({
         </div>
       </div>
       {qrMerchant && <MerchantQrDialog merchant={qrMerchant} onClose={() => setQrMerchant(null)} />}
+      {cardMerchants && (
+        <MerchantCardDialog
+          merchants={cardMerchants}
+          onIssue={async (ids) => {
+            const issued = await onIssueCards(ids);
+            setSelected(new Set());
+            return issued;
+          }}
+          onClose={() => setCardMerchants(null)}
+        />
+      )}
     </section>
   );
 }

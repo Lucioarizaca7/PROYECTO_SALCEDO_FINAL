@@ -130,7 +130,8 @@ test('syncOfflineCobro detecta duplicados por hash idempotente y evita reinserta
 
 test('getMerchantPortal y createNotification exponen el portal del comerciante y su historial de avisos', async () => {
   const db = await initializeDatabase();
-  const portal = await getMerchantPortal(db, '20123456780');
+  const demo = (await db.query("SELECT id FROM comerciantes WHERE dni_ruc = '20123456780'")).rows[0];
+  const portal = await getMerchantPortal(db, demo.id);
 
   assert.equal(portal.comerciante.nombre, 'Comerciante Demo');
   assert.ok(Array.isArray(portal.pagos));
