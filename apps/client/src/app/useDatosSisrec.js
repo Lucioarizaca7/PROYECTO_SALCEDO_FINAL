@@ -28,7 +28,6 @@ export function useDatosSisrec({ user, onSessionExpired }) {
   const [tariffRecords, setTariffRecords] = useState([]);
   const [cobros, setCobros] = useState([]);
   const [mapPuestos, setMapPuestos] = useState([]);
-  const [reportRows, setReportRows] = useState([]);
   const [auditRecords, setAuditRecords] = useState([]);
   const [catalogos, setCatalogos] = useState({ rubros: [], zonas: [] });
   const [predictiveData, setPredictiveData] = useState(EMPTY_FORECAST);
@@ -65,14 +64,13 @@ export function useDatosSisrec({ user, onSessionExpired }) {
         return body;
       };
       const canReadAudit = ['super_admin', 'auditor'].includes(user?.rol);
-      const [dashboard, merchants, tarifas, catalogs, payments, puestos, report, audit, forecast, risk] = await Promise.all([
+      const [dashboard, merchants, tarifas, catalogs, payments, puestos, audit, forecast, risk] = await Promise.all([
         request(`${apiBase}/dashboard?periodo=${encodeURIComponent(period)}`),
         request(`${apiBase}/comerciantes?limit=100&includeInactive=true`),
         request(`${apiBase}/tarifas`),
         request(`${apiBase}/catalogos`),
         request(`${apiBase}/cobros`),
         request(`${apiBase}/puestos`),
-        request(`${apiBase}/reportes?periodo=${encodeURIComponent(period)}`),
         canReadAudit ? request(`${apiBase}/auditoria`) : Promise.resolve({ data: [] }),
         request(`${apiBase}/analitica/prediccion?periodo=${encodeURIComponent(period)}&horizonte_dias=90`),
         request(`${apiBase}/analitica/riesgo?limit=5`)
@@ -86,7 +84,6 @@ export function useDatosSisrec({ user, onSessionExpired }) {
       setTariffRecords(tarifas.data || []);
       setCobros(payments.data || []);
       setMapPuestos(puestos.data || []);
-      setReportRows(report.data || []);
       setAuditRecords(audit.data || []);
       setCatalogos({ rubros: catalogs.rubros || [], zonas: catalogs.zonas || [] });
       setPredictiveData(forecast.data || EMPTY_FORECAST);
@@ -103,7 +100,6 @@ export function useDatosSisrec({ user, onSessionExpired }) {
       setTariffRecords([]);
       setCobros([]);
       setMapPuestos(await readMapSnapshot().catch(() => []));
-      setReportRows([]);
       setAuditRecords([]);
       setOperational(EMPTY_OPERATIONAL);
       setCatalogos({ rubros: [], zonas: [] });
@@ -120,16 +116,18 @@ export function useDatosSisrec({ user, onSessionExpired }) {
     }
     refresh();
     // La cola de cobros offline se sincroniza sola (useOfflineQueue); aquí, los cambios del mapa.
-    const syncAllPending = () => {
+    // Al abrir solo se recarga si se envió algo: antes cada página cargaba todos los datos dos veces.
+    syncPendingMapMutations().then((enviados) => { if (enviados) refresh(); }).catch(() => undefined);
+    // Al volver la señal se recarga siempre: los datos en pantalla pueden ser de antes del corte.
+    const alVolverLaSenal = () => {
       syncPendingMapMutations().then(() => refresh()).catch(() => undefined);
     };
-    syncAllPending();
-    window.addEventListener('online', syncAllPending);
-    return () => window.removeEventListener('online', syncAllPending);
+    window.addEventListener('online', alVolverLaSenal);
+    return () => window.removeEventListener('online', alVolverLaSenal);
   }, [user]);
 
   return {
     apiConnected, loading, dashboardStats, operational, comerciantes, tariffRecords, cobros,
-    mapPuestos, reportRows, auditRecords, catalogos, predictiveData, riskData, refresh
+    mapPuestos, auditRecords, catalogos, predictiveData, riskData, refresh
   };
 }

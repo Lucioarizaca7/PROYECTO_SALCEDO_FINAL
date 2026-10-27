@@ -54,7 +54,7 @@ export function ZonasPage() {
                     <td>{zona.nombre}</td>
                     <td>{zona.descripcion || 'Sin descripción'}</td>
                     <td>{TIPO_VIA_TEXTO[zona.tipo_via] || 'Sin dato'}</td>
-                    <td>{Number(zona.calles_count || 0)}</td>
+                    <td>{Number(zona.total_calles || 0)}</td>
                     <td>
                       <button className="table-action" type="button" onClick={() => zonas.editZone(zona)}>Editar</button>
                       <button className="table-action" type="button" onClick={() => zonas.deleteZone(zona.id)}>Eliminar</button>
@@ -70,7 +70,7 @@ export function ZonasPage() {
           <div className="panel-heading">
             <div>
               <div className="panel-title">Crear o editar calle</div>
-              <div className="panel-subtitle">Asocia cada vía a la zona correcta y mantén el estado visible.</div>
+              <div className="panel-subtitle">Asocia cada vía a la zona correcta.</div>
             </div>
           </div>
 
@@ -84,10 +84,6 @@ export function ZonasPage() {
               </select>
               <input required placeholder="Nombre de la calle" value={calleForm.nombre} onChange={(event) => setCalleForm({ ...calleForm, nombre: event.target.value })} />
               <input placeholder="Descripción" value={calleForm.descripcion} onChange={(event) => setCalleForm({ ...calleForm, descripcion: event.target.value })} />
-              <select value={calleForm.estado} onChange={(event) => setCalleForm({ ...calleForm, estado: event.target.value })}>
-                <option value="activo">Activo</option>
-                <option value="inactivo">Inactivo</option>
-              </select>
               <button className="primary-button" type="submit">{zonas.editingCalleId ? 'Actualizar calle' : 'Guardar calle'}</button>
               {zonas.editingCalleId && <button type="button" className="secondary-button" onClick={zonas.cancelCalle}>Cancelar</button>}
             </div>
@@ -96,14 +92,14 @@ export function ZonasPage() {
           <div className="table-card" style={{ marginTop: '16px' }}>
             <table>
               <thead>
-                <tr><th>Zona</th><th>Calle</th><th>Estado</th><th>Acciones</th></tr>
+                <tr><th>Zona</th><th>Calle</th><th>Descripción</th><th>Acciones</th></tr>
               </thead>
               <tbody>
                 {zonas.calleRecords.map((calle) => (
                   <tr key={calle.id}>
                     <td>{calle.zona || 'Sin zona'}</td>
                     <td>{calle.nombre}</td>
-                    <td><span className={`status ${calle.estado === 'activo' ? 'paid' : 'pending'}`}>{calle.estado === 'activo' ? 'Activo' : 'Inactivo'}</span></td>
+                    <td>{calle.descripcion || '—'}</td>
                     <td>
                       <button className="table-action" type="button" onClick={() => zonas.editCalle(calle)}>Editar</button>
                       <button className="table-action" type="button" onClick={() => zonas.deleteCalle(calle.id)}>Eliminar</button>

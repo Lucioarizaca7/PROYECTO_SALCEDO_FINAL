@@ -10,7 +10,7 @@ export const navItems = [
   { key: 'zonas', path: '/zonas', label: 'Zonas y calles', roles: ['super_admin', 'auditor'] },
   { key: 'mapa', path: '/mapa', label: 'Mapa de sitios', roles: ['super_admin', 'cobrador'] },
   { key: 'reportes', path: '/reportes', label: 'Reportes' },
-  { key: 'auditoria', path: '/auditoria', label: 'Auditoría' },
+  { key: 'auditoria', path: '/auditoria', label: 'Auditoría', roles: ['super_admin', 'auditor'] },
   { key: 'revision', path: '/revision', label: 'Revisión de cobros', roles: ['super_admin', 'auditor'] },
   { key: 'dispositivos', path: '/dispositivos', label: 'Dispositivos', roles: ['super_admin'] },
   { key: 'ia', path: '/analitica', label: 'Analítica de recaudación' },

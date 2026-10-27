@@ -64,7 +64,6 @@ export function IngresarPage({ onLogin, error, setError }) {
             </label>
 
             <div className="login-options">
-              <label className="check-label"><input type="checkbox" defaultChecked /> Recordarme</label>
               <button type="button" className="link-button" onClick={() => setError('Solicita el restablecimiento al administrador del sistema')}>¿Olvidaste tu contraseña?</button>
             </div>
 

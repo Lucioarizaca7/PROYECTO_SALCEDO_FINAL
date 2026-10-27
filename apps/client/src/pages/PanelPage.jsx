@@ -1,5 +1,5 @@
 import { Link } from 'react-router-dom';
-import { pathOf } from '../app/navegacion';
+import { canSee, navItems, pathOf } from '../app/navegacion';
 import { useSisrec } from '../app/SisrecContext';
 import { DashboardSkeleton } from '../components/ui/DashboardSkeleton';
 import { KpiCard } from '../components/ui/KpiCard';
@@ -8,6 +8,9 @@ import { formatPEN } from '../lib/formato';
 export function PanelPage() {
   const { user, loading, dashboardStats, operational, mapPuestos, auditRecords, riskData } = useSisrec();
   if (loading) return <DashboardSkeleton />;
+  const veAuditoria = canSee(navItems.find((item) => item.key === 'auditoria'), user?.rol);
+  // Alerta = riesgo alto o crítico, el mismo criterio con que el servidor marca `alerta` en la métrica.
+  const alertas = (riskData.records || []).filter((item) => ['alto', 'critico'].includes(item.nivel_riesgo));
 
   return (
     <section className="page">
@@ -34,7 +37,6 @@ export function PanelPage() {
               <div className="panel-title">Recaudacion por rubro</div>
               <div className="panel-subtitle">Importes acumulados en el periodo actual</div>
             </div>
-            <select className="select-small"><option>Esta semana</option></select>
           </div>
           <div className="activity-list">
             {operational.porRubro.length ? operational.porRubro.map((row) => (
@@ -59,24 +61,26 @@ export function PanelPage() {
       </div>
 
       <div className="lower-grid">
-        <div className="panel">
-          <div className="panel-heading">
-            <div>
-              <div className="panel-title">Actividad reciente</div>
-              <div className="panel-subtitle">Últimos movimientos registrados</div>
-            </div>
-            <Link className="view-all" to={pathOf('auditoria')}>Ver todo →</Link>
-          </div>
-          <div className="activity-list">
-            {auditRecords.slice(0, 5).map((item) => (
-              <div className="activity-item" key={item.id}>
-                <span className="activity-bullet"></span>
-                <div><strong>{item.accion} · {item.entidad}</strong><small>{item.usuario || `Usuario ${item.usuario_id}`} · {new Date(item.fecha).toLocaleString('es-PE')}</small></div>
+        {veAuditoria && (
+          <div className="panel">
+            <div className="panel-heading">
+              <div>
+                <div className="panel-title">Actividad reciente</div>
+                <div className="panel-subtitle">Últimos movimientos registrados</div>
               </div>
-            ))}
-            {!auditRecords.length && <div className="empty-state">Todavia no hay actividad de auditoria para mostrar.</div>}
+              <Link className="view-all" to={pathOf('auditoria')}>Ver todo →</Link>
+            </div>
+            <div className="activity-list">
+              {auditRecords.slice(0, 5).map((item) => (
+                <div className="activity-item" key={item.id}>
+                  <span className="activity-bullet"></span>
+                  <div><strong>{item.accion} · {item.entidad}</strong><small>{item.usuario || `Usuario ${item.usuario_id}`} · {new Date(item.fecha).toLocaleString('es-PE')}</small></div>
+                </div>
+              ))}
+              {!auditRecords.length && <div className="empty-state">Todavia no hay actividad de auditoria para mostrar.</div>}
+            </div>
           </div>
-        </div>
+        )}
 
         <div className="panel">
           <div className="panel-heading">
@@ -84,13 +88,13 @@ export function PanelPage() {
               <div className="panel-title">Alertas importantes</div>
               <div className="panel-subtitle">Requieren atención del equipo</div>
             </div>
-            <span className="status pending">{riskData.records?.length || 0} alertas</span>
+            <span className="status pending">{alertas.length} {alertas.length === 1 ? 'alerta' : 'alertas'}</span>
           </div>
           <div className="alerts-list">
-            {(riskData.records || []).slice(0, 4).map((item) => (
-              <div className="alert-item" key={item.comerciante_id}>{item.nombre} · Riesgo {item.nivel}: {item.motivo_principal}</div>
+            {alertas.slice(0, 4).map((item) => (
+              <div className="alert-item" key={item.comerciante_id}>{item.nombre} · Riesgo {item.nivel_riesgo}: {item.motivo_principal}</div>
             ))}
-            {!riskData.records?.length && <div className="empty-state">No hay alertas de morosidad calculadas.</div>}
+            {!alertas.length && <div className="empty-state">Ningún comerciante con riesgo alto de morosidad.</div>}
           </div>
         </div>
       </div>

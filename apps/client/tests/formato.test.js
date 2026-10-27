@@ -8,6 +8,7 @@ import { textoTarifa } from '../src/lib/formato.js';
 
 test('sin cobro por día muestra el monto de la tarifa', () => {
   assert.equal(textoTarifa({ tarifa: { monto_fijo: 90 } }), 'S/ 90');
+  assert.equal(textoTarifa({ tarifa: null, no_devengo: true, dias_asistidos: 0 }), 'Sin días cobrados en el mes');
 });
 
 test('con cobro por día: monto de un día × días cobrados, y cada puesto cuenta', () => {

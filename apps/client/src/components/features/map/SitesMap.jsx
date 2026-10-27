@@ -242,7 +242,7 @@ export function SitesMap({ sites = [], zonas = [], searchMerchants, onCollect, o
       <div className="map-toolbar">
         <div>
           <strong>Padrón geolocalizado</strong>
-          <span>{filteredSites.length} puestos visibles · {navigator.onLine ? 'datos sincronizados' : 'instantánea local'}</span>
+          <span>{filteredSites.length} {filteredSites.length === 1 ? 'puesto visible' : 'puestos visibles'} · {navigator.onLine ? 'datos sincronizados' : 'instantánea local'}</span>
         </div>
         <div className="map-filters" aria-label="Filtros del mapa">
           <button type="button" className={`secondary-button compact ${drawing ? 'map-tool-active' : ''}`} onClick={() => { setCorrectingLocation(false); setDrawing((value) => !value); }}>{drawing ? 'Cancelar pin' : 'Nuevo puesto'}</button>

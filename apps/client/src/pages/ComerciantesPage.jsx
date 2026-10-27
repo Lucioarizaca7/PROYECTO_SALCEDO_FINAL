@@ -15,7 +15,7 @@ export function ComerciantesPage() {
       form={merchants.form}
       setForm={merchants.setForm}
       isFormOpen={merchants.showForm}
-      setIsFormOpen={merchants.setShowForm}
+      onToggleForm={merchants.toggleForm}
       editingId={merchants.editingId}
       importPreview={merchants.padronPreview}
       importMessage={merchants.padronMessage}

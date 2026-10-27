@@ -51,6 +51,16 @@ export function useComerciantes() {
     setMessage('');
   };
 
+  // "Nuevo registro" abre siempre un formulario vacío. Antes, cerrar una edición y pulsar "Nuevo registro"
+  // reabría los datos del último editado y "Guardar" sobrescribía a ese comerciante en vez de crear uno.
+  const toggleForm = () => {
+    if (showForm || editingId) {
+      setEditingId(null);
+      setForm(EMPTY_MERCHANT);
+    }
+    setShowForm(!showForm);
+  };
+
   const deactivate = async (id) => {
     try {
       const response = await authFetch(`${apiBase}/comerciantes/${id}`, { method: 'DELETE' });
@@ -146,7 +156,7 @@ export function useComerciantes() {
   };
 
   return {
-    showForm, setShowForm, message, form, setForm, editingId,
+    showForm, toggleForm, message, form, setForm, editingId,
     padronPreview, padronMessage, padronLoading,
     submit, edit, deactivate, previewPadron, importPadron, downloadPadronTemplate, generatePortalPin
   };

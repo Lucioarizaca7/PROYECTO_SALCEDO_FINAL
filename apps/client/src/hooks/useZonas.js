@@ -3,7 +3,7 @@ import { useSisrec } from '../app/SisrecContext';
 import { apiBase, authFetch } from '../services/session';
 
 const EMPTY_ZONE = { nombre: '', descripcion: '', tipo_via: '' };
-const emptyCalle = (zonaId = '') => ({ zona_id: String(zonaId), nombre: '', descripcion: '', estado: 'activo' });
+const emptyCalle = (zonaId = '') => ({ zona_id: String(zonaId), nombre: '', descripcion: '' });
 
 // Página Zonas y calles: listas propias (GET /zonas trae también las calles) y su CRUD.
 export function useZonas() {
@@ -85,7 +85,7 @@ export function useZonas() {
   };
   const editCalle = (calle) => {
     setEditingCalleId(calle.id);
-    setCalleForm({ zona_id: String(calle.zona_id || ''), nombre: calle.nombre, descripcion: calle.descripcion || '', estado: calle.estado || 'activo' });
+    setCalleForm({ zona_id: String(calle.zona_id || ''), nombre: calle.nombre, descripcion: calle.descripcion || '' });
   };
 
   const cancelCalle = () => {

@@ -22,6 +22,8 @@ export const getInitials = (nombre) => {
 export function textoTarifa(balance = {}) {
   const puestos = balance.puestos_cobrados || [];
   const dias = Number(balance.dias_asistidos || 0);
+  // Sin días cobrados no hay tarifa que aplicar: "S/ 0" parecía una tarifa gratis.
+  if (!dias && balance.no_devengo) return 'Sin días cobrados en el mes';
   if (!dias) return `S/ ${balance.tarifa?.monto_fijo ?? 0}`;
   const enPuestos = puestos.length > 1 ? ` en ${puestos.length} puestos` : '';
   if (balance.monto_dia === null && puestos.length) {

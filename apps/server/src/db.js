@@ -421,9 +421,34 @@ export async function getOperationalDashboard(db, options = {}) {
   };
 }
 
+// Indicadores del panel. Morosidad = parte de lo devengado en el periodo que sigue impaga:
+// deuda pendiente / (deuda pendiente + lo cobrado). Antes se dividía la deuda entre sí misma y daba 0 % o 100 %.
+export function indicadoresPanel(metrics) {
+  const recaudacion = Number(metrics.recaudacion || 0);
+  const pagos = Number(metrics.pagos || 0);
+  const deudaPendiente = Number(metrics.deudaPendiente || 0);
+  const devengado = deudaPendiente + recaudacion;
+  const comerciantesActivos = Number(metrics.comerciantesActivos || 0);
+  return {
+    recaudacion,
+    pagos,
+    deudaPendiente,
+    deudaTotal: Number(devengado.toFixed(2)),
+    comerciantesActivos,
+    morosidad: devengado > 0 ? Number(((deudaPendiente / devengado) * 100).toFixed(1)) : 0,
+    totalRecaudado: recaudacion,
+    totalCobros: pagos,
+    totalComerciantes: comerciantesActivos
+  };
+}
+
+// Comerciantes a quienes se cobra: el pendiente de regularización paga igual que el activo (2026-10-27).
+// Sin él, el panel no sumaba su deuda y el padrón de la jornada no lo traía (no se le marcaba asistencia).
+const ESTADOS_QUE_PAGAN_SQL = `('activo', 'pendiente')`;
+
 // La deuda se devenga por liquidación (tarifa vigente - cobros del periodo).
 export async function getPendingDebt(db, period = currentPeriod(), maxMerchants = 300) {
-  const merchants = await rows(db, `SELECT id FROM comerciantes WHERE estado = 'activo' ORDER BY id LIMIT $1`, [maxMerchants]);
+  const merchants = await rows(db, `SELECT id FROM comerciantes WHERE estado IN ${ESTADOS_QUE_PAGAN_SQL} ORDER BY id LIMIT $1`, [maxMerchants]);
   let total = 0;
   for (const merchant of merchants) {
     try {
@@ -611,8 +636,21 @@ export async function scoreMorosidadComerciante(db, comercianteId) {
   };
 }
 
+// Comerciantes que se puntúan al recalcular el riesgo (el mismo tope que la deuda del panel).
+const MAX_COMERCIANTES_RIESGO = 300;
+
 export async function getRiskDashboard(db, options = {}) {
   const limit = Math.min(Math.max(Number(options.limit || 5), 1), 20);
+  // El puntaje guardado vale por el día (hora de Lima). Antes se calculaba una sola vez y el panel
+  // mostraba para siempre la alerta de esa fecha; además solo se puntuaban los primeros `limit` por id.
+  const ultimo = await first(db, `
+    SELECT MAX(generado_en) AS fecha FROM modelos_ia_metricas
+    WHERE modelo = 'riesgo_morosidad' AND entidad_tipo = 'comerciante'`);
+  if (!ultimo?.fecha || todayInLima(new Date(ultimo.fecha)) !== todayInLima()) {
+    const vigentes = await rows(db, `SELECT id FROM comerciantes WHERE estado <> 'inactivo' ORDER BY id LIMIT $1`, [MAX_COMERCIANTES_RIESGO]);
+    for (const { id } of vigentes) await scoreMorosidadComerciante(db, id);
+  }
+
   const records = await rows(db, `
     SELECT * FROM (
       SELECT DISTINCT ON (m.entidad_id)
@@ -622,43 +660,25 @@ export async function getRiskDashboard(db, options = {}) {
              ${TS('m.generado_en')} AS fecha_calculo
       FROM modelos_ia_metricas m
       JOIN comerciantes c ON c.id = m.entidad_id
-      WHERE m.modelo = 'riesgo_morosidad' AND m.entidad_tipo = 'comerciante'
+      WHERE m.modelo = 'riesgo_morosidad' AND m.entidad_tipo = 'comerciante' AND c.estado <> 'inactivo'
       ORDER BY m.entidad_id, m.generado_en DESC, m.id DESC
     ) latest
     ORDER BY score_riesgo DESC, id DESC
     LIMIT $1`, [limit]);
 
-  if (records.length) {
-    return {
-      summary: {
-        total: records.length,
-        bajo: records.filter((item) => item.nivel_riesgo === 'bajo').length,
-        medio: records.filter((item) => item.nivel_riesgo === 'medio').length,
-        alto: records.filter((item) => item.nivel_riesgo === 'alto').length,
-        critico: records.filter((item) => item.nivel_riesgo === 'critico').length
-      },
-      records: records.map(({ id, ...item }) => ({
-        ...item,
-        score_riesgo: Number(item.score_riesgo || 0),
-        nivel_riesgo: String(item.nivel_riesgo || 'bajo')
-      }))
-    };
-  }
-
-  const merchants = await getComerciantes(db, { includeInactive: true, limit: 1000 });
-  const computed = [];
-  for (const merchant of merchants.slice(0, limit)) {
-    computed.push(await scoreMorosidadComerciante(db, merchant.id));
-  }
   return {
     summary: {
-      total: computed.length,
-      bajo: computed.filter((item) => item.nivel === 'bajo').length,
-      medio: computed.filter((item) => item.nivel === 'medio').length,
-      alto: computed.filter((item) => item.nivel === 'alto').length,
-      critico: computed.filter((item) => item.nivel === 'critico').length
+      total: records.length,
+      bajo: records.filter((item) => item.nivel_riesgo === 'bajo').length,
+      medio: records.filter((item) => item.nivel_riesgo === 'medio').length,
+      alto: records.filter((item) => item.nivel_riesgo === 'alto').length,
+      critico: records.filter((item) => item.nivel_riesgo === 'critico').length
     },
-    records: computed
+    records: records.map(({ id, ...item }) => ({
+      ...item,
+      score_riesgo: Number(item.score_riesgo || 0),
+      nivel_riesgo: String(item.nivel_riesgo || 'bajo')
+    }))
   };
 }
 
@@ -712,7 +732,10 @@ export async function getRubros(db) {
 }
 
 export async function getZonas(db) {
-  return rows(db, 'SELECT id, codigo, nombre, descripcion, tipo_via FROM zonas ORDER BY nombre ASC');
+  return rows(db, `
+    SELECT z.id, z.codigo, z.nombre, z.descripcion, z.tipo_via,
+           (SELECT COUNT(*)::int FROM calles c WHERE c.zona_id = z.id) AS total_calles
+    FROM zonas z ORDER BY z.nombre ASC`);
 }
 
 const TIPOS_VIA = ['asfaltada', 'sin_asfaltar'];
@@ -828,6 +851,10 @@ export async function getComerciantePreferencias(db, comercianteId) {
 }
 
 export async function updateComerciantePreferencias(db, comercianteId, payload) {
+  // Sin esta comprobación un cuerpo vacío respondía "actualizadas" para un comerciante que no existe.
+  if (!(await first(db, 'SELECT 1 FROM comerciantes WHERE id = $1', [Number(comercianteId) || 0]))) {
+    throw new NotFoundError('Comerciante no encontrado');
+  }
   await withTransaction(async (client) => {
     await client.query('DELETE FROM comerciante_preferencias WHERE comerciante_id = $1', [Number(comercianteId)]);
     for (const [clave, valor] of Object.entries(payload || {})) {
@@ -2914,7 +2941,7 @@ export async function getJornadaPackage(db, { periodo = currentPeriod() } = {}) 
            CASE WHEN c.tipo_comerciante <> 'eventual' THEN (SELECT p.id FROM puestos p
              WHERE p.comerciante_id = c.id AND p.estado <> 'inactivo' ORDER BY p.id LIMIT 1) END AS puesto_ferial_id
     FROM comerciantes c JOIN rubros r ON r.id = c.rubro_id JOIN zonas z ON z.id = c.zona_id
-    WHERE c.estado = 'activo' ORDER BY c.nombre`);
+    WHERE c.estado IN ${ESTADOS_QUE_PAGAN_SQL} ORDER BY c.nombre`);
 
   const comerciantes = [];
   for (const merchant of merchants) {

@@ -81,7 +81,7 @@ export function useSitios() {
       return;
     }
     navigate(pathOf('pagos'), {
-      state: { cobrarPuesto: { id: site.comerciante_id, nombre: site.comerciante, codigo: site.codigo, rubro: site.categoria, zona: site.zona, saldo: site.saldo_pendiente } }
+      state: { cobrarPuesto: { id: site.comerciante_id, nombre: site.comerciante, codigo_puesto: site.codigo, rubro: site.categoria, zona: site.zona, saldo: site.saldo_pendiente } }
     });
   };
 

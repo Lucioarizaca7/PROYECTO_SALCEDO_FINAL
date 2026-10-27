@@ -170,7 +170,7 @@ export function usePagos() {
         if (puesto) {
           const merchantResponse = await authFetch(`${apiBase}/comerciantes/${puesto.comerciante_id}`);
           const merchantData = await merchantResponse.json();
-          if (merchantResponse.ok) found = merchantData.data;
+          if (merchantResponse.ok) found = { ...merchantData.data, codigo_puesto: puesto.codigo };
         }
       }
       if (!found) return setMessage('No se encontró un comerciante con ese dato.');
