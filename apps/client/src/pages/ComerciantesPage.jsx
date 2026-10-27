@@ -22,6 +22,7 @@ export function ComerciantesPage() {
       importLoading={merchants.padronLoading}
       onPreviewFile={merchants.previewPadron}
       onImport={merchants.importPadron}
+      onDownloadTemplate={merchants.downloadPadronTemplate}
       onSubmit={merchants.submit}
       onEdit={merchants.edit}
       onDeactivate={merchants.deactivate}

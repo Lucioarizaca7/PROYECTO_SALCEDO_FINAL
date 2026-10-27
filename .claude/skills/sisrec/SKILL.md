@@ -85,7 +85,7 @@ grep -rn "nombreFuncion(" apps/server/src apps/client/src
 
 ## 3. Base de datos
 
-- **Las migraciones solo se agregan**: `migrations/000N_nombre.sql` (la siguiente es la 0015), con `BEGIN; … COMMIT;`, comentarios en español, la corrección de los datos existentes y su prueba. Nunca se edita una que ya se aplicó.
+- **Las migraciones solo se agregan**: `migrations/000N_nombre.sql` (la siguiente es la 0016), con `BEGIN; … COMMIT;`, comentarios en español, la corrección de los datos existentes y su prueba. Nunca se edita una que ya se aplicó.
 - **La regla también va en la base**: CHECK, FK, UNIQUE (parcial si hace falta). El JS valida para dar un buen mensaje; la base impide el dato malo aunque entre por otro camino. Ejemplos: `puestos_ocupado_con_titular`, `tarifas_zona_o_tipo_via`, `UNIQUE (serie, numero)` de tickets.
 - Dinero en `NUMERIC(12,2)`; se redondea solo al mostrar.
 - Todo lo que escribe en más de una tabla va en `withTransaction`. Lo que lee un saldo para luego escribir **bloquea** (`FOR UPDATE` / `FOR NO KEY UPDATE`) para que dos cobros simultáneos no pasen del saldo.
@@ -100,7 +100,7 @@ Detalle y dónde vive cada control: `references/seguridad.md`. Lo mínimo en cad
 
 - **Secretos**: solo por variables de entorno leídas en `config.ts` (ningún otro módulo lee `process.env`). Nada de claves, tokens ni contraseñas en el código, en pruebas que se commitean con valores reales, ni en el chat.
 - Los usuarios demo existen **solo fuera de producción** (`config.isProduction` lo impide). No se agregan usuarios nuevos con clave en el código: en producción se usa `npm run crear-admin` / `crear-usuario`.
-- **Rutas**: toda ruta privada lleva `requireAuth` + `requireRoles([...])` explícitos (o `...staffOnly`); si modifica datos, `auditMutation`. Una ruta GET nueva sube el conteo fijo de `tests/api-seguridad.test.js` (hoy 39) y se agrega una prueba de que un rol sin permiso recibe 403.
+- **Rutas**: toda ruta privada lleva `requireAuth` + `requireRoles([...])` explícitos (o `...staffOnly`); si modifica datos, `auditMutation`. Una ruta GET nueva sube el conteo fijo de `tests/api-seguridad.test.js` (hoy 40) y se agrega una prueba de que un rol sin permiso recibe 403.
 - **Sesión**: JWT de acceso corto en memoria; refresh en la cookie HttpOnly `sisrec_refresh`. Ningún token en `localStorage`/`sessionStorage`, en la URL ni en logs.
 - **Contraseñas y PIN**: bcrypt; el PIN del portal se muestra una vez y nunca se audita en claro.
 - **CORS**: lista blanca (`FRONTEND_URL`); jamás `origin: '*'` con `credentials`.

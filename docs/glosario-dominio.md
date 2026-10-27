@@ -26,9 +26,11 @@ Los términos que usa la Municipalidad de Salcedo son los mismos en la base de d
 | **Cobro observado** | Cobro hecho sin señal que excede el saldo; lo acepta o anula el administrador | `cobros_observados` | `/api/v1/cobros/observados` | `resolveCobroObservado` | Revisión de cobros |
 | **Comprobante / recibo** | Constancia del cobro, `R-000123` (o `PROV-…` sin señal) | `comprobantes.numero_correlativo` | `comprobante` | — | recibo térmico |
 | **Jornada** | Día de trabajo del cobrador; el padrón se descarga al iniciarla | — | `/api/v1/jornada/paquete` | `getJornadaPackage`, `jornadaOffline.js` | Jornada sin señal |
-| **Padrón** | Lista oficial de comerciantes | `comerciantes` | `/api/v1/padron/importar` | `padronImport.js` | importar Excel |
+| **Padrón** | Lista oficial de comerciantes | `comerciantes` | `/api/v1/comerciantes/importar-padron` | `padronImport.js` | importar Excel |
+| **Plantilla del padrón** | Excel oficial con los encabezados que reconoce la importación y listas de zonas, rubros, tipos y estado | — | `/api/v1/comerciantes/plantilla-padron` | `padronPlantilla.js` | Descargar plantilla oficial (Comerciantes) |
 | **Empadronamiento** | Situación del registro: regularizado o pendiente de regularización | `comerciantes.estado_empadronamiento` | `estado_empadronamiento` | — | — |
-| **Asistencia ferial** | Marca de que el ferial vino (P) o faltó (F) un día; el ferial paga solo los días que asistió | `asistencias_feriales` (`asistio`) | `/api/v1/asistencias` | `marcarAsistencias` | Asistencia ferial de hoy (Pagos) |
+| **Pendiente de regularización** | Titular importado sin DNI: queda con un documento provisional `TEMP_DNI_…` y paga igual; se regulariza al registrar su DNI real | `comerciantes.estado_empadronamiento = 'PENDIENTE_REGULARIZACION'` | `pendingMerchants` | `esDocumentoTemporal`, `updateComerciante` | sin DNI, pendientes de regularizar |
+| **Asistencia ferial** | Marca de que el ferial vino (P) o faltó (F) un día; el ferial paga solo los días que asistió. La marca es del titular que tenía el puesto ese día | `asistencias_feriales` (`asistio`, `comerciante_id`) | `/api/v1/asistencias` | `marcarAsistencias` | Asistencia ferial de hoy (Pagos) |
 | **Tipo de vía** | Si la zona es de vía asfaltada o sin asfaltar; puede tener tarifa propia | `zonas.tipo_via`, `tarifas.tipo_via` | `tipo_via` | `findApplicableTariff` | Zonas, Tarifas |
 | **Deuda acumulada** | Meses impagos desde el alta, nunca antes del inicio de cobro | — (se calcula) | `deuda_acumulada` | `calcularDeudaAcumulada` | Pagos, portal |
 | **Inicio de cobro** | Primer mes desde el que se suma la deuda acumulada | `parametros_sistema` | `/api/v1/parametros` | `setInicioCobro` | Tarifas |

@@ -1552,6 +1552,26 @@ tbody td {
   padding-left: 20px;
 }
 
+/* Avisos de la importación que no impiden importar: reactivaciones, regularizaciones y advertencias. */
+.import-notices {
+  padding: 12px;
+  border: 1px solid rgba(59, 130, 246, 0.25);
+  border-radius: 10px;
+  background: var(--blue-soft);
+  font-size: 0.82rem;
+}
+
+.import-notices summary {
+  cursor: pointer;
+  font-weight: 800;
+}
+
+.import-notices ul {
+  display: grid;
+  gap: 5px;
+  padding-left: 20px;
+}
+
 .import-policy-note {
   margin: 0;
   max-width: 900px;

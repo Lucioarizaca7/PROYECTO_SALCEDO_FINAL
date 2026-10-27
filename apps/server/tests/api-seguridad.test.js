@@ -50,9 +50,9 @@ const concrete = (path) => path.replace(/:[A-Za-z_]+/g, '1');
 test('toda ruta GET de la API exige token, salvo las públicas declaradas', async () => {
   const routes = registeredGetRoutes();
   // 27 rutas GET al dividir index.ts en routers, más /cobros/tiempos, /asistencias, /parametros, /caja/resumen, /caja/cierres, /asistencias/observaciones y las dos
-  // públicas del recibo (fase 3), y /tickets/series, /tickets/lotes, /tickets/cobradores y /tickets/mios.
-  // Si cambia, revise que las nuevas pidan token.
-  assert.equal(routes.length, 39, `cambió el número de rutas GET: ${routes.length}`);
+  // públicas del recibo (fase 3), /tickets/series, /tickets/lotes, /tickets/cobradores, /tickets/mios y
+  // /comerciantes/plantilla-padron. Si cambia, revise que las nuevas pidan token.
+  assert.equal(routes.length, 40, `cambió el número de rutas GET: ${routes.length}`);
 
   const open = [];
   for (const path of routes) {
@@ -68,6 +68,24 @@ test('las rutas con datos personales rechazan al rol comerciante', async () => {
     const response = await fetch(`${baseUrl}${path}`, { headers: { Authorization: `Bearer ${tokens.comerciante}` } });
     assert.equal(response.status, 403, path);
   }
+});
+
+test('la plantilla y la importación del padrón son solo del administrador y el auditor', async () => {
+  for (const rol of ['cobrador', 'comerciante']) {
+    const headers = { Authorization: `Bearer ${tokens[rol]}` };
+    assert.equal((await fetch(`${baseUrl}/api/v1/comerciantes/plantilla-padron`, { headers })).status, 403, rol);
+    const importar = await fetch(`${baseUrl}/api/v1/comerciantes/importar-padron`, {
+      method: 'POST', headers: { ...headers, 'Content-Type': 'application/json' }, body: JSON.stringify({ previewToken: 'x' })
+    });
+    assert.equal(importar.status, 403, rol);
+  }
+  const plantilla = await fetch(`${baseUrl}/api/v1/comerciantes/plantilla-padron`, { headers: { Authorization: `Bearer ${tokens.admin}` } });
+  assert.equal(plantilla.status, 200);
+  assert.match(plantilla.headers.get('content-type'), /spreadsheetml/);
+  const vencida = await fetch(`${baseUrl}/api/v1/comerciantes/importar-padron`, {
+    method: 'POST', headers: { Authorization: `Bearer ${tokens.admin}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ previewToken: 'no-existe' })
+  });
+  assert.equal(vencida.status, 410, 'un token desconocido o vencido pide volver a subir el archivo');
 });
 
 test('solo el administrador asigna, reasigna y devuelve lotes de tickets', async () => {

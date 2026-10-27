@@ -896,8 +896,14 @@ export async function countComerciantes(db, options = {}) {
   return Number(result.total);
 }
 
-export function validateDocument(value) {
+// Documento provisional de un titular del padrón sin DNI (TEMP_DNI_ + huella del nombre): lo genera la
+// importación del padrón o la semilla ferial; nadie lo escribe a mano desde la API.
+const DOCUMENTO_TEMPORAL_RE = /^TEMP_[A-Z0-9_]+$/;
+export const esDocumentoTemporal = (value) => DOCUMENTO_TEMPORAL_RE.test(String(value || ''));
+
+export function validateDocument(value, { temporal = false } = {}) {
   const document = String(value || '').trim();
+  if (temporal && esDocumentoTemporal(document)) return document;
   const isDni = /^\d{8}$/.test(document);
   const isRuc = /^(10|15|17|20)\d{9}$/.test(document);
   if (!isDni && !isRuc) {
@@ -916,8 +922,11 @@ async function ensureUniqueActiveDocument(db, dniRuc, excludeId = null) {
 const TIPOS_COMERCIANTE = ['eventual', 'permanente', 'ferial'];
 const ESTADOS_COMERCIANTE = ['activo', 'inactivo', 'pendiente'];
 
-export async function insertComerciante(db, payload) {
-  const dniRuc = validateDocument(payload.dni_ruc);
+// documentoTemporal: solo la importación del padrón lo activa, para el titular sin DNI. Ese comerciante
+// queda PENDIENTE_REGULARIZACION hasta que se registre su DNI real.
+export async function insertComerciante(db, payload, { documentoTemporal = false } = {}) {
+  const dniRuc = validateDocument(payload.dni_ruc, { temporal: documentoTemporal });
+  const empadronamiento = esDocumentoTemporal(dniRuc) ? 'PENDIENTE_REGULARIZACION' : 'REGULARIZADO';
   const nombre = String(payload.nombre || '').trim();
   const rubroId = Number(payload.rubro_id);
   const zonaId = Number(payload.zona_id);
@@ -942,14 +951,14 @@ export async function insertComerciante(db, payload) {
     await db.query(`
       UPDATE comerciantes
       SET nombre = $1, rubro_id = $2, zona_id = $3, tipo_comerciante = $4, estado = $5,
-          usuario_creador_id = $6, fecha_baja = NULL
-      WHERE id = $7`, [nombre, rubroId, zonaId, tipoComerciante, estado, creatorId, dormant.id]);
+          usuario_creador_id = $6, fecha_baja = NULL, estado_empadronamiento = $8
+      WHERE id = $7`, [nombre, rubroId, zonaId, tipoComerciante, estado, creatorId, dormant.id, empadronamiento]);
     id = dormant.id;
   } else {
     const created = await first(db, `
-      INSERT INTO comerciantes (dni_ruc, nombre, rubro_id, zona_id, tipo_comerciante, estado, usuario_creador_id)
-      VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id`,
-    [dniRuc, nombre, rubroId, zonaId, tipoComerciante, estado, creatorId]);
+      INSERT INTO comerciantes (dni_ruc, nombre, rubro_id, zona_id, tipo_comerciante, estado, usuario_creador_id, estado_empadronamiento)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id`,
+    [dniRuc, nombre, rubroId, zonaId, tipoComerciante, estado, creatorId, empadronamiento]);
     id = created.id;
   }
 
@@ -973,14 +982,21 @@ export async function updateComerciante(db, id, payload) {
   const current = await findComerciante(db, id);
   if (!current) throw new NotFoundError('Comerciante no encontrado');
 
-  const dniRuc = payload.dni_ruc === undefined ? current.dni_ruc : validateDocument(payload.dni_ruc);
+  // El documento provisional se conserva mientras no se envíe otro; uno nuevo tiene que ser un DNI/RUC real.
+  const sameDocument = payload.dni_ruc === undefined || String(payload.dni_ruc).trim() === current.dni_ruc;
+  const dniRuc = sameDocument ? current.dni_ruc : validateDocument(payload.dni_ruc);
+  // Registrar el DNI real de un titular importado sin DNI lo regulariza.
+  const regulariza = !sameDocument && esDocumentoTemporal(current.dni_ruc);
   const nombre = payload.nombre === undefined ? current.nombre : String(payload.nombre).trim();
   const rubroId = payload.rubro_id === undefined ? current.rubro_id : Number(payload.rubro_id);
   const zonaId = payload.zona_id === undefined ? current.zona_id : Number(payload.zona_id);
   const tipoComerciante = payload.tipo_comerciante === undefined
     ? (payload.categoria === undefined ? current.tipo_comerciante : String(payload.categoria).trim())
     : String(payload.tipo_comerciante).trim();
-  const estado = payload.estado === undefined ? current.estado : String(payload.estado).trim();
+  // Al regularizarse, el pendiente pasa a activo salvo que se pida otro estado.
+  const estado = payload.estado === undefined
+    ? (regulariza && current.estado === 'pendiente' ? 'activo' : current.estado)
+    : String(payload.estado).trim();
 
   if (!nombre || !rubroId || !zonaId) throw new ValidationError('Nombre, rubro y zona son obligatorios');
   if (!TIPOS_COMERCIANTE.includes(tipoComerciante)) throw new ValidationError('Tipo de comerciante no válido');
@@ -990,8 +1006,9 @@ export async function updateComerciante(db, id, payload) {
 
   await db.query(`
     UPDATE comerciantes
-    SET dni_ruc = $1, nombre = $2, rubro_id = $3, zona_id = $4, tipo_comerciante = $5, estado = $6
-    WHERE id = $7`, [dniRuc, nombre, rubroId, zonaId, tipoComerciante, estado, Number(id)]);
+    SET dni_ruc = $1, nombre = $2, rubro_id = $3, zona_id = $4, tipo_comerciante = $5, estado = $6,
+        estado_empadronamiento = CASE WHEN $8 THEN 'REGULARIZADO' ELSE estado_empadronamiento END
+    WHERE id = $7`, [dniRuc, nombre, rubroId, zonaId, tipoComerciante, estado, Number(id), regulariza]);
 
   // Pasar a inactivo editando el estado es una baja como la de deactivateComerciante: sus puestos dejan
   // de generar deuda. Al reactivarlo se limpia la fecha de baja; los puestos se vuelven a asignar.
@@ -1123,18 +1140,24 @@ async function validatePuestoPlacement(db, { comercianteId, zonaId, direccion, e
   if (duplicate) throw new ConflictError('El puesto físico ya está asignado a otro comerciante');
 }
 
-export async function insertPuesto(db, payload) {
+// devolver: false evita recalcular el estado de pago del puesto (findPuesto) cuando el llamador no lo usa,
+// como la importación del padrón, que guarda miles de puestos seguidos.
+export async function insertPuesto(db, payload, { devolver = true } = {}) {
   const comercianteId = parseComercianteId(payload.comerciante_id) ?? null;
   const zonaId = Number(payload.zona_id);
   const direccion = String(payload.direccion || '').trim();
-  const metros = Number(payload.metros_cuadrados);
+  // null = sin metraje: solo vale en una zona con tipo de vía, donde el cobro es por día y no usa metros.
+  const metros = payload.metros_cuadrados === null ? null : Number(payload.metros_cuadrados);
   const estado = String(payload.estado || (comercianteId ? 'ocupado' : 'disponible')).trim();
   const codigo = String(payload.codigo_puesto || payload.codigoPuesto || '').trim() || null;
   const latitud = parseCoord(payload.latitud);
   const longitud = parseCoord(payload.longitud);
 
-  if (!zonaId || !direccion || !Number.isFinite(metros) || metros <= 0) {
+  if (!zonaId || !direccion || (metros !== null && (!Number.isFinite(metros) || metros <= 0))) {
     throw new ValidationError('Zona, dirección y metros cuadrados válidos son obligatorios');
+  }
+  if (metros === null && !(await first(db, 'SELECT id FROM zonas WHERE id = $1 AND tipo_via IS NOT NULL', [zonaId]))) {
+    throw new ValidationError('El metraje es obligatorio en una zona sin tipo de vía: su tarifa puede ser por metro cuadrado');
   }
   if (estado === 'inactivo') throw new ValidationError('Estado de puesto no válido');
   await validatePuestoPlacement(db, { comercianteId, zonaId, direccion, estado });
@@ -1150,11 +1173,11 @@ export async function insertPuesto(db, payload) {
     if (error.code === '23505') throw new ConflictError(`El código de puesto ${finalCode} ya está asignado`);
     throw error;
   }
-  return findPuesto(db, next.id);
+  return devolver ? findPuesto(db, next.id) : { id: Number(next.id) };
 }
 
 // Si se envía comerciante_id sin estado: con titular pasa a ocupado; con null queda libre (disponible).
-export async function updatePuesto(db, id, payload) {
+export async function updatePuesto(db, id, payload, { devolver = true } = {}) {
   const puestoId = Number(id);
   const current = await first(db, 'SELECT * FROM puestos WHERE id = $1', [puestoId]);
   if (!current) throw new NotFoundError('Puesto no encontrado');
@@ -1181,7 +1204,7 @@ export async function updatePuesto(db, id, payload) {
     WHERE id = $8`,
   [comercianteId, zonaId, direccion, metros, estado, latitud, longitud, puestoId]);
 
-  return findPuesto(db, puestoId);
+  return devolver ? findPuesto(db, puestoId) : { id: puestoId };
 }
 
 // Deja el puesto físico sin titular para asignarlo a otro comerciante; los cobros pasados no cambian.
@@ -1334,11 +1357,13 @@ async function findApplicableTariff(db, merchant, periodo) {
 // mismo día son dos cobros). Cuenta también el puesto que conserva como ausente. Varias marcas del mismo
 // puesto y día cuentan una vez, y la marca de la app (sesion '') manda sobre las del Excel de ese puesto y
 // día: si el cobrador marcó "no salió", la P importada no cuenta.
+// Los días son del titular de cada marca (a.comerciante_id, migración 0015), no del que tiene el puesto hoy:
+// si el puesto pasó a otro o se liberó, lo marcado antes lo sigue debiendo quien lo tenía.
 async function asistenciasPorPuesto(db, merchantId, periodo) {
   const data = await rows(db, `
     SELECT p.id AS puesto_id, p.codigo_puesto, p.zona_id, p.metros_cuadrados, COUNT(DISTINCT a.fecha)::int AS dias
     FROM asistencias_feriales a JOIN puestos p ON p.id = a.puesto_id
-    WHERE p.comerciante_id = $1 AND a.asistio AND to_char(a.fecha, 'YYYY-MM') = $2
+    WHERE a.comerciante_id = $1 AND a.asistio AND to_char(a.fecha, 'YYYY-MM') = $2
       AND (a.sesion = '' OR NOT EXISTS (
         SELECT 1 FROM asistencias_feriales app WHERE app.puesto_id = a.puesto_id AND app.fecha = a.fecha AND app.sesion = ''))
     GROUP BY p.id ORDER BY p.id`,
@@ -1497,7 +1522,8 @@ export async function calcularLiquidacion(db, comercianteId, periodo, { dia = nu
   if (!merchant) throw new NotFoundError('Comerciante no encontrado');
 
   const merchantType = String(merchant.tipo_comerciante || '').trim().toLowerCase();
-  const pendingRegularization = String(merchant.estado_empadronamiento || '').toUpperCase() === 'PENDIENTE_REGULARIZACION';
+  // Un pendiente de regularización (titular sin DNI) paga igual que cualquier otro: decisión del usuario,
+  // 2026-10-27. Antes no devengaba si le faltaba el metraje.
   const puesto = await findMerchantPost(db, merchant.id);
 
   const noDevengo = (motivo, extra = {}) => ({
@@ -1515,9 +1541,6 @@ export async function calcularLiquidacion(db, comercianteId, periodo, { dia = nu
     ...extra
   });
 
-  if (pendingRegularization && (!puesto || puesto.metros_cuadrados === null || puesto.metros_cuadrados === undefined)) {
-    return noDevengo('pendiente_regularizacion_sin_metraje', { metros_cuadrados: null, estado: 'pendiente_regularizacion' });
-  }
   if (merchantType === 'eventual') {
     const day = dia || todayInLima();
     if (day.slice(0, 7) !== periodo) return noDevengo('eventual');
@@ -1671,7 +1694,7 @@ export async function getAsistencias(db, { fecha } = {}) {
     FROM puestos p
     JOIN comerciantes c ON c.id = p.comerciante_id
     LEFT JOIN zonas z ON z.id = p.zona_id
-    LEFT JOIN asistencias_feriales a ON a.puesto_id = p.id AND a.fecha = $1::date AND a.sesion = ''
+    LEFT JOIN asistencias_feriales a ON a.puesto_id = p.id AND a.fecha = $1::date AND a.sesion = '' AND a.comerciante_id = c.id
     LEFT JOIN usuarios u ON u.id = a.registrado_por
     WHERE c.tipo_comerciante IN ('ferial', 'permanente') AND c.estado <> 'inactivo' AND p.estado <> 'inactivo'
     ORDER BY z.nombre NULLS LAST, p.codigo_puesto NULLS LAST, p.id`, [dia]);
@@ -1726,21 +1749,22 @@ export async function marcarAsistencias(_db, marcas, { usuarioId = null, audit =
       const { asistio, motivo, observacion } = parseMarcaAsistencia(marca);
 
       const puesto = await first(client, `
-        SELECT p.id, c.tipo_comerciante, c.rubro_id, c.zona_id FROM puestos p JOIN comerciantes c ON c.id = p.comerciante_id WHERE p.id = $1`, [puestoId]);
+        SELECT p.id, c.id AS comerciante_id, c.tipo_comerciante, c.rubro_id, c.zona_id FROM puestos p JOIN comerciantes c ON c.id = p.comerciante_id WHERE p.id = $1`, [puestoId]);
       if (!puesto) throw new NotFoundError(`El puesto ${puestoId} no existe o no tiene titular`);
       if (!(await cobraPorAsistencia(client, puesto, fecha.slice(0, 7)))) {
         throw new ValidationError(`El puesto ${puestoId} no es de un comerciante ferial ni tiene tarifa por día cobrado`);
       }
 
+      // Corregir una marca no cambia de quién es: el titular queda el de la primera marca de ese día.
       const fila = await first(client, `
-        INSERT INTO asistencias_feriales (puesto_id, fecha, sesion, marca, fuente, registrado_por, motivo, observacion)
-        VALUES ($1, $2, '', $3, 'app', $4, $5, $6)
+        INSERT INTO asistencias_feriales (puesto_id, fecha, sesion, marca, fuente, registrado_por, motivo, observacion, comerciante_id)
+        VALUES ($1, $2, '', $3, 'app', $4, $5, $6, $7)
         ON CONFLICT (puesto_id, fecha, sesion) DO UPDATE
           SET marca = EXCLUDED.marca, fuente = EXCLUDED.fuente, registrado_por = EXCLUDED.registrado_por, registrado_en = now(),
               motivo = EXCLUDED.motivo, observacion = EXCLUDED.observacion
-        RETURNING id, puesto_id, ${DAY('fecha')} AS fecha, marca, asistio, motivo, observacion`,
-      [puestoId, fecha, asistio ? 'P' : 'F', usuarioId ? Number(usuarioId) : null, motivo, observacion]);
-      guardadas.push({ ...fila, id: Number(fila.id), puesto_id: Number(fila.puesto_id) });
+        RETURNING id, puesto_id, comerciante_id, ${DAY('fecha')} AS fecha, marca, asistio, motivo, observacion`,
+      [puestoId, fecha, asistio ? 'P' : 'F', usuarioId ? Number(usuarioId) : null, motivo, observacion, Number(puesto.comerciante_id)]);
+      guardadas.push({ ...fila, id: Number(fila.id), puesto_id: Number(fila.puesto_id), comerciante_id: Number(fila.comerciante_id) });
     }
     if (audit) {
       await appendAudit(client, {
@@ -1776,7 +1800,8 @@ export async function getObservacionesCobro(db, { desde, hasta, comercianteId, c
            z.nombre AS zona, u.nombre AS registrado_por, ${TS('a.registrado_en')} AS registrado_en
     FROM asistencias_feriales a
     JOIN puestos p ON p.id = a.puesto_id
-    JOIN comerciantes c ON c.id = p.comerciante_id
+    -- El comerciante de la observación es el de la marca, aunque el puesto ya tenga otro titular.
+    JOIN comerciantes c ON c.id = a.comerciante_id
     LEFT JOIN zonas z ON z.id = p.zona_id
     LEFT JOIN usuarios u ON u.id = a.registrado_por
     WHERE (a.motivo IS NOT NULL OR a.observacion IS NOT NULL) AND a.fecha BETWEEN $1::date AND $2::date${filtros}
@@ -2194,8 +2219,8 @@ async function marcarDiaCobrado(db, comercianteId, cobradorId, dia, periodo) {
   const merchant = await findComerciante(db, comercianteId);
   if (!merchant || !(await cobraPorAsistencia(db, merchant, dia.slice(0, 7)))) return;
   const marcado = await first(db, `
-    SELECT 1 AS ok FROM asistencias_feriales a JOIN puestos p ON p.id = a.puesto_id
-    WHERE p.comerciante_id = $1 AND a.fecha = $2::date AND a.sesion = '' LIMIT 1`, [comercianteId, dia]);
+    SELECT 1 AS ok FROM asistencias_feriales a
+    WHERE a.comerciante_id = $1 AND a.fecha = $2::date AND a.sesion = '' LIMIT 1`, [comercianteId, dia]);
   if (marcado) return;
   await db.query(`
     INSERT INTO asistencias_feriales (puesto_id, fecha, sesion, marca, fuente, registrado_por)
