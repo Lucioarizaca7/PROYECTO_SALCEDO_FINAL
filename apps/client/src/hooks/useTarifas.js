@@ -45,8 +45,10 @@ export function useTarifas() {
   const [message, setMessage] = useState('');
   const [form, setForm] = useState(NEW_TARIFF);
 
+  // Sin vaciar el formulario, "Nueva tarifa" tras editar mostraba esa tarifa y guardaba un duplicado.
   const toggleNew = () => {
     setEditingId(null);
+    setForm(NEW_TARIFF);
     setMessage('');
     setShowForm((current) => !current);
   };

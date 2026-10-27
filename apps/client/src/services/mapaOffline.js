@@ -52,8 +52,10 @@ export async function mapFetch(url, options) {
   }
 }
 
+// Devuelve cuántos cambios se enviaron: con 0 no hace falta recargar los datos.
 export async function syncPendingMapMutations() {
-  if (!navigator.onLine) return;
+  if (!navigator.onLine) return 0;
+  let enviados = 0;
 
   const db = await openOfflineDatabase();
   const readTx = db.transaction('mapa_pendientes', 'readonly');
@@ -82,5 +84,7 @@ export async function syncPendingMapMutations() {
       deleteTx.oncomplete = resolve;
       deleteTx.onerror = () => reject(deleteTx.error);
     });
+    enviados += 1;
   }
+  return enviados;
 }

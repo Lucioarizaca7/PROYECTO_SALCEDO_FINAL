@@ -68,6 +68,13 @@ Pendientes menores:
   - confirmar 3 000 filas tarda ~32 s en local (Docker en Windows), unas 12 consultas por fila. Para bajar de un segundo haría falta guardar en lote con `unnest`, con una prueba que compare el resultado con `insertComerciante`/`insertPuesto`;
   - `exceljs` trae `uuid` < 11.1.1 (aviso moderado de `npm audit`).
 
+## Pendientes de la auditoría full-stack (2026-10-27)
+
+- **Calles sin estado.** La tabla `calles` no tiene columna `estado`; la pantalla ofrecía Activo/Inactivo y no se guardaba (todas salían "Inactivo"). Se quitó el selector. Si hace falta dar de baja calles, va una migración nueva con `estado` y su CHECK.
+- **Barra superior.** Se quitaron la caja "Buscar registro" y el botón de notificaciones porque no tenían ninguna acción. Una búsqueda global sería una función nueva.
+- **Riesgo de morosidad N+1.** `getRiskDashboard` recalcula una vez al día con un `calcularLiquidacion` por comerciante (hasta 300); con un padrón grande conviene la liquidación en lote (paso 6).
+- **Tarifas superpuestas.** El tarifario local tiene varias tarifas activas iguales para `comida` desde 2026-01-01; `findApplicableTariff` toma una. Falta decidir si la base debe impedir dos tarifas vigentes para el mismo rubro, zona y tipo de vía.
+
 ## Orden de refactorización sugerido (de menor a mayor riesgo)
 
 Los pasos 1 a 3 y el 5 están en la rama `refactor/arquitectura` (commits "Refactor 1" a "Refactor 3" y "Refactor 5", 2026-10-16). El paso 4 está en la rama `claude/compassionate-hermann-e2df59` (commit 84e687e7), y el 6 se trabaja encima de ella; falta unirlas.

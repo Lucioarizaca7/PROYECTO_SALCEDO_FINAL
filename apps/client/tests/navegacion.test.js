@@ -24,6 +24,9 @@ test('el menú de cada rol solo muestra lo que su rol puede usar', () => {
   assert.ok(keys('auditor').includes('revision'));
   assert.deepEqual(keys('super_admin'), navItems.map((item) => item.key));
   assert.equal(canSee(navItems.find((item) => item.key === 'dispositivos'), 'cobrador'), false);
+  // El servidor responde 403 al cobrador en /auditoria: el menú no debe ofrecerla.
+  assert.ok(!keys('cobrador').includes('auditoria'));
+  assert.ok(keys('auditor').includes('auditoria'));
 });
 
 test('sin historial, la sugerencia express es el saldo del mes en efectivo', () => {

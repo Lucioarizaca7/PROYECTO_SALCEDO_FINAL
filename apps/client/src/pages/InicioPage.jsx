@@ -29,7 +29,7 @@ export function InicioPage({ stats }) {
         <nav>
           <a href="#beneficios">Beneficios</a>
           <a href="#modulos">Módulos</a>
-          <a href="#soporte">Soporte</a>
+          <a href="#transparencia">Transparencia</a>
         </nav>
         <button type="button" className="landing-login" onClick={openLogin}>
           Ingresar al sistema <span>→</span>

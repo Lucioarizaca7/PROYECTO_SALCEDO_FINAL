@@ -100,7 +100,8 @@ export function aComercianteDePantalla(registro) {
     dni_ruc: registro.numeroDocumento,
     rubro: registro.rubro,
     zona: registro.zona,
-    codigo: registro.codigoPuesto || registro.codigo,
+    codigo: registro.codigo || null,
+    codigo_puesto: registro.codigoPuesto || null,
     offline: true
   };
 }

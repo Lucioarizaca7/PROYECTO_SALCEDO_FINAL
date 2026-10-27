@@ -7,7 +7,7 @@ import assert from 'node:assert/strict';
 
 import {
   initializeDatabase, insertComerciante, insertPuesto, insertTarifa, calcularLiquidacion,
-  marcarAsistencias, getAsistencias, getJornadaPackage, todayInLima
+  marcarAsistencias, getAsistencias, getJornadaPackage, getPendingDebt, todayInLima
 } from '../src/db.js';
 
 let documento = 20777000000;
@@ -95,4 +95,18 @@ test('las marcas se validan y la lista del día muestra a los feriales', async (
   const enPaquete = paquete.comerciantes.find((item) => item.id === Number(comerciante.id));
   assert.equal(enPaquete.puesto_ferial_id, Number(puesto.id));
   assert.equal(enPaquete.dias_asistidos, 1);
+});
+
+test('el pendiente de regularización entra al padrón de la jornada y a la deuda del panel', async () => {
+  const db = await initializeDatabase();
+  const rubroId = await rubroConTarifaDiaria(db, 2);
+  const { comerciante, puesto } = await ferialConPuesto(db, rubroId);
+  await db.query(`UPDATE comerciantes SET estado = 'pendiente' WHERE id = $1`, [comerciante.id]);
+  await marcarAsistencias(db, { puesto_id: puesto.id, asistio: true }, { usuarioId: 2 });
+
+  const enPaquete = (await getJornadaPackage(db)).comerciantes.find((item) => item.id === Number(comerciante.id));
+  assert.ok(enPaquete, 'el cobrador lo tiene sin señal');
+  assert.equal(enPaquete.puesto_ferial_id, Number(puesto.id));
+  assert.equal(enPaquete.saldo, 2);
+  assert.ok(await getPendingDebt(db) >= 2, 'su deuda suma en el panel');
 });

@@ -1,28 +1,46 @@
 import { useEffect, useState } from 'react';
 import { useSisrec } from '../app/SisrecContext';
 import { textoMotivo } from '../services/asistenciaOffline';
+import { useReportes } from '../hooks/useReportes';
 import { hoyEnLima } from '../services/jornadaOffline';
 import { apiBase, authFetch } from '../services/session';
 
 // Páginas de solo lectura: muestran datos que ya cargó useDatosSisrec (y, en Analítica, el tiempo por cobro).
 
 export function ReportesPage() {
-  const { reportRows } = useSisrec();
+  const { catalogos } = useSisrec();
+  const { filtro, setFiltro, filas, cargando, mensaje, exportarCsv } = useReportes();
+  const cambiar = (campo) => (event) => setFiltro((actual) => ({ ...actual, [campo]: event.target.value }));
   return (
     <section className="page">
       <div className="page-heading">
-        <div><div className="eyebrow">ANÁLISIS / EXPORTACIÓN</div><h1>Reportes personalizados</h1><p>Consulta cobros por periodo, zona, rubro o cobrador.</p></div>
-        <div className="report-actions"><button className="secondary-button" type="button" onClick={() => window.print()}>Imprimir / PDF</button><a className="primary-button" href={`${apiBase}/reportes?formato=csv`} download="reporte-cobros.csv">Exportar CSV</a></div>
+        <div><div className="eyebrow">ANÁLISIS / EXPORTACIÓN</div><h1>Reportes personalizados</h1><p>Consulta cobros por periodo, zona o rubro.</p></div>
+        <div className="report-actions"><button className="secondary-button" type="button" onClick={() => window.print()}>Imprimir / PDF</button><button className="primary-button" type="button" onClick={exportarCsv}>Exportar CSV</button></div>
       </div>
+      <div className="map-toolbar">
+        <label><span>Periodo</span><input type="month" aria-label="Periodo" value={filtro.periodo} onChange={cambiar('periodo')} /></label>
+        <select aria-label="Filtrar por zona" value={filtro.zona_id} onChange={cambiar('zona_id')}>
+          <option value="">Todas las zonas</option>
+          {(catalogos.zonas || []).map((zona) => <option key={zona.id} value={zona.id}>{zona.nombre}</option>)}
+        </select>
+        <select aria-label="Filtrar por rubro" value={filtro.rubro_id} onChange={cambiar('rubro_id')}>
+          <option value="">Todos los rubros</option>
+          {(catalogos.rubros || []).map((rubro) => <option key={rubro.id} value={rubro.id}>{rubro.nombre}</option>)}
+        </select>
+      </div>
+      {mensaje && <div className="form-message">{mensaje}</div>}
       <div className="report-kpis">
-        <div className="stat-card"><span>Total cobrado</span><strong>S/ {reportRows.reduce((total, item) => total + Number(item.monto || 0), 0).toFixed(2)}</strong></div>
-        <div className="stat-card"><span>Operaciones</span><strong>{reportRows.length}</strong></div>
-        <div className="stat-card"><span>Zonas cubiertas</span><strong>{new Set(reportRows.map((item) => item.zona)).size}</strong></div>
+        <div className="stat-card"><span>Total cobrado</span><strong>S/ {filas.reduce((total, item) => total + Number(item.monto || 0), 0).toFixed(2)}</strong></div>
+        <div className="stat-card"><span>Operaciones</span><strong>{filas.length}</strong></div>
+        <div className="stat-card"><span>Zonas cubiertas</span><strong>{new Set(filas.map((item) => item.zona)).size}</strong></div>
       </div>
       <div className="table-card">
         <table>
           <thead><tr><th>Fecha</th><th>Comerciante</th><th>Rubro</th><th>Zona</th><th>Cobrador</th><th>Monto</th><th>Método</th><th>Comprobante</th></tr></thead>
-          <tbody>{reportRows.map((item) => <tr key={item.id}><td>{item.fecha}</td><td>{item.comerciante}</td><td>{item.rubro}</td><td>{item.zona}</td><td>{item.cobrador}</td><td>S/ {Number(item.monto).toFixed(2)}</td><td>{item.metodo_pago}</td><td>{item.comprobante}</td></tr>)}</tbody>
+          <tbody>
+            {filas.map((item) => <tr key={item.id}><td>{item.fecha}</td><td>{item.comerciante}</td><td>{item.rubro}</td><td>{item.zona}</td><td>{item.cobrador}</td><td>S/ {Number(item.monto).toFixed(2)}</td><td>{item.metodo_pago}</td><td>{item.comprobante}</td></tr>)}
+            {!filas.length && <tr><td colSpan={8} className="empty-state">{cargando ? 'Cargando…' : 'No hay cobros con estos filtros.'}</td></tr>}
+          </tbody>
         </table>
       </div>
       <ObservacionesCobro />

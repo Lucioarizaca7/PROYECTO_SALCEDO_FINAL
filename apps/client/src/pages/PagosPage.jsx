@@ -145,12 +145,15 @@ export function PagosPage() {
       <div className="payment-workspace">
         <form className="panel payment-form" onSubmit={pagos.submit}>
           <div className="step-label">01 · Localizar comerciante</div>
+          {/* Enter busca. El campo está dentro del formulario del cobro: sin el onKeyDown, Enter enviaba
+              "Confirmar y emitir comprobante" y cobraba al comerciante que ya estaba en pantalla. */}
           <div className="payment-search">
-            <input required aria-label="Buscar comerciante por documento, nombre, puesto o QR" placeholder="DNI, RUC, nombre, puesto o QR" value={form.search} onChange={(event) => setForm({ ...form, search: event.target.value })} />
+            <input required aria-label="Buscar comerciante por documento, nombre, puesto o QR" placeholder="DNI, RUC, nombre, puesto o QR" value={form.search} onChange={(event) => setForm({ ...form, search: event.target.value })}
+              onKeyDown={(event) => { if (event.key === 'Enter') { event.preventDefault(); pagos.findMerchant(); } }} />
             <button className="primary-button" type="button" onClick={pagos.findMerchant}>Buscar</button>
             <button className="secondary-button qr-open-button" type="button" onClick={() => pagos.setShowQrScanner(true)} aria-label="Escanear código QR">▦ <span>Escanear QR</span></button>
           </div>
-          {merchant && <div className="merchant-summary"><strong>{merchant.nombre}</strong><span>{merchant.dni_ruc} · {merchant.rubro} · {merchant.zona}</span><span>Puesto: {merchant.codigo}</span></div>}
+          {merchant && <div className="merchant-summary"><strong>{merchant.nombre}</strong><span>{merchant.dni_ruc} · {merchant.rubro} · {merchant.zona}</span>{merchant.codigo && <span>Código: {merchant.codigo}</span>}{merchant.codigo_puesto && <span>Puesto: {merchant.codigo_puesto}</span>}</div>}
           {merchant && balance && (
             <div className="panel express-card">
               <div className="express-head">

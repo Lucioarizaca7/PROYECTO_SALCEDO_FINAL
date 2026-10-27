@@ -47,7 +47,7 @@ Depende de `tipo_comerciante`:
 - **permanente:** cuota mensual = tarifa vigente del rubro y periodo × metraje del puesto principal.
 - **ferial:** paga los días con asistencia del mes (`asistencias_feriales.asistio`, en cualquiera de sus puestos; varias marcas del mismo día cuentan una vez) × la tarifa de un día (`dailyTariffAmount`). Lo mismo el permanente con tarifa por día cobrado (ver abajo). Sin asistencias devuelve `no_devengo` con el motivo `ferial_sin_asistencia`. La respuesta trae `dias_asistidos`. El cobrador marca con `POST /asistencias` (también sin señal: reenviar no duplica).
 - **eventual:** se cobra por día (`cobro_diario: true`). Si el día pedido no cae en el periodo, devuelve `no_devengo` con el motivo `eventual`.
-- Un pendiente de regularización (titular sin DNI) paga igual que cualquier otro (decisión del usuario, 2026-10-27); antes no devengaba si le faltaba el metraje (`pendiente_regularizacion_sin_metraje`, ya no existe).
+- Un pendiente de regularización (titular sin DNI) paga igual que cualquier otro (decisión del usuario, 2026-10-27); antes no devengaba si le faltaba el metraje (`pendiente_regularizacion_sin_metraje`, ya no existe). Por eso entra en la deuda del panel (`getPendingDebt`) y en el padrón de la jornada (`getJornadaPackage`): los dos toman `estado IN ('activo', 'pendiente')` (`ESTADOS_QUE_PAGAN_SQL`).
 - Si no hay tarifa vigente, lanza un error ("No existe una tarifa vigente…"). Quien la llama debe tratar ese caso como `sin_tarifa` y no dejar que el proceso se caiga.
 
 **Tarifa aplicable** (`findApplicableTariff`): la de la zona del comerciante > la del tipo de vía de su zona (`zonas.tipo_via`: asfaltada / sin_asfaltar) > la del rubro > la de todos los rubros (`tarifas.rubro_id` NULL). Una tarifa no puede ser de zona y de tipo de vía a la vez (CHECK `tarifas_zona_o_tipo_via`).
@@ -104,6 +104,11 @@ Depende de `tipo_comerciante`:
 - **Metraje:** opcional en una zona con tipo de vía (cobro por día, sin metros); obligatorio sin tipo de vía. `insertPuesto` acepta `metros_cuadrados: null` solo en una zona con tipo de vía.
 - **Ausente:** sigue la convención de puestos (queda `disponible` con titular).
 - **Plantilla oficial:** `GET /comerciantes/plantilla-padron` (super_admin, auditor), `padronPlantilla.js`; la hoja oculta `LISTAS_SISREC` no se lee como padrón.
+
+## Panel y riesgo
+
+- **Morosidad del panel** (`indicadoresPanel`, auditoría 2026-10-27): deuda pendiente del periodo ÷ (deuda pendiente + lo cobrado en el periodo) × 100, a un decimal. Es la parte de lo devengado que sigue impaga. Antes se dividía la deuda entre sí misma (siempre 0 % o 100 %). Si el usuario prefiere otra definición (p. ej. % de comerciantes con deuda), se cambia solo en esa función.
+- **Riesgo de morosidad** (`getRiskDashboard`): el puntaje se recalcula una vez por día de Lima para todos los comerciantes no dados de baja (tope `MAX_COMERCIANTES_RIESGO = 300`); los dados de baja no aparecen. El panel muestra como "Alertas importantes" solo los niveles `alto` y `critico`, igual que la marca `alerta` de la métrica.
 
 ## Cobros
 

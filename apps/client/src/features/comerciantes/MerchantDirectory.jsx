@@ -11,7 +11,7 @@ export function MerchantDirectory({
   form,
   setForm,
   isFormOpen,
-  setIsFormOpen,
+  onToggleForm,
   editingId,
   importPreview,
   importMessage,
@@ -35,7 +35,7 @@ export function MerchantDirectory({
           <h1 id="merchant-heading">Comerciantes</h1>
           <p>Listado del padrón municipal y estado operativo.</p>
         </div>
-        <button className="primary-button" type="button" onClick={() => setIsFormOpen((open) => !open)}>
+        <button className="primary-button" type="button" onClick={onToggleForm}>
           {isFormOpen ? 'Cerrar formulario' : '＋ Nuevo registro'}
         </button>
       </div>
@@ -228,7 +228,7 @@ export function MerchantDirectory({
       </div>
 
       <div className="pagination-row" aria-label="Paginación del padrón">
-        <span>{directory.filteredMerchants.length} registros encontrados</span>
+        <span>{directory.filteredMerchants.length} {directory.filteredMerchants.length === 1 ? 'registro encontrado' : 'registros encontrados'}</span>
         <div>
           <button type="button" className="secondary-button" disabled={directory.page <= 1} onClick={() => directory.setPage((page) => page - 1)} aria-label="Página anterior">Anterior</button>
           <span className="page-number" aria-live="polite">Página {directory.page} de {directory.totalPages}</span>
