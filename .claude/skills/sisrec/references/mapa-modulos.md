@@ -13,7 +13,7 @@
 - `http/sesionCookie.ts`: la cookie HttpOnly `sisrec_refresh` (SameSite=Strict, Path=/api/v1/auth) que lleva el refresh token; el cuerpo de las respuestas nunca lo trae.
 - `portalAcceso.js`: PIN del portal (bcrypt, tabla `comerciante_portal_acceso`), bloqueo por intentos y datos recortados del portal.
 - `pg.js`: `pool` (máximo 10 conexiones), `withTransaction(fn)` y `testSchema`. En las pruebas, cada proceso usa su propio esquema.
-- `validation.ts`, `config.ts`, `padronImport.js` (importa el padrón en Excel/CSV) y `feriaZapatillasSeed.js`.
+- `validation.ts`, `config.ts`, `padronImport.js` (importa el padrón en Excel/CSV), `padronPlantilla.js` (plantilla oficial con `exceljs`) y `feriaZapatillasSeed.js`.
 
 **Frontend (`apps/client/src`)**
 - `App.jsx`: solo las rutas (React Router, `BrowserRouter`). Sin sesión: `/`, `/ingresar`, `/portal`; con sesión, una ruta por página de `app/navegacion.js` (`/panel`, `/pagos`, `/sitios`…), con su control de rol.
@@ -62,7 +62,7 @@ Roles: `super_admin`, `cobrador`, `auditor`, `comerciante`. `staffOnly` = los tr
 | Salud / público | `GET /health`, `GET /publico/resumen` | públicas |
 | Panel y analítica | `GET /dashboard`, `/analitica/prediccion`, `/analitica/riesgo`, `/reportes` | lectura del personal |
 | Catálogos | `GET /roles`, `/catalogos`; CRUD `/zonas`, `/calles` | super_admin, auditor |
-| Comerciantes | CRUD `/comerciantes`, `POST /comerciantes/importar-padron`, `/comerciantes/:id/preferencias` | super_admin, auditor (las preferencias también cobrador) |
+| Comerciantes | CRUD `/comerciantes`, `POST /comerciantes/importar-padron`, `GET /comerciantes/plantilla-padron`, `/comerciantes/:id/preferencias` | super_admin, auditor (las preferencias también cobrador) |
 | Puestos | `GET /puestos?incluirInactivos=1`, `POST /puestos`, `POST/PUT/DELETE /puestos-mapa`, `POST /puestos/:id/liberar` | super_admin, cobrador |
 | Tarifas | `GET/POST/PUT /tarifas` | según la ruta (ver `routes/tarifas.ts`) |
 | Liquidación | `GET /liquidaciones/:comercianteId`, `GET /comerciantes/:id/saldo` | lectura |
@@ -96,3 +96,4 @@ Para ver los roles exactos de una ruta: `grep -rn "'/api/v1/<ruta>" apps/server/
 - **0012:** `cierres_caja` (esperado del servidor vs. declarado, `diferencia` calculada, uno por cobrador y día).
 - **0013:** cobro por día cobrado (tarifas generales `semanal` por tipo de vía, S/ 3 y S/ 2) y observación del cobrador en `asistencias_feriales`.
 - **0014:** tickets preimpresos: `ticket_series`, `ticket_lotes`, `tickets` (`UNIQUE (serie, numero)`), `transacciones.tickets`, `cierres_caja.tickets` y el parámetro `tickets_umbral_aviso`.
+- **0015:** `asistencias_feriales.comerciante_id` (titular del día de la marca; trigger `asistencia_titular`, CHECK `NOT VALID`) y `titular_de_asistencia(puesto, fecha)`, que reconstruye las marcas viejas con la auditoría.

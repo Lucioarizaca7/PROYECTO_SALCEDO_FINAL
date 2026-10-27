@@ -62,6 +62,11 @@ Pendientes menores:
   - `concepto` y `observaciones` del cobro, y el nombre al editar un comerciante, no tienen largo máximo;
   - el log de accesos de Caddy guarda la URL completa (DNI en `?search=`, enlaces firmados de recibos).
 - Las tarifas por rubro que estén en la base real siguen activas: en una zona sin tipo de vía se siguen usando.
+- **Cambio de zona de un puesto (2026-10-27):** la liquidación toma la zona actual del puesto, así que cambiarla recalcula los meses pasados con la tarifa de la zona nueva. La rama de GitHub `claude/gifted-mendel-9fxas5` lo resuelve con `puestos_historial` (zona y tarifa por tramos de fechas); aquí falta.
+- **Importación del padrón:**
+  - el `previewToken` vive en la memoria de la API: con varias instancias o tras un reinicio, la confirmación responde 410 y el cliente reenvía el archivo;
+  - confirmar 3 000 filas tarda ~32 s en local (Docker en Windows), unas 12 consultas por fila. Para bajar de un segundo haría falta guardar en lote con `unnest`, con una prueba que compare el resultado con `insertComerciante`/`insertPuesto`;
+  - `exceljs` trae `uuid` < 11.1.1 (aviso moderado de `npm audit`).
 
 ## Orden de refactorización sugerido (de menor a mayor riesgo)
 

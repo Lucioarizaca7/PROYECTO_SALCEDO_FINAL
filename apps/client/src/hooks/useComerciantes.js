@@ -71,11 +71,28 @@ export function useComerciantes() {
     return data.data;
   };
 
-  const sendPadron = (file, dryRun) => {
+  // Con previewToken la confirmación no vuelve a subir el Excel: el servidor usa el libro ya leído.
+  const sendPadron = ({ file = null, dryRun, previewToken = null }) => {
     const body = new FormData();
-    body.append('file', file);
+    if (previewToken) body.append('previewToken', previewToken);
+    else body.append('file', file);
     body.append('dryRun', String(dryRun));
     return authFetch(`${apiBase}/comerciantes/importar-padron`, { method: 'POST', body });
+  };
+
+  const downloadPadronTemplate = async () => {
+    try {
+      const response = await authFetch(`${apiBase}/comerciantes/plantilla-padron`);
+      if (!response.ok) throw new Error((await response.json().catch(() => ({}))).message || 'No se pudo descargar la plantilla');
+      const url = URL.createObjectURL(await response.blob());
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = 'plantilla-padron-sisrec.xlsx';
+      link.click();
+      URL.revokeObjectURL(url);
+    } catch (templateError) {
+      setPadronMessage(templateError.message || 'No se pudo descargar la plantilla');
+    }
   };
 
   const previewPadron = async (file) => {
@@ -85,7 +102,7 @@ export function useComerciantes() {
     if (!file) return;
     setPadronLoading(true);
     try {
-      const response = await sendPadron(file, true);
+      const response = await sendPadron({ file, dryRun: true });
       const data = await response.json();
       if (!response.ok) throw new Error(data.message || 'No se pudo leer el padrón');
       setPadronPreview(data.data);
@@ -102,11 +119,23 @@ export function useComerciantes() {
     setPadronLoading(true);
     setPadronMessage('');
     try {
-      const response = await sendPadron(padronFile, false);
+      let response = padronPreview?.previewToken
+        ? await sendPadron({ previewToken: padronPreview.previewToken, dryRun: false })
+        : await sendPadron({ file: padronFile, dryRun: false });
+      // 410: la previsualización venció en el servidor; se reenvía el archivo.
+      if (response.status === 410) response = await sendPadron({ file: padronFile, dryRun: false });
       const data = await response.json();
       if (!response.ok) throw new Error(data.message || 'No se pudo importar el padrón');
       setPadronPreview(data.data);
-      setPadronMessage(`${data.message} Nuevos: ${data.data.result.createdMerchants} comerciantes y ${data.data.result.createdPosts} puestos; omitidos: ${data.data.result.skippedRows}.`);
+      const { result } = data.data;
+      const detalle = [
+        `${result.createdMerchants} comerciantes nuevos`,
+        `${result.createdPosts} puestos nuevos`,
+        result.reactivatedMerchants ? `${result.reactivatedMerchants} reactivados` : null,
+        result.regularizedMerchants ? `${result.regularizedMerchants} regularizados` : null,
+        `omitidas: ${result.skippedRows}`
+      ].filter(Boolean).join('; ');
+      setPadronMessage(`${data.message} ${detalle}.`);
       setPadronFile(null);
       await refresh();
     } catch (importError) {
@@ -119,6 +148,6 @@ export function useComerciantes() {
   return {
     showForm, setShowForm, message, form, setForm, editingId,
     padronPreview, padronMessage, padronLoading,
-    submit, edit, deactivate, previewPadron, importPadron, generatePortalPin
+    submit, edit, deactivate, previewPadron, importPadron, downloadPadronTemplate, generatePortalPin
   };
 }

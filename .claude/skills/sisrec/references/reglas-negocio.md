@@ -47,7 +47,7 @@ Depende de `tipo_comerciante`:
 - **permanente:** cuota mensual = tarifa vigente del rubro y periodo × metraje del puesto principal.
 - **ferial:** paga los días con asistencia del mes (`asistencias_feriales.asistio`, en cualquiera de sus puestos; varias marcas del mismo día cuentan una vez) × la tarifa de un día (`dailyTariffAmount`). Lo mismo el permanente con tarifa por día cobrado (ver abajo). Sin asistencias devuelve `no_devengo` con el motivo `ferial_sin_asistencia`. La respuesta trae `dias_asistidos`. El cobrador marca con `POST /asistencias` (también sin señal: reenviar no duplica).
 - **eventual:** se cobra por día (`cobro_diario: true`). Si el día pedido no cae en el periodo, devuelve `no_devengo` con el motivo `eventual`.
-- Otro motivo posible es `pendiente_regularizacion_sin_metraje`.
+- Un pendiente de regularización (titular sin DNI) paga igual que cualquier otro (decisión del usuario, 2026-10-27); antes no devengaba si le faltaba el metraje (`pendiente_regularizacion_sin_metraje`, ya no existe).
 - Si no hay tarifa vigente, lanza un error ("No existe una tarifa vigente…"). Quien la llama debe tratar ese caso como `sin_tarifa` y no dejar que el proceso se caiga.
 
 **Tarifa aplicable** (`findApplicableTariff`): la de la zona del comerciante > la del tipo de vía de su zona (`zonas.tipo_via`: asfaltada / sin_asfaltar) > la del rubro > la de todos los rubros (`tarifas.rubro_id` NULL). Una tarifa no puede ser de zona y de tipo de vía a la vez (CHECK `tarifas_zona_o_tipo_via`).
@@ -70,6 +70,13 @@ Depende de `tipo_comerciante`:
 - `diasAsistidos`: la marca de la app (`sesion = ''`) manda sobre las del Excel del mismo puesto y día ("no salió" anula una P importada).
 - Al tocar Asistió / Faltó en el panel se conserva la observación si sigue siendo coherente (`observacionQueSeConserva`).
 
+**De quién es cada marca** (decisión del usuario, 2026-10-27; migración 0015):
+- `asistencias_feriales.comerciante_id` es el titular que tenía el puesto **el día de la marca**. `asistenciasPorPuesto`, `marcarDiaCobrado` y `getObservacionesCobro` buscan por él, no por el titular actual del puesto.
+- Si el puesto pasa de A a B, lo marcado antes lo sigue debiendo A y B no lo hereda; si se libera, A conserva su deuda.
+- Lo llena el trigger `asistencia_titular` al insertar (app, cobro, Excel, semilla). Corregir una marca no cambia su titular.
+- Marcas anteriores a 0015: `titular_de_asistencia(puesto, fecha)` toma el titular previo del primer cambio del puesto auditado después de ese día (`ACTUALIZAR_PUESTO_MAPA`, `LIBERAR_PUESTO`, `DAR_DE_BAJA_PUESTO_MAPA`); sin cambios, el actual.
+- Límite: si el puesto cambia de titular el mismo día, la marca de ese día es una sola (`UNIQUE (puesto_id, fecha, sesion)`).
+
 **Observación del cobrador** (`asistencias_feriales.motivo` / `observacion`):
 - `no_salio` es una falta: no genera deuda.
 - `no_vendio` y `se_nego_a_pagar` son asistencias: el día se debe igual. La excusa no libera.
@@ -86,6 +93,17 @@ Depende de `tipo_comerciante`:
 **Deuda acumulada** (`calcularDeudaAcumulada`): recorre los meses desde `max(mes de alta, parametros_sistema.inicio_cobro)` hasta el actual llamando a `calcularLiquidacion` en cada uno (no hay otra fórmula). El eventual no acumula. Devuelve `periodos`, `meses_impagos`, `periodo_mas_antiguo` (el que se cobra primero), `deuda_vencida`, `deuda_mes` y `deuda_total`. Va en `/comerciantes/:id/saldo`, `/liquidaciones/:id`, el portal y el paquete de jornada.
 
 **Varios puestos:** con cobro por día (tarifa `semanal` o ferial) paga por cada puesto marcado. Con tarifa mensual o diaria de rubro sigue pagando por uno solo, el principal.
+
+## Importación del padrón (`padronImport.js`, 2026-10-27)
+
+- **Vista previa en lote:** cruza el libro con la base en 4 consultas (`= ANY`), no por fila. Devuelve `previewToken`: la confirmación lo envía en vez del Excel. Vence a los 15 minutos, es del usuario que la hizo y vive en la memoria de la API (410 si no existe: el cliente reenvía el archivo).
+- **Confirmación:** con `insertComerciante`, `updateComerciante`, `insertPuesto` y `updatePuesto` (las mismas reglas que la API), en una transacción con un savepoint por fila: un choque inesperado se informa en `result.rowErrors` y no deshace las demás. Al confirmar se vuelve a cruzar con la base.
+- **Sin DNI/RUC:** documento provisional `TEMP_DNI_` + huella del nombre (estable: reimportar no duplica), estado `pendiente` y `PENDIENTE_REGULARIZACION`. Si un padrón posterior trae el DNI para el mismo puesto y el mismo nombre, se regulariza ese comerciante; editarlo con su DNI real también. Solo la importación crea documentos `TEMP_` (`insertComerciante(..., { documentoTemporal: true })`). Un sin DNI con el mismo nombre que otro con DNI es una advertencia.
+- **Varios puestos:** filas con el mismo DNI y el mismo nombre son un comerciante con varios puestos; el mismo DNI con otro nombre es error de fila.
+- **Errores por fila:** código de otro titular, puesto físico ocupado (zona + dirección, como `validatePuestoPlacement`), código repetido en el libro. Una baja que reaparece se reactiva (`reactivatedMerchants`).
+- **Metraje:** opcional en una zona con tipo de vía (cobro por día, sin metros); obligatorio sin tipo de vía. `insertPuesto` acepta `metros_cuadrados: null` solo en una zona con tipo de vía.
+- **Ausente:** sigue la convención de puestos (queda `disponible` con titular).
+- **Plantilla oficial:** `GET /comerciantes/plantilla-padron` (super_admin, auditor), `padronPlantilla.js`; la hoja oculta `LISTAS_SISREC` no se lee como padrón.
 
 ## Cobros
 

@@ -18,6 +18,7 @@ export function MerchantDirectory({
   importLoading,
   onPreviewFile,
   onImport,
+  onDownloadTemplate,
   onSubmit,
   onEdit,
   onDeactivate,
@@ -45,6 +46,7 @@ export function MerchantDirectory({
             <div className="panel-title" id="padron-import-heading">Carga masiva del padrón</div>
             <div className="panel-subtitle">Excel .xlsx con hojas por bloque. La previsualización no modifica datos.</div>
           </div>
+          <button className="secondary-button" type="button" onClick={onDownloadTemplate}>Descargar plantilla oficial</button>
         </div>
         <div className="padron-import-controls">
           <label className="padron-file-control">
@@ -78,6 +80,8 @@ export function MerchantDirectory({
                   <div><strong>{importPreview.newPosts}</strong><span>puestos nuevos</span></div>
                   <div><strong>{importPreview.existingMerchants}</strong><span>comerciantes existentes</span></div>
                   <div><strong>{importPreview.absentRows}</strong><span>ausentes, sin devengo</span></div>
+                  <div><strong>{importPreview.pendingMerchants ?? 0}</strong><span>sin DNI, pendientes de regularizar</span></div>
+                  <div><strong>{importPreview.merchantsWithSeveralPosts ?? 0}</strong><span>titulares con varios puestos</span></div>
                 </>
               )}
             </div>
@@ -85,6 +89,30 @@ export function MerchantDirectory({
               {importPreview.sheets.map((sheet) => <span className="status neutral" key={sheet.sheet}>{sheet.sheet}: {sheet.rows}{sheet.attendanceSheet ? ` titulares, ${sheet.attendanceMarks} marcas` : sheet.skipped ? ' (formato no reconocido)' : ' filas'}</span>)}
             </div>
             {importPreview.workbookType === 'attendance' && <div className="attendance-sheet-details">{importPreview.sheets.filter((sheet) => sheet.attendanceSheet).map((sheet) => <p key={sheet.sheet}><strong>{sheet.sheet}</strong>: marcas {Object.entries(sheet.marks || {}).map(([mark, count]) => `${mark.toUpperCase()} ${count}`).join(' · ') || 'ninguna'}{sheet.dates?.length ? ` · fechas: ${sheet.dates.join(', ')}` : ''}</p>)}</div>}
+            {importPreview.reactivatedMerchants?.length > 0 && (
+              <details className="import-notices">
+                <summary>{importPreview.reactivatedMerchants.length} comerciantes dados de baja se reactivarán</summary>
+                <ul>{importPreview.reactivatedMerchants.slice(0, 10).map((item) => <li key={`r-${item.sheet}-${item.row}`}>{item.sheet}, fila {item.row}: {item.name}</li>)}</ul>
+              </details>
+            )}
+            {importPreview.regularizedMerchants?.length > 0 && (
+              <details className="import-notices">
+                <summary>{importPreview.regularizedMerchants.length} titulares sin DNI quedarán regularizados con su DNI</summary>
+                <ul>{importPreview.regularizedMerchants.slice(0, 10).map((item) => <li key={`g-${item.sheet}-${item.row}`}>{item.sheet}, fila {item.row}: {item.name}</li>)}</ul>
+              </details>
+            )}
+            {importPreview.warnings?.length > 0 && (
+              <details className="import-notices">
+                <summary>{importPreview.warnings.length} advertencias para revisar (no impiden importar)</summary>
+                <ul>{importPreview.warnings.slice(0, 10).map((item, index) => <li key={`w-${item.sheet}-${item.row}-${index}`}>{item.sheet}, fila {item.row}: {item.message}</li>)}</ul>
+              </details>
+            )}
+            {importPreview.result?.rowErrors?.length > 0 && (
+              <details className="import-errors" open>
+                <summary>{importPreview.result.rowErrors.length} filas no se pudieron guardar</summary>
+                <ul>{importPreview.result.rowErrors.slice(0, 10).map((item, index) => <li key={`e-${item.sheet}-${item.row}-${index}`}>{item.sheet}, fila {item.row}: {item.message}</li>)}</ul>
+              </details>
+            )}
             {importPreview.errors.length > 0 && (
               <details className="import-errors">
                 <summary>{importPreview.invalidRows} filas necesitan corrección</summary>
@@ -92,7 +120,7 @@ export function MerchantDirectory({
                 {importPreview.errors.length > 10 && <span>Se muestran los primeros 10 errores.</span>}
               </details>
             )}
-            <p className="import-policy-note">Las filas “Ausente” se importan como puestos feriales disponibles para que la liquidación aplique no devengo. No se crean deudas ni cobros durante esta importación.</p>
+            <p className="import-policy-note">Las filas “Ausente” se importan como puestos feriales disponibles para que la liquidación aplique no devengo. Sin DNI, el titular entra como pendiente de regularización y paga igual. El metraje es opcional en zonas con tipo de vía. Una fila con error se omite y no detiene a las demás. No se crean deudas ni cobros durante esta importación.</p>
             <button className="primary-button" type="button" disabled={importLoading || importPreview.validRows === 0 || importPreview.workbookType === 'attendance'} onClick={onImport}>Confirmar importación de {importPreview.validRows} filas</button>
           </div>
         )}
@@ -111,7 +139,7 @@ export function MerchantDirectory({
           <div className="merchant-form-grid">
             <label>
               <span>DNI / RUC</span>
-              <input name="dni_ruc" required pattern="([0-9]{8}|(10|15|17|20)[0-9]{9})" title="DNI de 8 dígitos o RUC válido de 11 dígitos" placeholder="DNI / RUC" value={form.dni_ruc} onChange={(event) => setForm({ ...form, dni_ruc: event.target.value })} />
+              <input name="dni_ruc" required pattern="([0-9]{8}|(10|15|17|20)[0-9]{9}|TEMP_[A-Z0-9_]+)" title="DNI de 8 dígitos o RUC válido de 11 dígitos (un titular sin DNI conserva su documento provisional hasta registrar el real)" placeholder="DNI / RUC" value={form.dni_ruc} onChange={(event) => setForm({ ...form, dni_ruc: event.target.value })} />
             </label>
             <label>
               <span>Nombre completo</span>
