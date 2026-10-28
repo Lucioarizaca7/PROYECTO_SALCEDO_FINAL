@@ -5,6 +5,7 @@ import { KpiCard } from './components/ui/KpiCard';
 import { DashboardSkeleton } from './components/ui/DashboardSkeleton';
 import { ScrollSnapContainer, ScrollSnapSection } from './components/layout/ScrollSnapContainer';
 import { MerchantDirectory } from './features/merchants/MerchantDirectory';
+import { MerchantCardDialog } from './features/merchants/MerchantCardDialog';
 import { QrScanner } from './features/payments/QrScanner';
 import { SitesMap } from './components/features/map/SitesMap';
 import { SyncStatusBadge } from './components/ui/SyncStatusBadge';
@@ -265,7 +266,6 @@ function normalizeLocalMerchant(item) {
   };
 }
 
-async function savePadronSnapshot(merchantList = []) {
 function buildExpressSuggestion(merchant, balance, history = []) {
   // Create cache key from inputs
   const merchantId = merchant?.id || 'unknown';
@@ -344,6 +344,8 @@ function buildExpressSuggestion(merchant, balance, history = []) {
   setSuggestionInCache(merchantId, balanceAmount, historyHash, result);
   return result;
 }
+
+async function savePadronSnapshot(merchantList = []) {
   if (!merchantList.length || !('indexedDB' in window)) return;
 
   const db = await openOfflineDatabase();
@@ -646,6 +648,7 @@ function App() {
   const [expressSuggestion, setExpressSuggestion] = useState({ suggestedAmount: 0, preferredMethod: 'efectivo', lastLabel: 'Sin historial previo', lastPayment: null });
   const [paymentMessage, setPaymentMessage] = useState('');
   const [showQrScanner, setShowQrScanner] = useState(false);
+  const [cardMerchant, setCardMerchant] = useState(null);
   const [receipt, setReceipt] = useState(null);
 
   // Process the offline print queue while the app is open.
@@ -1041,6 +1044,30 @@ function App() {
     setMerchantMessage(data.message);
     fetchData();
     return data.data;
+  };
+
+  // En Pagos y cobros el cobrador también entrega el carnet. Si el comerciante llegó desde el mapa o
+  // la caché local no trae tiene_llave, así que se pide su ficha para avisar si ya tenía uno.
+  const openPaymentCard = async () => {
+    setPaymentMessage('');
+    let merchant = paymentMerchant;
+    if (merchant.tiene_llave === undefined) {
+      try {
+        const response = await fetch(`${apiBase}/comerciantes/${merchant.id}`, { headers: getAuthHeaders() });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.message);
+        merchant = { ...merchant, ...data.data };
+      } catch (cardError) {
+        return setPaymentMessage(cardError.message || 'Se necesita conexión para emitir el carnet.');
+      }
+    }
+    setCardMerchant(merchant);
+  };
+
+  const issuePaymentCard = async (ids) => {
+    const issued = await handleIssueCards(ids);
+    setPaymentMerchant((current) => (current && current.id === ids[0] ? { ...current, tiene_llave: true } : current));
+    return issued;
   };
 
   const handlePadronPreview = async (file, feriaDate = padronFeriaDate) => {
@@ -1699,7 +1726,7 @@ function App() {
               <form className="panel payment-form" onSubmit={handlePaymentSubmit}>
                 <div className="step-label">01 · Localizar comerciante</div>
                 <div className="payment-search"><input required aria-label="Buscar comerciante por documento, nombre, puesto o QR" placeholder="DNI, RUC, nombre, puesto o QR" value={paymentForm.search} onChange={(event) => setPaymentForm({ ...paymentForm, search: event.target.value })} /><button className="primary-button" type="button" onClick={findPaymentMerchant}>Buscar</button><button className="secondary-button qr-open-button" type="button" onClick={() => setShowQrScanner(true)} aria-label="Escanear código QR">▦ <span>Escanear QR</span></button></div>
-                {paymentMerchant && <div className="merchant-summary"><strong>{paymentMerchant.nombre}</strong><span>{paymentMerchant.dni_ruc} · {paymentMerchant.rubro} · {paymentMerchant.zona}</span><span>Puesto: {paymentMerchant.codigo}</span></div>}
+                {paymentMerchant && <div className="merchant-summary"><strong>{paymentMerchant.nombre}</strong><span>{paymentMerchant.dni_ruc} · {paymentMerchant.rubro} · {paymentMerchant.zona}</span><span>Puesto: {paymentMerchant.codigo}</span>{paymentMerchant.id && ['super_admin', 'cobrador'].includes(user?.rol) && <button className="secondary-button merchant-summary-card" type="button" onClick={openPaymentCard}>{paymentMerchant.tiene_llave ? 'Nuevo carnet' : 'Emitir carnet'}</button>}</div>}
                 {paymentMerchant && paymentBalance && (
                   <div className="panel express-card" style={{ background: 'linear-gradient(135deg, rgba(39,174,96,0.12), rgba(15,23,42,0.08))', border: '1px solid rgba(39,174,96,0.3)', padding: '16px', borderRadius: '14px', marginTop: '12px' }}>
                     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px', flexWrap: 'wrap' }}>
@@ -1730,6 +1757,7 @@ function App() {
               <div className="panel payment-history"><div className="panel-heading"><div><div className="panel-title">Cobros recientes</div><div className="panel-subtitle">Estado actualizado al instante</div></div></div>{(cobros.length ? cobros : payments).slice(0, 6).map((row, index) => { const item = Array.isArray(row) ? { comprobante: row[0], comerciante: row[2], monto: row[6], metodo_pago: row[7], estado: row[8] } : row; return <div className="payment-row" key={item.comprobante || index}><div><strong>{item.comprobante || `#${item.id}`}</strong><span>{item.comerciante} · {item.metodo_pago}</span></div><div><strong>{typeof item.monto === 'number' ? `S/ ${item.monto.toFixed(2)}` : item.monto}</strong><span className="status paid">{item.estado}</span></div></div>; })}</div>
             </div>
             {showQrScanner && <QrScanner onScan={handleQrScan} onClose={() => setShowQrScanner(false)} />}
+            {cardMerchant && <MerchantCardDialog merchants={[cardMerchant]} onIssue={issuePaymentCard} onClose={() => setCardMerchant(null)} />}
           </section>
         );
       case 'mapa':
