@@ -9,9 +9,11 @@ import { buscarRecibo, generarReciboPdf, leerTokenDescarga, verificarRecibo } fr
 
 export const router = express.Router();
 
-// DNI o código + PIN del carnet. Credenciales erradas: 401 (sin decir cuál falló); 5 PIN errados: 429.
+// DNI o código + PIN, DNI o código + llave del carnet, o la llave sola (QR del reverso).
+// Credenciales erradas: 401 (sin decir cuál falló); 5 errores seguidos: 429.
 router.post('/api/v1/portal/login', loginLimiter, async (req, res) => {
-  const data = await ingresarAlPortal(db, req.body?.identifier, req.body?.pin);
+  const { identifier, pin, llave } = req.body || {};
+  const data = await ingresarAlPortal(db, { identifier, pin, llave });
   return res.json({ data, message: 'Portal del comerciante consultado correctamente' });
 });
 

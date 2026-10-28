@@ -80,14 +80,35 @@ Pendientes menores:
 - **Tres capas de estilos.** `tema-municipal.css` es ahora la capa del rediseño (tokens, menú por grupos, tarjetas, píldoras). Debajo sigue `styles.css` (~4600 líneas) con reglas que el tema pisa. Limpiarlo es un trabajo aparte.
 - **Tailwind sin uso.** `tailwind.config.js` tiene una paleta azul que no corresponde, y los `@apply` de `styles.css` (`.glass-card`, `.badge-*`) no se usan en ningún JSX. Se puede quitar Tailwind.
 - **Pantallas del Penpot que no se hicieron:**
-  - carnet con llave de acceso (sesión de 30 días, bloqueo tras 5 intentos);
   - "Importar padrón" como página propia;
   - "Para atender" y "Recaudación por zona" en el Dashboard;
   - búsqueda global;
-  - portal con ingreso por carnet y aviso de sesión vencida.
+  - sesión de 30 días del portal y aviso de sesión vencida: el usuario decidió **no** guardar sesión (28/10/2026).
 
   Son funciones nuevas con reglas de negocio: hay que decidirlas antes.
 - **Página pública (P1).** Solo tomó fuentes y colores; su estructura sigue siendo la de antes.
+
+## Lo que se trajo y lo que no de `claude/gifted-mendel-9fxas5` (2026-10-28)
+
+Esa rama de GitHub se separó de `main` el 15/10 y nunca se unió con esta. No se le hace merge: tiene otra estructura (`App.jsx`, `index.ts`), migraciones 0003–0006 que aquí son otras y tokens en `localStorage`. Se trajo a mano, en la rama `feature/carnet-llave`:
+
+- **Carnet con llave del portal:** migración 0016, `emitirCarnets` e `ingresarAlPortal` con llave en `portalAcceso.js`, `MerchantCardDialog.jsx` y el portal con llave o QR. Sin sesión guardada; solo `super_admin` emite.
+- **Libros Excel de prueba:** `datos-prueba/` y `apps/server/scripts/generar-padron-prueba.js`. Allá eran Python con `openpyxl`; aquí son Node con `exceljs`, sin "Fecha Feria" ni "Tarifa".
+- **Skill `penpot-backend`**, con las rutas de `routes/`.
+- **Confirmación del padrón en lote:** se trabaja en una sesión aparte.
+
+Lo que **no** se trajo, para decidirlo aparte:
+
+| Commit remoto | Por qué no |
+|---|---|
+| 54fe11c | Monto por zona por día de feria y `frecuencia_pago`: choca con el cobro por día marcado (0013) |
+| 27bf9a6 | Ausente = falta de esa feria: aquí el ausente deja el puesto disponible |
+| 45061dd, cd32230 | Varias tarifas por zona y `puestos_historial`: aquí el titular de cada día lo resuelve 0015; el cambio de zona sigue recalculando el pasado (ver arriba) |
+| a35684d | Carnet desde Pagos: el usuario no lo quiere; el arreglo de búsqueda ya estaba aquí |
+
+**Hallazgo al probar los libros:** una zona que no existe en el Excel no da error. `resolveCatalogId` en `padronImport.js` la manda a la primera zona sin avisar. Falta decidir si debe ser error de fila.
+
+## Orden de refactorización sugerido (de menor a mayor riesgo)
 
 ## Orden de refactorización sugerido (de menor a mayor riesgo)
 
