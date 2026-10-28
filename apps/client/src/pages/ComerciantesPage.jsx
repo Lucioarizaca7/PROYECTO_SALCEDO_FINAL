@@ -26,7 +26,6 @@ export function ComerciantesPage() {
       onSubmit={merchants.submit}
       onEdit={merchants.edit}
       onDeactivate={merchants.deactivate}
-      onGeneratePortalPin={merchants.generatePortalPin}
       // Solo super_admin emite carnets (decisión del 28/10/2026); el servidor vuelve a comprobarlo.
       onIssueCards={user?.rol === 'super_admin' ? merchants.emitirCarnets : null}
     />

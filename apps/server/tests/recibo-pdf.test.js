@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 
 import { startServer } from '../src/index.ts';
 import { closeDatabase, insertComerciante, insertPuesto, insertTarifa, registrarCobro, anularCobro } from '../src/db.js';
-import { generarPinPortal } from '../src/portalAcceso.js';
+import { emitirCarnets } from '../src/portalAcceso.js';
 import { tokenVerificacion, tokenDescarga, leerTokenDescarga } from '../src/reciboPdf.js';
 import { pool } from '../src/pg.js';
 
@@ -89,9 +89,9 @@ test('desde el portal el comerciante baja solo sus recibos, con un enlace que ve
   const [propio, ajeno] = await dosComerciantesConSaldo();
   await cobrar(propio, periodo);
   const cobroAjeno = await cobrar(ajeno, periodo);
-  const { pin } = await generarPinPortal(pool, propio.id, 1);
+  const [{ llave }] = await emitirCarnets(pool, [propio.id], 1);
 
-  const portal = await api('/portal/login', { method: 'POST', body: { identifier: propio.dni_ruc, pin } });
+  const portal = await api('/portal/login', { method: 'POST', body: { identifier: propio.dni_ruc, llave } });
   assert.equal(portal.status, 200, portal.body?.message);
   const pago = portal.body.data.pagos.find((item) => item.descarga);
   assert.ok(pago, 'cada pago trae su enlace de descarga');

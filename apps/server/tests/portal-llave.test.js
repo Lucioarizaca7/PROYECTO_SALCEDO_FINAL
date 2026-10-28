@@ -1,6 +1,6 @@
 /**
  * Carnet con llave del portal (migrations/0016_llave_portal.sql, src/portalAcceso.js), contra la API
- * levantada de verdad: solo super_admin emite, la llave se ve una sola vez, convive con el PIN, se
+ * levantada de verdad: solo super_admin emite, la llave se ve una sola vez, es la única credencial (0017), se
  * entra con DNI/código + llave o con la llave sola, 5 errores bloquean y la baja anula el carnet.
  */
 import test, { after, before } from 'node:test';
@@ -10,7 +10,7 @@ import { startServer } from '../src/index.ts';
 import { loginUser } from '../src/auth.ts';
 import { closeDatabase, deactivateComerciante, getComerciantes, insertComerciante } from '../src/db.js';
 import { pool } from '../src/pg.js';
-import { LLAVE_ALFABETO, LLAVE_LARGO, MAX_CARNETS_POR_LOTE, PIN_MAX_INTENTOS, generarPinPortal } from '../src/portalAcceso.js';
+import { LLAVE_ALFABETO, LLAVE_LARGO, MAX_CARNETS_POR_LOTE, MAX_INTENTOS_PORTAL } from '../src/portalAcceso.js';
 
 let server;
 let baseUrl;
@@ -103,41 +103,37 @@ test('sin carnet o con otra llave el error es el mismo y no revela si el comerci
   assert.equal(desconocido.body.message, llaveInventada.body.message);
   assert.doesNotMatch(JSON.stringify(sinCarnet.body), new RegExp(comerciante.nombre));
 
-  assert.equal((await ingresar({ identifier: comerciante.dni_ruc })).status, 400, 'sin PIN ni llave no se consulta');
+  assert.equal((await ingresar({ identifier: comerciante.dni_ruc })).status, 400, 'sin llave no se consulta');
 });
 
-test(`tras ${PIN_MAX_INTENTOS} llaves erradas se bloquea aunque luego acierte`, async () => {
+test(`tras ${MAX_INTENTOS_PORTAL} llaves erradas se bloquea aunque luego acierte`, async () => {
   const comerciante = await nuevoComerciante();
   const llave = await llaveDe(comerciante.id);
   const errada = llave.startsWith('2') ? '3333-3333-33' : '2222-2222-22';
 
   const estados = [];
-  for (let i = 0; i < PIN_MAX_INTENTOS; i += 1) estados.push((await ingresar({ identifier: comerciante.dni_ruc, llave: errada })).status);
-  assert.deepEqual(estados, [...Array(PIN_MAX_INTENTOS - 1).fill(401), 429]);
+  for (let i = 0; i < MAX_INTENTOS_PORTAL; i += 1) estados.push((await ingresar({ identifier: comerciante.dni_ruc, llave: errada })).status);
+  assert.deepEqual(estados, [...Array(MAX_INTENTOS_PORTAL - 1).fill(401), 429]);
   assert.equal((await ingresar({ identifier: comerciante.dni_ruc, llave })).status, 429);
   assert.equal((await ingresar({ llave })).status, 429, 'la llave sola tampoco entra mientras dure el bloqueo');
 });
 
-test('un carnet nuevo anula la llave anterior y el PIN sigue sirviendo', async () => {
+test('un carnet nuevo anula la llave anterior', async () => {
   const comerciante = await nuevoComerciante();
-  const { pin } = await generarPinPortal(pool, comerciante.id, 1);
   const primera = await llaveDe(comerciante.id);
   const segunda = await llaveDe(comerciante.id);
   assert.notEqual(primera, segunda);
 
   assert.equal((await ingresar({ identifier: comerciante.dni_ruc, llave: primera })).status, 401, 'la llave anterior deja de servir');
   assert.equal((await ingresar({ identifier: comerciante.dni_ruc, llave: segunda })).status, 200);
-  assert.equal((await ingresar({ identifier: comerciante.dni_ruc, pin })).status, 200, 'PIN y llave conviven');
 });
 
-test('la baja anula el carnet y el PIN, y no se emite carnet a un dado de baja', async () => {
+test('la baja anula el carnet y no se emite carnet a un dado de baja', async () => {
   const comerciante = await nuevoComerciante();
-  const { pin } = await generarPinPortal(pool, comerciante.id, 1);
   const llave = await llaveDe(comerciante.id);
   await deactivateComerciante(pool, comerciante.id);
 
   assert.equal((await ingresar({ llave })).status, 401);
-  assert.equal((await ingresar({ identifier: comerciante.dni_ruc, pin })).status, 401);
   const { rows } = await pool.query('SELECT 1 FROM comerciante_portal_acceso WHERE comerciante_id = $1', [comerciante.id]);
   assert.equal(rows.length, 0, 'una reactivación no revive las credenciales viejas');
 

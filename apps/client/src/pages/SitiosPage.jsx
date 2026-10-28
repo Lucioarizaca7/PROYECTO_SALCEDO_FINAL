@@ -3,15 +3,21 @@ import { paymentStatusText, SERVER_PAYMENT_STATUS } from '../components/features
 import { useSitios } from '../hooks/useSitios';
 import { formatPEN } from '../lib/formato';
 
+// null = zona confirmada; '' o texto = el padrón la trajo vacía o no registrada (migrations/0018).
+const zonaPorRegularizar = (site) => site.zona_por_regularizar !== null && site.zona_por_regularizar !== undefined;
+
 export function SitiosPage() {
-  const { mapPuestos, catalogos } = useSisrec();
-  const { message, filters, setFilters, sitesWithInactive, toggleInactive, collectFromSite } = useSitios();
+  const { user, mapPuestos, catalogos } = useSisrec();
+  const { message, filters, setFilters, sitesWithInactive, toggleInactive, collectFromSite, regularizarZona } = useSitios();
+  const puedeRegularizar = user?.rol === 'super_admin';
 
   const source = filters.bajas && sitesWithInactive ? sitesWithInactive : mapPuestos;
   const rows = source.filter((site) => (
     (filters.estado === 'todos' || site.estado_pago === filters.estado)
     && (filters.zona === 'todas' || String(site.zona_id) === filters.zona)
+    && (!filters.porRegularizar || zonaPorRegularizar(site))
   ));
+  const pendientesDeZona = source.filter(zonaPorRegularizar).length;
   const totalSaldo = rows.reduce((sum, site) => sum + Number(site.saldo_pendiente || 0), 0);
 
   return (
@@ -38,6 +44,11 @@ export function SitiosPage() {
             <option value="todas">Todas las zonas</option>
             {catalogos.zonas.map((zona) => <option key={zona.id} value={String(zona.id)}>{zona.nombre}</option>)}
           </select>
+          {pendientesDeZona > 0 && (
+            <label className="checkbox-inline">
+              <input type="checkbox" checked={Boolean(filters.porRegularizar)} onChange={(event) => setFilters((current) => ({ ...current, porRegularizar: event.target.checked }))} /> Solo zona por regularizar ({pendientesDeZona})
+            </label>
+          )}
           <label className="checkbox-inline">
             <input type="checkbox" checked={filters.bajas} onChange={(event) => toggleInactive(event.target.checked)} /> Mostrar dados de baja
           </label>
@@ -66,7 +77,23 @@ export function SitiosPage() {
                 <tr key={site.id}>
                   <td>{site.codigo || `P-${site.id}`}</td>
                   <td>{site.direccion || 'Sin dirección registrada'}</td>
-                  <td>{site.zona || 'Sin zona'}</td>
+                  <td>
+                    {site.zona || 'Sin zona'}
+                    {zonaPorRegularizar(site) && (
+                      <div className="zona-por-regularizar">
+                        <span className="status pending" title={site.zona_por_regularizar ? `El padrón traía la zona "${site.zona_por_regularizar}", que no está registrada` : 'El padrón no traía zona'}>Zona por regularizar</span>
+                        {puedeRegularizar && (
+                          <select value="" aria-label={`Asignar zona al puesto ${site.codigo}`} onChange={(event) => {
+                            const zona = catalogos.zonas.find((item) => String(item.id) === event.target.value);
+                            if (zona) regularizarZona(site, zona.id, zona.nombre);
+                          }}>
+                            <option value="">Asignar zona…</option>
+                            {catalogos.zonas.map((zona) => <option key={zona.id} value={String(zona.id)}>{zona.nombre}</option>)}
+                          </select>
+                        )}
+                      </div>
+                    )}
+                  </td>
                   <td>{site.comerciante || 'Libre'}</td>
                   <td>{conMontos ? formatPEN(site.monto_total) : '—'}</td>
                   <td>{conMontos ? formatPEN(site.monto_pagado) : '—'}</td>

@@ -9,15 +9,15 @@ import { buscarRecibo, generarReciboPdf, leerTokenDescarga, verificarRecibo } fr
 
 export const router = express.Router();
 
-// DNI o código + PIN, DNI o código + llave del carnet, o la llave sola (QR del reverso).
+// DNI o código + llave del carnet, o la llave sola (QR del reverso). El PIN ya no existe (0017).
 // Credenciales erradas: 401 (sin decir cuál falló); 5 errores seguidos: 429.
 router.post('/api/v1/portal/login', loginLimiter, async (req, res) => {
-  const { identifier, pin, llave } = req.body || {};
-  const data = await ingresarAlPortal(db, { identifier, pin, llave });
+  const { identifier, llave } = req.body || {};
+  const data = await ingresarAlPortal(db, { identifier, llave });
   return res.json({ data, message: 'Portal del comerciante consultado correctamente' });
 });
 
-// Descarga del recibo desde el portal: el enlace firmado lo recibe solo quien entró con DNI + PIN,
+// Descarga del recibo desde el portal: el enlace firmado lo recibe solo quien entró con su llave,
 // vence a los 30 minutos y abre únicamente ese recibo.
 router.get('/api/v1/portal/recibos/:token/pdf', async (req, res) => {
   const transaccionId = leerTokenDescarga(req.params.token);

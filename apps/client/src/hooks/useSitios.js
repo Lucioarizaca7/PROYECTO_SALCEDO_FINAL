@@ -57,6 +57,16 @@ export function useSitios() {
 
   const assignSite = (site, comercianteId) => updateSite(site.id, { comerciante_id: comercianteId });
 
+  // Puesto del padrón con "zona por regularizar": enviar la zona la confirma y el servidor borra la marca.
+  const regularizarZona = async (site, zonaId, zonaNombre) => {
+    if (!window.confirm(`¿Pasar el puesto ${site.codigo} a la zona ${zonaNombre}? Su cobro por día se calculará con la tarifa de esa zona.`)) return;
+    try {
+      await updateSite(site.id, { zona_id: Number(zonaId) });
+    } catch (error) {
+      setMessage(error.message);
+    }
+  };
+
   // Sin señal se encola como actualización con comerciante_id null (el servidor lo deja disponible).
   const releaseSite = async (site) => {
     if (!window.confirm(`¿Liberar el puesto ${site.codigo}? Quedará sin titular y disponible para otro comerciante.`)) return;
@@ -101,6 +111,6 @@ export function useSitios() {
 
   return {
     message, filters, setFilters, sitesWithInactive,
-    createSite, updateSite, deleteSite, assignSite, releaseSite, searchMerchants, collectFromSite, toggleInactive
+    createSite, updateSite, deleteSite, assignSite, releaseSite, regularizarZona, searchMerchants, collectFromSite, toggleInactive
   };
 }

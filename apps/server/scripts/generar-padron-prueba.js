@@ -6,8 +6,8 @@
  * Salida (datos-prueba/ en la raíz del proyecto):
  *   - padron-prueba-50.xlsx: 50 comerciantes válidos en dos hojas (BLOQUE A y BLOQUE B), 6 ausentes.
  *   - padron-prueba-errores.xlsx: una fila de control y filas con errores intencionales.
- *   - padron-prueba-casos.xlsx: titulares sin DNI (pendientes de regularización) y un titular con
- *     dos puestos en zonas distintas.
+ *   - padron-prueba-casos.xlsx: titulares sin DNI (pendientes de regularización), un titular con
+ *     dos puestos en zonas distintas y dos puestos con zona por regularizar (sin zona y zona no registrada).
  *
  * Datos ficticios y reproducibles (semilla fija). Las zonas deben existir en la base (las de la semilla demo).
  * Uso, desde apps/server:  node scripts/generar-padron-prueba.js
@@ -149,7 +149,10 @@ function libroCasos() {
     { documento: '', titular: 'SANTOS CALSIN TURPO', codigo: 'CAS-D-002', sector: 'Bloque D - Fila 1', zona: 'Mercado Central' },
     // Un titular con dos puestos en zonas distintas: un solo comerciante, dos puestos.
     { documento: '47120356', titular: 'GERMAN YUPANQUI PACOMPIA', codigo: 'CAS-D-003', sector: 'Bloque D - Fila 2', zona: 'Mercado Central' },
-    { documento: '47120356', titular: 'GERMAN YUPANQUI PACOMPIA', codigo: 'CAS-D-004', sector: 'Bloque D - Fila 2', zona: 'Zona Norte' }
+    { documento: '47120356', titular: 'GERMAN YUPANQUI PACOMPIA', codigo: 'CAS-D-004', sector: 'Bloque D - Fila 2', zona: 'Zona Norte' },
+    // Zona por regularizar: quedan en la primera zona, pagan con su tarifa y salen marcados en Sitios.
+    { documento: '47120371', titular: 'HILDA COAQUIRA RAMOS', codigo: 'CAS-D-005', sector: 'Bloque D - Fila 3', zona: '' },
+    { documento: '47120372', titular: 'EFRAIN TURPO CCAMA', codigo: 'CAS-D-006', sector: 'Bloque D - Fila 3', zona: 'Barrio Alto Salcedo' }
   ];
   const libro = new ExcelJS.Workbook();
   escribirHoja(libro, 'BLOQUE D', 'PADRÓN DE PRUEBA: CASOS ESPECIALES', casos.map((caso, i) => ({ ...base, ...caso, n: i + 1 })));

@@ -23,7 +23,6 @@ export function MerchantDirectory({
   onSubmit,
   onEdit,
   onDeactivate,
-  onGeneratePortalPin,
   onIssueCards
 }) {
   const directory = useMerchantDirectory(merchants);
@@ -97,6 +96,7 @@ export function MerchantDirectory({
                   <div><strong>{importPreview.existingMerchants}</strong><span>comerciantes existentes</span></div>
                   <div><strong>{importPreview.absentRows}</strong><span>ausentes, sin devengo</span></div>
                   <div><strong>{importPreview.pendingMerchants ?? 0}</strong><span>sin DNI, pendientes de regularizar</span></div>
+                  <div><strong>{importPreview.zonePendingPosts ?? 0}</strong><span>puestos con zona por regularizar</span></div>
                   <div><strong>{importPreview.merchantsWithSeveralPosts ?? 0}</strong><span>titulares con varios puestos</span></div>
                 </>
               )}
@@ -282,7 +282,7 @@ export function MerchantDirectory({
           <button type="button" className="secondary-button" disabled={directory.page >= directory.totalPages} onClick={() => directory.setPage((page) => page + 1)} aria-label="Página siguiente">Siguiente</button>
         </div>
       </div>
-      {qrMerchant && <MerchantQrDialog merchant={qrMerchant} onClose={() => setQrMerchant(null)} onGeneratePortalPin={onGeneratePortalPin} />}
+      {qrMerchant && <MerchantQrDialog merchant={qrMerchant} onClose={() => setQrMerchant(null)} />}
       {carnetPara && (
         <MerchantCardDialog
           merchants={carnetPara}

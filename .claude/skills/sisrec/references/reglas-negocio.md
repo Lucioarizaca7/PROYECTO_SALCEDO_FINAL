@@ -102,6 +102,10 @@ Depende de `tipo_comerciante`:
 - **Varios puestos:** filas con el mismo DNI y el mismo nombre son un comerciante con varios puestos; el mismo DNI con otro nombre es error de fila.
 - **Errores por fila:** código de otro titular, puesto físico ocupado (zona + dirección, como `validatePuestoPlacement`), código repetido en el libro. Una baja que reaparece se reactiva (`reactivatedMerchants`).
 - **Metraje:** opcional en una zona con tipo de vía (cobro por día, sin metros); obligatorio sin tipo de vía. `insertPuesto` acepta `metros_cuadrados: null` solo en una zona con tipo de vía.
+- **Zona por regularizar** (decisión del usuario, 28/10/2026; migración 0018). La zona se busca por nombre exacto (sin mayúsculas, tildes ni espacios de más) en la columna Zona o, si viene vacía, en el nombre de la hoja.
+  - Si no hay coincidencia, la fila **no es error**: el puesto queda en la primera zona, paga con su tarifa y se guarda `puestos.zona_por_regularizar` (`''` = venía sin zona; texto = la zona del libro que no está registrada). La vista previa lo avisa por fila y cuenta `zonePendingPosts`.
+  - Antes la búsqueda era aproximada: "Barrio Alto Salcedo" caía en la zona "SALCEDO" sin avisar. Los rubros siguen con búsqueda aproximada.
+  - Se regulariza en Sitios ("Asignar zona…", solo `super_admin` en la pantalla) o reimportando con una zona registrada: enviar `zona_id` borra la marca; mover el puesto en el mapa no. Solo cambia la zona del **puesto** (la que usa el cobro por día); la zona del comerciante (tarifa mensual y su código) se corrige en Comerciantes.
 - **Ausente:** sigue la convención de puestos (queda `disponible` con titular).
 - **Plantilla oficial:** `GET /comerciantes/plantilla-padron` (super_admin, auditor), `padronPlantilla.js`; la hoja oculta `LISTAS_SISREC` no se lee como padrón.
 
@@ -177,13 +181,13 @@ Depende de `tipo_comerciante`:
 
 - `POST /auth/login` devuelve un JWT corto (`config.jwtExpiresIn`) en el cuerpo y deja el refresh token de 12 h, ligado al dispositivo (`createDeviceSession`), en la cookie HttpOnly `sisrec_refresh`. `/auth/refresh` y `/auth/logout` solo leen la cookie.
 - En el cliente ningún token va en `localStorage`: el de acceso vive en memoria y, al recargar, `authFetch` pide uno nuevo con la cookie (`credentials: 'include'`).
-- Portal del comerciante (`portalAcceso.js`). Desde el 28/10/2026 conviven dos credenciales:
-  - DNI o código + PIN de 6 dígitos;
-  - DNI o código + llave del carnet (`XXXX-XXXX-XX`), o la llave sola desde el QR del reverso (`/portal#llave=…`).
-- Credenciales erradas responden siempre el mismo 401. 5 errores seguidos (PIN o llave, se cuentan juntos) bloquean 15 minutos (429). PIN y llave se muestran una sola vez y nunca se auditan en claro.
-- **No hay sesión guardada en el celular del comerciante** (decisión del 28/10/2026): cada consulta vuelve a pedir PIN o llave.
-- **El carnet lo emite solo `super_admin`**, uno por uno o en lote (hasta 500), desde Comerciantes. Un carnet nuevo anula la llave anterior; el PIN no cambia. No se emite a un dado de baja.
-- **La baja anula PIN y llave** (borra la fila de `comerciante_portal_acceso`), para que una reactivación no reviva un carnet viejo.
+- Portal del comerciante (`portalAcceso.js`): **solo con la llave del carnet** (decisión del usuario, 28/10/2026, como el Penpot P3). El PIN de 6 dígitos se quitó (migración 0017: sin ruta que lo genere ni login que lo acepte; quien solo tenía PIN necesita su carnet).
+  - DNI o código + llave del carnet (`XXXX-XXXX-XX`);
+  - la llave sola desde el QR del reverso: con la cámara del celular (`/portal#llave=…`) o con el botón "Escanear el QR del reverso" del portal (`QrScanner` + `llaveQr.js`, que rechaza el QR del frente).
+- Credenciales erradas responden siempre el mismo 401. 5 llaves erradas seguidas bloquean 15 minutos (429). La llave se muestra una sola vez y nunca se audita en claro.
+- **No hay sesión guardada en el celular del comerciante** (decisión del 28/10/2026): cada consulta vuelve a pedir la llave.
+- **El carnet lo emite solo `super_admin`**, uno por uno o en lote (hasta 500), desde Comerciantes. Un carnet nuevo anula la llave anterior. No se emite a un dado de baja.
+- **La baja anula la llave** (borra la fila de `comerciante_portal_acceso`), para que una reactivación no reviva un carnet viejo.
 - `session.js` renueva el token una sola vez aunque fallen varias peticiones a la vez (`refreshing`), y emite `SESSION_EXPIRED_EVENT` si no puede.
 - Las sesiones se pueden revocar desde el panel (`DELETE /auth/sesiones/:id`).
 - `auditMutation` guarda el estado anterior y el nuevo en `auditoria_logs`, encadenados con un hash. `verifyAuditChain` detecta si alguien los alteró.

@@ -1051,7 +1051,7 @@ export async function updateComerciante(db, id, payload) {
 }
 
 // Una sola sentencia: los puestos y el comerciante se dan de baja juntos aunque no haya transacción.
-// La baja también anula el PIN y la llave del portal, para que una reactivación no reviva un carnet viejo.
+// La baja también anula la llave del portal, para que una reactivación no reviva un carnet viejo.
 async function darDeBajaComerciante(db, id) {
   await db.query(`
     WITH baja AS (UPDATE puestos SET estado = 'inactivo' WHERE comerciante_id = $1),
@@ -1074,7 +1074,7 @@ export async function deactivateComerciante(db, id) {
 const PUESTO_SELECT = `
   SELECT p.id, p.comerciante_id, c.nombre AS comerciante, c.estado AS comerciante_estado,
          p.zona_id, z.nombre AS zona, p.direccion, p.metros_cuadrados, p.estado,
-         p.codigo_puesto AS codigo, p.latitud, p.longitud,
+         p.codigo_puesto AS codigo, p.latitud, p.longitud, p.zona_por_regularizar,
          c.tipo_comerciante AS categoria, c.tipo_comerciante, c.codigo AS comerciante_codigo
   FROM puestos p
   LEFT JOIN comerciantes c ON c.id = p.comerciante_id
@@ -1184,6 +1184,8 @@ export async function insertPuesto(db, payload, { devolver = true } = {}) {
   const codigo = String(payload.codigo_puesto || payload.codigoPuesto || '').trim() || null;
   const latitud = parseCoord(payload.latitud);
   const longitud = parseCoord(payload.longitud);
+  // Solo la importación del padrón la envía (migrations/0018_zona_por_regularizar.sql).
+  const zonaPorRegularizar = payload.zona_por_regularizar ?? null;
 
   if (!zonaId || !direccion || (metros !== null && (!Number.isFinite(metros) || metros <= 0))) {
     throw new ValidationError('Zona, dirección y metros cuadrados válidos son obligatorios');
@@ -1198,9 +1200,9 @@ export async function insertPuesto(db, payload, { devolver = true } = {}) {
   const finalCode = codigo || `S-${String(next.id).padStart(3, '0')}`;
   try {
     await db.query(`
-      INSERT INTO puestos (id, comerciante_id, zona_id, direccion, metros_cuadrados, estado, codigo_puesto, latitud, longitud)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
-    [next.id, comercianteId, zonaId, direccion, metros, estado, finalCode, latitud, longitud]);
+      INSERT INTO puestos (id, comerciante_id, zona_id, direccion, metros_cuadrados, estado, codigo_puesto, latitud, longitud, zona_por_regularizar)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+    [next.id, comercianteId, zonaId, direccion, metros, estado, finalCode, latitud, longitud, zonaPorRegularizar]);
   } catch (error) {
     if (error.code === '23505') throw new ConflictError(`El código de puesto ${finalCode} ya está asignado`);
     throw error;
@@ -1224,6 +1226,9 @@ export async function updatePuesto(db, id, payload, { devolver = true } = {}) {
   // Sin coordenada en el pedido se conserva la actual (también si es null).
   const latitud = payload.latitud === undefined ? parseCoord(current.latitud) : parseCoord(payload.latitud);
   const longitud = payload.longitud === undefined ? parseCoord(current.longitud) : parseCoord(payload.longitud);
+  // Enviar una zona la confirma y borra la marca "zona por regularizar"; el padrón envía la marca explícita.
+  const zonaPorRegularizar = payload.zona_por_regularizar !== undefined ? payload.zona_por_regularizar
+    : payload.zona_id !== undefined ? null : current.zona_por_regularizar;
 
   if (!zonaId || !direccion || (metros !== null && (!Number.isFinite(metros) || metros <= 0))) {
     throw new ValidationError('Zona, dirección y metros cuadrados válidos son obligatorios');
@@ -1232,9 +1237,10 @@ export async function updatePuesto(db, id, payload, { devolver = true } = {}) {
 
   await db.query(`
     UPDATE puestos
-    SET comerciante_id = $1, zona_id = $2, direccion = $3, metros_cuadrados = $4, estado = $5, latitud = $6, longitud = $7
-    WHERE id = $8`,
-  [comercianteId, zonaId, direccion, metros, estado, latitud, longitud, puestoId]);
+    SET comerciante_id = $1, zona_id = $2, direccion = $3, metros_cuadrados = $4, estado = $5, latitud = $6, longitud = $7,
+        zona_por_regularizar = $8
+    WHERE id = $9`,
+  [comercianteId, zonaId, direccion, metros, estado, latitud, longitud, zonaPorRegularizar, puestoId]);
 
   return devolver ? findPuesto(db, puestoId) : { id: puestoId };
 }

@@ -1,17 +1,23 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { apiBase } from '../services/session';
+import { QrScanner } from '../features/payments/QrScanner';
+import { llaveDelFragmento, llaveDesdeQr } from '../features/portal/llaveQr';
 
-// "/portal#llave=XXXX" viene del QR del reverso del carnet. El fragmento (#) no viaja al servidor.
-const llaveDelEnlace = () => new URLSearchParams(window.location.hash.slice(1)).get('llave') || '';
+const TEXTOS_LECTOR = {
+  eyebrow: 'PORTAL DEL COMERCIANTE',
+  instruccion: 'Apunta el QR del reverso de tu carnet',
+  detectado: 'Carnet detectado. Consultando tu cuenta...',
+  sinLectura: 'No se detectó el QR en 10 segundos. Acerca el carnet con buena luz o escribe tu llave.',
+  cerrar: 'Cerrar y escribir la llave'
+};
 
-// Portal del comerciante: consulta de su deuda y sus pagos con el DNI o el código y el PIN o la llave
-// de su carnet, o con la llave sola desde el QR. No se guarda ninguna sesión en el celular.
+// Portal del comerciante (Penpot P3): consulta de su deuda y sus pagos con el DNI o el código y la llave de
+// su carnet, o con la llave sola al escanear el QR del reverso. No se guarda ninguna sesión en el celular.
 export function PortalPage() {
-  const [modo, setModo] = useState('llave');
   const [identifier, setIdentifier] = useState('');
-  const [pin, setPin] = useState('');
   const [llave, setLlave] = useState('');
+  const [escaneando, setEscaneando] = useState(false);
   const [data, setData] = useState(null);
   const [error, setError] = useState('');
   const [consultando, setConsultando] = useState(false);
@@ -28,15 +34,14 @@ export function PortalPage() {
       setData(null);
       setError(portalError.message);
     } finally {
-      setPin('');
       setLlave('');
       setConsultando(false);
     }
   };
 
-  // Al llegar desde el QR: entra con la llave y la borra de la barra de direcciones y del historial.
+  // Al llegar desde el QR (cámara del celular): entra con la llave y la borra de la barra de direcciones y del historial.
   useEffect(() => {
-    const desdeQr = llaveDelEnlace();
+    const desdeQr = llaveDelFragmento(window.location.hash);
     if (!desdeQr) return;
     window.history.replaceState(null, '', window.location.pathname);
     consultar({ llave: desdeQr });
@@ -44,7 +49,15 @@ export function PortalPage() {
 
   const submit = (event) => {
     event.preventDefault();
-    consultar(modo === 'pin' ? { identifier, pin } : { identifier, llave });
+    consultar({ identifier, llave });
+  };
+
+  // Lector del portal: solo sirve el QR del reverso; el del frente es para el cobrador.
+  const alEscanear = (texto) => {
+    setEscaneando(false);
+    const leida = llaveDesdeQr(texto);
+    if (leida) consultar({ llave: leida });
+    else setError('Ese QR no es el del reverso de tu carnet. Voltea el carnet y escanea el QR que está junto a la llave.');
   };
 
   const reminder = data ? `Recordatorio SISREC: saldo pendiente S/ ${data.deuda.saldo.toFixed(2)}` : '';
@@ -58,19 +71,19 @@ export function PortalPage() {
       {!data ? (
         <form className="portal-login panel" onSubmit={submit}>
           <div className="eyebrow">PORTAL DEL COMERCIANTE</div>
-          <h1>Consulta tus pagos</h1>
-          <p>Escanea con tu celular el QR del reverso de tu carnet, o escribe tu DNI o código y la llave o el PIN de tu carnet.</p>
-          <div className="segmentos" role="group" aria-label="Cómo quieres ingresar">
-            <button type="button" className={modo === 'llave' ? 'activo' : ''} aria-pressed={modo === 'llave'} onClick={() => setModo('llave')}>Con llave</button>
-            <button type="button" className={modo === 'pin' ? 'activo' : ''} aria-pressed={modo === 'pin'} onClick={() => setModo('pin')}>Con PIN</button>
-          </div>
-          <input required autoComplete="username" placeholder="DNI o código COM-0001" value={identifier} onChange={(event) => setIdentifier(event.target.value)} aria-label="DNI o código de comerciante" />
-          {modo === 'pin'
-            ? <input required inputMode="numeric" autoComplete="one-time-code" pattern="\d{6}" maxLength={6} placeholder="PIN de 6 dígitos" aria-label="PIN del portal" value={pin} onChange={(event) => setPin(event.target.value.replace(/\D/g, ''))} />
-            : <input required autoComplete="current-password" autoCapitalize="characters" spellCheck="false" maxLength={14} placeholder="Llave XXXX-XXXX-XX" aria-label="Llave del carnet" value={llave} onChange={(event) => setLlave(event.target.value.toUpperCase())} />}
-          <small className="portal-pin-help">¿No tienes carnet o lo perdiste? Pídelo en la municipalidad: el anterior dejará de funcionar.</small>
+          <h1>Mira tus pagos y tu deuda</h1>
+          <p>Necesitas el carnet que te dieron en la municipalidad.</p>
+          <label htmlFor="portal-identificador">DNI o código CM</label>
+          <input id="portal-identificador" required autoComplete="username" placeholder="41258796 o CM-012" value={identifier} onChange={(event) => setIdentifier(event.target.value)} />
+          <label htmlFor="portal-llave">Llave del carnet (reverso)</label>
+          <input id="portal-llave" required autoComplete="current-password" autoCapitalize="characters" spellCheck="false" maxLength={14} placeholder="XXXX-XXXX-XX" value={llave} onChange={(event) => setLlave(event.target.value.toUpperCase())} />
           {error && <div className="form-error" role="alert">{error}</div>}
-          <button className="primary-button" type="submit" disabled={consultando}>{consultando ? 'Consultando…' : 'Consultar información →'}</button>
+          <button className="primary-button" type="submit" disabled={consultando}>{consultando ? 'Consultando…' : 'Ingresar'}</button>
+          <button className="secondary-button portal-escanear" type="button" disabled={consultando} onClick={() => { setError(''); setEscaneando(true); }}>Escanear el QR del reverso</button>
+          <div className="portal-ayuda">
+            <strong>¿Perdiste tu carnet?</strong>
+            <span>Pide uno nuevo en la municipalidad. El anterior deja de funcionar al instante.</span>
+          </div>
         </form>
       ) : (
         <div className="portal-content">
@@ -115,6 +128,7 @@ export function PortalPage() {
           )}
         </div>
       )}
+      {escaneando && <QrScanner textos={TEXTOS_LECTOR} onScan={alEscanear} onClose={() => setEscaneando(false)} />}
     </section>
   );
 }
