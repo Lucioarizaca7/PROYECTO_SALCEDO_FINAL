@@ -85,7 +85,7 @@ grep -rn "nombreFuncion(" apps/server/src apps/client/src
 
 ## 3. Base de datos
 
-- **Las migraciones solo se agregan**: `migrations/000N_nombre.sql` (la siguiente es la 0016), con `BEGIN; … COMMIT;`, comentarios en español, la corrección de los datos existentes y su prueba. Nunca se edita una que ya se aplicó.
+- **Las migraciones solo se agregan**: `migrations/000N_nombre.sql` (la siguiente es la 0019), con `BEGIN; … COMMIT;`, comentarios en español, la corrección de los datos existentes y su prueba. Nunca se edita una que ya se aplicó.
 - **La regla también va en la base**: CHECK, FK, UNIQUE (parcial si hace falta). El JS valida para dar un buen mensaje; la base impide el dato malo aunque entre por otro camino. Ejemplos: `puestos_ocupado_con_titular`, `tarifas_zona_o_tipo_via`, `UNIQUE (serie, numero)` de tickets.
 - Dinero en `NUMERIC(12,2)`; se redondea solo al mostrar.
 - Todo lo que escribe en más de una tabla va en `withTransaction`. Lo que lee un saldo para luego escribir **bloquea** (`FOR UPDATE` / `FOR NO KEY UPDATE`) para que dos cobros simultáneos no pasen del saldo.
@@ -102,7 +102,7 @@ Detalle y dónde vive cada control: `references/seguridad.md`. Lo mínimo en cad
 - Los usuarios demo existen **solo fuera de producción** (`config.isProduction` lo impide). No se agregan usuarios nuevos con clave en el código: en producción se usa `npm run crear-admin` / `crear-usuario`.
 - **Rutas**: toda ruta privada lleva `requireAuth` + `requireRoles([...])` explícitos (o `...staffOnly`); si modifica datos, `auditMutation`. Una ruta GET nueva sube el conteo fijo de `tests/api-seguridad.test.js` (hoy 40) y se agrega una prueba de que un rol sin permiso recibe 403.
 - **Sesión**: JWT de acceso corto en memoria; refresh en la cookie HttpOnly `sisrec_refresh`. Ningún token en `localStorage`/`sessionStorage`, en la URL ni en logs.
-- **Contraseñas y PIN**: bcrypt; el PIN del portal se muestra una vez y nunca se audita en claro.
+- **Contraseñas y llave del carnet**: contraseñas con bcrypt. El portal del comerciante entra solo con la llave del carnet (no hay PIN desde la 0017): se guarda su huella SHA-256, se muestra una vez al emitir el carnet y nunca se audita en claro.
 - **CORS**: lista blanca (`FRONTEND_URL`); jamás `origin: '*'` con `credentials`.
 - **Datos personales (Ley 29733)**: el código del comerciante lleva solo 3 dígitos del DNI; el portal devuelve el documento oculto; nada de DNI completo en QR, recibos ni reportes públicos.
 - **Errores**: el manejador global no reenvía mensajes crudos de PostgreSQL.
@@ -135,7 +135,8 @@ Cómo se comprueba: <la prueba que lo cubre y el comando>
 
 ## 7. Git y entorno
 
-- Raíz git: `D:/visual_code`; el proyecto es `Proyecto_Final_Salcedo_Rentas`. El checkout principal está en `correccion/logica-cobros` con trabajo **sin commit** (migraciones 0008–0014).
+- Raíz git: la carpeta `Proyecto_Final_Salcedo_Rentas` (git propio desde el 2026-10-27), remoto `origin` = `Lucioarizaca7/PROYECTO_SALCEDO_FINAL` (público). Rama de trabajo: `correccion/logica-cobros`.
+- `D:/visual_code` es otro repositorio, clon de `luiarca/VISUAL_CODE` (de un compañero, solo lectura): **nunca** se hace commit ni push del proyecto ahí. Sus worktrees viejos de `.claude/worktrees/` siguen siendo de ese repo.
 - **No se commitea, no se hace push, no se une ramas ni se abre PR sin que el usuario lo pida.** Las ramas se dejan separadas: las revisa el usuario.
 - Commits en español, sin `package.json`, `package-lock.json` ni `.claude/launch.json` si no son parte del trabajo.
 - Base local: `docker start sisrec-postgres`.
