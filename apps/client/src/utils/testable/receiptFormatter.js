@@ -22,6 +22,10 @@ export function buildEscPosReceipt(receipt) {
     `Concepto: ${receipt.concepto || 'Liquidación de deuda'}\n`,
     `Método: ${receipt.metodo_pago || 'efectivo'}\n`,
     `Monto: S/ ${Number(receipt.monto || 0).toFixed(2)}\n`,
+    // Tickets preimpresos entregados con el cobro (uno por puesto y día cobrado).
+    ...(receipt.tickets?.length
+      ? [`Tickets: ${receipt.tickets.map((item) => item.texto || `${item.serie} N° ${String(item.numero).padStart(6, '0')}`).join(', ')}\n`]
+      : []),
     `Hash: ${receipt.hash_idempotencia || 'N/A'}\n`,
     '-------------------------------\n',
     'Gracias por su contribución\n',

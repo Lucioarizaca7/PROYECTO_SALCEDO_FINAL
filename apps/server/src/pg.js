@@ -1,5 +1,7 @@
 import pg from 'pg';
 
+import { config } from './config.js';
+
 // NUMERIC y BIGINT llegan como número JS (dinero con 2 decimales, ids/conteos pequeños).
 pg.types.setTypeParser(1700, (value) => (value === null ? null : parseFloat(value)));
 pg.types.setTypeParser(20, (value) => (value === null ? null : parseInt(value, 10)));
@@ -14,9 +16,9 @@ export function isTestRun() {
 // En pruebas cada proceso trabaja en su propio esquema para no tocar los datos reales.
 export const testSchema = isTestRun() ? `sisrec_test_${process.pid}` : null;
 
-const connectionString =
-  process.env.DATABASE_URL || 'postgresql://sisrec:sisrec_dev@127.0.0.1:5433/sisrec';
+const connectionString = config.databaseUrl;
 
+// Se guarda y se lee en UTC; los reportes agrupan por día y mes de Lima con AT TIME ZONE (ver db.js).
 const sessionOptions = ['-c timezone=UTC'];
 if (testSchema) sessionOptions.push(`-c search_path=${testSchema},public`);
 

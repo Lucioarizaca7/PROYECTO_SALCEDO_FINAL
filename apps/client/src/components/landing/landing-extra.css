@@ -1,7 +1,7 @@
 .landing-tariff-section,
 .landing-transparency-section {
   align-items: center;
-  background: linear-gradient(145deg, #edf3f6, #f8fafc 60%, #e9f4f3);
+  background: linear-gradient(145deg, #E4EAE6, #f8fafc 60%, #e9f4f3);
 }
 
 .landing-transparency-section { justify-content: space-between; padding-bottom: 0; }
@@ -9,7 +9,7 @@
 .lx-tariff, .lx-transparency { width: 100%; max-width: 1120px; margin: 0 auto; }
 .lx-header { max-width: 680px; margin-bottom: 28px; }
 .lx-header h2 { margin: 6px 0 8px; font-size: clamp(1.6rem, 3vw, 2.2rem); }
-.lx-header p { margin: 0; color: var(--civic-muted, #64748b); }
+.lx-header p { margin: 0; color: var(--civic-muted, #475569); }
 
 .lx-card {
   background: #fff;
@@ -23,31 +23,31 @@
 .lx-form { padding: 24px; display: grid; gap: 18px; }
 .lx-form label { display: grid; gap: 6px; font-size: 0.85rem; font-weight: 600; }
 .lx-form select { padding: 10px 12px; border: 1px solid var(--civic-line, #e2e8f0); border-radius: 10px; font: inherit; background: #fff; }
-.lx-form input[type='range'] { width: 100%; accent-color: var(--civic-blue, #1d4ed8); }
+.lx-form input[type='range'] { width: 100%; accent-color: var(--civic-blue, #0B5D3B); }
 .lx-check { grid-template-columns: auto 1fr; align-items: center; font-weight: 400 !important; }
 
 .lx-segment { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; padding: 4px; background: var(--civic-surface-alt, #f1f5f9); border-radius: 12px; }
 .lx-segment button { padding: 9px 6px; border: 0; border-radius: 9px; background: transparent; font: inherit; font-size: 0.8rem; cursor: pointer; }
-.lx-segment button.active { background: var(--civic-blue, #1d4ed8); color: #fff; font-weight: 600; }
+.lx-segment button.active { background: var(--civic-blue, #0B5D3B); color: #fff; font-weight: 600; }
 
 .lx-result img, .lx-portal-card img { display: block; width: 100%; height: 150px; object-fit: cover; }
 .lx-result-body, .lx-portal-body { padding: 20px 24px 24px; display: grid; gap: 8px; }
-.lx-result-body small { color: var(--civic-muted, #64748b); }
-.lx-total { font-size: 2.4rem; font-weight: 800; color: var(--civic-blue, #1d4ed8); font-variant-numeric: tabular-nums; }
-.lx-result-body p { margin: 0; color: var(--civic-muted, #64748b); font-size: 0.85rem; }
+.lx-result-body small { color: var(--civic-muted, #475569); }
+.lx-total { font-size: 2.4rem; font-weight: 800; color: var(--civic-blue, #0B5D3B); font-variant-numeric: tabular-nums; }
+.lx-result-body p { margin: 0; color: var(--civic-muted, #475569); font-size: 0.85rem; }
 .lx-result-body dl { margin: 8px 0; display: grid; gap: 6px; font-size: 0.85rem; }
 .lx-result-body dl div { display: flex; justify-content: space-between; }
-.lx-result-body dt { color: var(--civic-muted, #64748b); }
+.lx-result-body dt { color: var(--civic-muted, #475569); }
 .lx-result-body dd { margin: 0; font-weight: 600; font-variant-numeric: tabular-nums; }
 
 .lx-transparency { display: grid; grid-template-columns: 7fr 5fr; gap: 32px; align-items: center; }
 .lx-transparency-copy h2 { margin: 6px 0 12px; font-size: clamp(1.6rem, 3vw, 2.2rem); }
-.lx-transparency-copy > p { color: var(--civic-muted, #64748b); }
+.lx-transparency-copy > p { color: var(--civic-muted, #475569); }
 .lx-service-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; margin-top: 18px; }
 .lx-service { display: grid; gap: 4px; padding: 14px; background: #fff; border: 1px solid var(--civic-line, #e2e8f0); border-radius: 12px; font-size: 0.85rem; }
-.lx-service span { color: var(--civic-muted, #64748b); }
+.lx-service span { color: var(--civic-muted, #475569); }
 .lx-portal-body h3 { margin: 0; }
-.lx-portal-body p { margin: 0 0 8px; color: var(--civic-muted, #64748b); font-size: 0.9rem; }
+.lx-portal-body p { margin: 0 0 8px; color: var(--civic-muted, #475569); font-size: 0.9rem; }
 
 .lx-footer { width: calc(100% + 96px); margin: 40px -48px 0; padding: 36px 48px 18px; background: #0f172a; color: #94a3b8; font-size: 0.85rem; }
 .lx-footer-grid { max-width: 1120px; margin: 0 auto; display: grid; grid-template-columns: 2fr 2fr 2fr; gap: 28px; padding-bottom: 20px; border-bottom: 1px solid #1e293b; }

@@ -1,0 +1,15 @@
+**/node_modules
+**/dist
+**/temp
+**/__pycache__
+**/.venv
+**/*.sqlite
+.git
+.env
+.env.*
+!.env.production.example
+data
+docs
+nexora-landing
+offlinePrintQueue
+apps/server/data

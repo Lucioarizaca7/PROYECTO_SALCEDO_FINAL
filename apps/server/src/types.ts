@@ -3,7 +3,7 @@ import { Request as ExpressRequest, Response as ExpressResponse, NextFunction as
 declare global {
   namespace Express {
     interface Request {
-      user?: { id: number; email: string; rol: string };
+      user?: { id: number; email: string; rol: string; sid?: number };
     }
   }
 }
@@ -13,6 +13,7 @@ export interface AuthRequest extends ExpressRequest {
     id: number;
     email: string;
     rol: string;
+    sid?: number;
   };
 }
 
