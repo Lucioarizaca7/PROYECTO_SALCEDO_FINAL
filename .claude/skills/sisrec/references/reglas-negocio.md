@@ -14,6 +14,7 @@ Funciones de `db.js`:
 - `getPuestos(db, { incluirInactivos, conPagos, periodo })`. `/publico/resumen` usa `conPagos: false`.
 - `insertPuesto`: sin comerciante el puesto queda `disponible`; con comerciante queda `ocupado` por defecto.
 - `updatePuesto`: si recibe `comerciante_id` sin estado, pasa a `ocupado` (con id) o a `disponible` (con null).
+- **Solo `super_admin` cambia la zona de un puesto** (decisión del usuario, 28/10/2026): la zona fija la tarifa del cobro por día. El cobrador recibe 403 si pide otra zona, y reenviar la misma no confirma una "zona por regularizar"; sí mueve el puesto en el mapa y asigna o libera al titular. La importación del padrón (super_admin o auditor) sí asigna zonas.
 - `liberarPuesto` y `deactivatePuesto`.
 - `parseComercianteId`: `undefined` = no se envió; `null`, `''` o `0` = puesto libre.
 - `validatePuestoPlacement`: estado válido, zona existente, comerciante activo, y que no haya otro puesto en el mismo lugar físico.

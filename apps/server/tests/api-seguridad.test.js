@@ -8,7 +8,7 @@ import assert from 'node:assert/strict';
 
 import { app, startServer } from '../src/index.ts';
 import { loginUser } from '../src/auth.ts';
-import { MAX_COBROS_LISTADO, calcularLiquidacion, celdaCsv, closeDatabase, currentPeriod, findUserByEmail, getAuditTrail, getComerciantes, getReportRows, registrarCobro } from '../src/db.js';
+import { MAX_COBROS_LISTADO, calcularLiquidacion, celdaCsv, closeDatabase, currentPeriod, findUserByEmail, getAuditTrail, getComerciantes, getReportRows, getZonas, insertPuesto, registrarCobro } from '../src/db.js';
 import { pool } from '../src/pg.js';
 
 // Únicas rutas GET que se pueden consultar sin iniciar sesión.
@@ -98,6 +98,32 @@ test('solo el administrador asigna, reasigna y devuelve lotes de tickets', async
   assert.equal(lotes.status, 403, 'el cobrador no ve los lotes de los demás');
   const mios = await fetch(`${baseUrl}/api/v1/tickets/mios`, { headers });
   assert.equal(mios.status, 200, 'el cobrador ve sus propios tickets');
+});
+
+test('solo el administrador cambia la zona de un puesto; el cobrador lo mueve en el mapa', async () => {
+  const [zonaA, zonaB] = await getZonas(pool);
+  assert.ok(zonaB, 'la semilla trae al menos dos zonas');
+  const puesto = await insertPuesto(pool, { zona_id: zonaA.id, direccion: `Puesto zona ${Date.now()}`, metros_cuadrados: 4 });
+  await pool.query(`UPDATE puestos SET zona_por_regularizar = 'Barrio Alto' WHERE id = $1`, [puesto.id]);
+  const put = (token, body) => fetch(`${baseUrl}/api/v1/puestos-mapa/${puesto.id}`, {
+    method: 'PUT', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify(body)
+  });
+  const leer = async () => (await pool.query('SELECT zona_id, zona_por_regularizar, latitud FROM puestos WHERE id = $1', [puesto.id])).rows[0];
+
+  const cambio = await put(tokens.cobrador, { zona_id: zonaB.id });
+  assert.equal(cambio.status, 403, 'la zona fija la tarifa: el cobrador no la cambia');
+  assert.match((await cambio.json()).message, /super administrador/);
+  assert.equal((await put(tokens.cobrador, { zona_id: zonaA.id, latitud: -15.88, longitud: -70.02 })).status, 200, 'reenviar la misma zona no es un cambio');
+  assert.equal((await put(tokens.cobrador, { zona_por_regularizar: null })).status, 200);
+  let fila = await leer();
+  assert.equal(Number(fila.zona_id), Number(zonaA.id));
+  assert.equal(fila.zona_por_regularizar, 'Barrio Alto', 'el cobrador no confirma la zona ni borra la marca del padrón');
+  assert.equal(Number(fila.latitud), -15.88, 'sí mueve el puesto en el mapa');
+
+  assert.equal((await put(tokens.admin, { zona_id: zonaB.id })).status, 200);
+  fila = await leer();
+  assert.equal(Number(fila.zona_id), Number(zonaB.id));
+  assert.equal(fila.zona_por_regularizar, null, 'asignar la zona la regulariza');
 });
 
 test('el resumen público solo entrega cifras agregadas', async () => {

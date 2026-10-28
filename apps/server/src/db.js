@@ -6,7 +6,7 @@ import bcrypt from 'bcryptjs';
 
 import { pool, withTransaction, closePool, testSchema } from './pg.js';
 import { config } from './config.js';
-import { ValidationError, NotFoundError, ConflictError } from './errors.js';
+import { ValidationError, NotFoundError, ConflictError, ForbiddenError } from './errors.js';
 import { pronosticarSeries } from './prediccion.js';
 
 const migrationsDir = join(dirname(fileURLToPath(import.meta.url)), '..', 'migrations');
@@ -1211,7 +1211,10 @@ export async function insertPuesto(db, payload, { devolver = true } = {}) {
 }
 
 // Si se envía comerciante_id sin estado: con titular pasa a ocupado; con null queda libre (disponible).
-export async function updatePuesto(db, id, payload, { devolver = true } = {}) {
+// puedeCambiarZona: false para quien no es super_admin (decisión del usuario, 28/10/2026). La zona del puesto
+// fija la tarifa del cobro por día, así que el cobrador no la cambia ni confirma una "zona por regularizar";
+// sí mueve el puesto en el mapa y le asigna o quita titular.
+export async function updatePuesto(db, id, payload, { devolver = true, puedeCambiarZona = true } = {}) {
   const puestoId = Number(id);
   const current = await first(db, 'SELECT * FROM puestos WHERE id = $1', [puestoId]);
   if (!current) throw new NotFoundError('Puesto no encontrado');
@@ -1219,6 +1222,9 @@ export async function updatePuesto(db, id, payload, { devolver = true } = {}) {
   const requested = parseComercianteId(payload.comerciante_id);
   const comercianteId = requested === undefined ? current.comerciante_id : requested;
   const zonaId = Number(payload.zona_id ?? current.zona_id);
+  if (!puedeCambiarZona && zonaId !== Number(current.zona_id)) {
+    throw new ForbiddenError('Solo el super administrador puede cambiar la zona de un puesto: la zona fija la tarifa que se cobra');
+  }
   const direccion = String(payload.direccion ?? current.direccion ?? '').trim();
   // Puestos del padrón ferial pueden no tener metraje todavía: se respeta mientras no se envíe uno.
   const metros = payload.metros_cuadrados === undefined ? current.metros_cuadrados : Number(payload.metros_cuadrados);
@@ -1228,7 +1234,7 @@ export async function updatePuesto(db, id, payload, { devolver = true } = {}) {
   const longitud = payload.longitud === undefined ? parseCoord(current.longitud) : parseCoord(payload.longitud);
   // Enviar una zona la confirma y borra la marca "zona por regularizar"; el padrón envía la marca explícita.
   const zonaPorRegularizar = payload.zona_por_regularizar !== undefined ? payload.zona_por_regularizar
-    : payload.zona_id !== undefined ? null : current.zona_por_regularizar;
+    : payload.zona_id !== undefined && puedeCambiarZona ? null : current.zona_por_regularizar;
 
   if (!zonaId || !direccion || (metros !== null && (!Number.isFinite(metros) || metros <= 0))) {
     throw new ValidationError('Zona, dirección y metros cuadrados válidos son obligatorios');
