@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { useMerchantDirectory } from '../../hooks/useMerchantDirectory';
+import { MerchantCardDialog } from './MerchantCardDialog';
 import { MerchantQrDialog } from './MerchantQrDialog';
 import './comerciantes.css';
 
@@ -22,10 +23,25 @@ export function MerchantDirectory({
   onSubmit,
   onEdit,
   onDeactivate,
-  onGeneratePortalPin
+  onGeneratePortalPin,
+  onIssueCards
 }) {
   const directory = useMerchantDirectory(merchants);
   const [qrMerchant, setQrMerchant] = useState(null);
+  // Carnets: comerciantes marcados para emitir en lote y los que muestra el diálogo.
+  const [seleccion, setSeleccion] = useState(() => new Set());
+  const [carnetPara, setCarnetPara] = useState(null);
+  const aCarnet = (row) => ({ id: row[0], nombre: row[1], codigo: row[8], carnet_emitido_en: row[10] });
+  const alternar = (id) => setSeleccion((actual) => {
+    const nueva = new Set(actual);
+    if (nueva.has(id)) nueva.delete(id); else nueva.add(id);
+    return nueva;
+  });
+  const deBaja = (row) => String(row[5]).toLowerCase() === 'inactivo';
+  const seleccionables = directory.visibleMerchants.filter((row) => !deBaja(row));
+  const todosMarcados = seleccionables.length > 0 && seleccionables.every((row) => seleccion.has(row[0]));
+  const marcarTodos = () => setSeleccion(todosMarcados ? new Set() : new Set(seleccionables.map((row) => row[0])));
+  const emitirSeleccion = () => setCarnetPara(merchants.filter((row) => seleccion.has(row[0])).map(aCarnet));
 
   return (
     <section className="page" aria-labelledby="merchant-heading">
@@ -185,6 +201,17 @@ export function MerchantDirectory({
         </select>
       </div>
 
+      {onIssueCards && seleccion.size > 0 && (
+        <div className="barra-seleccion" role="status">
+          <strong>{seleccion.size} {seleccion.size === 1 ? 'seleccionado' : 'seleccionados'}</strong>
+          <span>Se emitirá un carnet nuevo para cada uno; los anteriores dejan de funcionar.</span>
+          <button type="button" className="link-button" onClick={() => setSeleccion(new Set())}>Quitar selección</button>
+          <button type="button" className="boton-acento" onClick={emitirSeleccion}>
+            Emitir {seleccion.size} {seleccion.size === 1 ? 'carnet' : 'carnets'}
+          </button>
+        </div>
+      )}
+
       <div className="table-card" aria-busy={loading}>
         {loading ? (
           <div className="merchant-list-skeleton" role="status" aria-label="Cargando comerciantes">
@@ -196,24 +223,44 @@ export function MerchantDirectory({
           <table>
             <caption className="sr-only">Padrón de comerciantes filtrado</caption>
             <thead>
-              <tr><th scope="col">Código</th><th scope="col">Nombre</th><th scope="col">Rubro</th><th scope="col">Documento</th><th scope="col">Zona</th><th scope="col">Estado</th><th scope="col">Fecha</th><th scope="col">Acciones</th></tr>
+              <tr>
+                {onIssueCards && (
+                  <th scope="col" className="columna-seleccion">
+                    <input type="checkbox" aria-label="Seleccionar todos los de esta página" checked={todosMarcados} onChange={marcarTodos} />
+                  </th>
+                )}
+                <th scope="col">Código</th><th scope="col">Nombre</th><th scope="col">Rubro</th><th scope="col">Documento</th><th scope="col">Zona</th><th scope="col">Estado</th><th scope="col">Carnet</th><th scope="col">Fecha</th><th scope="col">Acciones</th>
+              </tr>
             </thead>
             <tbody>
               {directory.visibleMerchants.map((row) => {
                 // code es el id interno (para editar y dar de baja); businessCode es el código que ve la gente.
-                const [code, name, category, document, zone, state, date, , businessCode] = row;
+                const [code, name, category, document, zone, state, date, , businessCode, , carnet] = row;
                 const statusClass = state === 'Pendiente' ? 'pending' : state === 'Inactivo' ? 'neutral' : 'paid';
                 return (
-                  <tr key={code}>
+                  <tr key={code} className={seleccion.has(code) ? 'fila-seleccionada' : undefined}>
+                    {onIssueCards && (
+                      <td className="columna-seleccion">
+                        <input type="checkbox" aria-label={`Seleccionar a ${name}`} disabled={deBaja(row)} checked={seleccion.has(code)} onChange={() => alternar(code)} />
+                      </td>
+                    )}
                     <td className="merchant-code">{businessCode}</td>
                     <td>{name}</td>
                     <td>{category}</td>
                     <td>{document}</td>
                     <td>{zone}</td>
                     <td><span className={`status ${statusClass}`}>{state}</span></td>
+                    <td>{carnet
+                      ? <span className="status con-carnet">Emitido {carnet.slice(8, 10)}/{carnet.slice(5, 7)}</span>
+                      : <span className="status neutral">Sin carnet</span>}</td>
                     <td>{date}</td>
                     <td>
                       <div className="table-actions">
+                        {onIssueCards && !deBaja(row) && (
+                          <button className="table-action" type="button" aria-label={`${carnet ? 'Emitir carnet nuevo' : 'Emitir carnet'} para ${name}`} onClick={() => setCarnetPara([aCarnet(row)])}>
+                            {carnet ? 'Nuevo carnet' : 'Emitir carnet'}
+                          </button>
+                        )}
                         <button className="table-action qr-table-action" type="button" aria-label={`Ver código QR de ${name}`} onClick={() => setQrMerchant({ id: code, codigo: businessCode, nombre: name, qr_code: `SISREC://comerciante/${businessCode}` })}>Ver QR</button>
                         <button className="table-action" type="button" aria-label={`Editar ${name}`} onClick={() => onEdit(row)}>Editar</button>
                         <button className="table-action peligro" type="button" aria-label={`Dar de baja a ${name}`} onClick={() => onDeactivate(code)}>Dar de baja</button>
@@ -236,6 +283,17 @@ export function MerchantDirectory({
         </div>
       </div>
       {qrMerchant && <MerchantQrDialog merchant={qrMerchant} onClose={() => setQrMerchant(null)} onGeneratePortalPin={onGeneratePortalPin} />}
+      {carnetPara && (
+        <MerchantCardDialog
+          merchants={carnetPara}
+          onIssue={async (ids) => {
+            const emitidos = await onIssueCards(ids);
+            setSeleccion(new Set());
+            return emitidos;
+          }}
+          onClose={() => setCarnetPara(null)}
+        />
+      )}
     </section>
   );
 }

@@ -81,6 +81,19 @@ export function useComerciantes() {
     return data.data;
   };
 
+  // Carnet con llave del portal (uno o en lote): las llaves llegan una sola vez y solo las ve el diálogo.
+  const emitirCarnets = async (ids) => {
+    const response = await authFetch(`${apiBase}/comerciantes/carnets`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ids })
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.message || 'No se pudo emitir el carnet');
+    await refresh();
+    return data.data;
+  };
+
   // Con previewToken la confirmación no vuelve a subir el Excel: el servidor usa el libro ya leído.
   const sendPadron = ({ file = null, dryRun, previewToken = null }) => {
     const body = new FormData();
@@ -158,6 +171,6 @@ export function useComerciantes() {
   return {
     showForm, toggleForm, message, form, setForm, editingId,
     padronPreview, padronMessage, padronLoading,
-    submit, edit, deactivate, previewPadron, importPadron, downloadPadronTemplate, generatePortalPin
+    submit, edit, deactivate, previewPadron, importPadron, downloadPadronTemplate, generatePortalPin, emitirCarnets
   };
 }

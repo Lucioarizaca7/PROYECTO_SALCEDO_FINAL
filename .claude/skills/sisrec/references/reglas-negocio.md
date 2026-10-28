@@ -177,7 +177,13 @@ Depende de `tipo_comerciante`:
 
 - `POST /auth/login` devuelve un JWT corto (`config.jwtExpiresIn`) en el cuerpo y deja el refresh token de 12 h, ligado al dispositivo (`createDeviceSession`), en la cookie HttpOnly `sisrec_refresh`. `/auth/refresh` y `/auth/logout` solo leen la cookie.
 - En el cliente ningún token va en `localStorage`: el de acceso vive en memoria y, al recargar, `authFetch` pide uno nuevo con la cookie (`credentials: 'include'`).
-- Portal del comerciante: DNI o código + PIN de 6 dígitos (`portalAcceso.js`). Credenciales erradas responden siempre el mismo 401; 5 PIN errados seguidos bloquean 15 minutos (429). El PIN se muestra una sola vez y nunca se audita en claro.
+- Portal del comerciante (`portalAcceso.js`). Desde el 28/10/2026 conviven dos credenciales:
+  - DNI o código + PIN de 6 dígitos;
+  - DNI o código + llave del carnet (`XXXX-XXXX-XX`), o la llave sola desde el QR del reverso (`/portal#llave=…`).
+- Credenciales erradas responden siempre el mismo 401. 5 errores seguidos (PIN o llave, se cuentan juntos) bloquean 15 minutos (429). PIN y llave se muestran una sola vez y nunca se auditan en claro.
+- **No hay sesión guardada en el celular del comerciante** (decisión del 28/10/2026): cada consulta vuelve a pedir PIN o llave.
+- **El carnet lo emite solo `super_admin`**, uno por uno o en lote (hasta 500), desde Comerciantes. Un carnet nuevo anula la llave anterior; el PIN no cambia. No se emite a un dado de baja.
+- **La baja anula PIN y llave** (borra la fila de `comerciante_portal_acceso`), para que una reactivación no reviva un carnet viejo.
 - `session.js` renueva el token una sola vez aunque fallen varias peticiones a la vez (`refreshing`), y emite `SESSION_EXPIRED_EVENT` si no puede.
 - Las sesiones se pueden revocar desde el panel (`DELETE /auth/sesiones/:id`).
 - `auditMutation` guarda el estado anterior y el nuevo en `auditoria_logs`, encadenados con un hash. `verifyAuditChain` detecta si alguien los alteró.

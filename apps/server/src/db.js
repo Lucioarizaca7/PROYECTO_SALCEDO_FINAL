@@ -875,7 +875,10 @@ const COMERCIANTE_COLUMNS = `
   c.id, c.correlativo, c.codigo, c.dni_ruc, c.nombre, c.tipo_comerciante AS categoria, c.tipo_comerciante,
   c.estado, c.estado_empadronamiento, ${TS('c.creado_en')} AS fecha_registro,
   c.rubro_id, c.zona_id, r.nombre AS rubro, z.nombre AS zona,
-  'SISREC://comerciante/' || c.codigo AS qr_code`;
+  'SISREC://comerciante/' || c.codigo AS qr_code,
+  -- Solo la fecha del carnet: la huella de la llave nunca sale de comerciante_portal_acceso.
+  (SELECT to_char(${LOCAL('a.llave_emitida_en')}, 'YYYY-MM-DD') FROM comerciante_portal_acceso a
+    WHERE a.comerciante_id = c.id AND a.llave_hash IS NOT NULL) AS carnet_emitido_en`;
 
 export async function findComerciante(db, id) {
   return first(db, `
@@ -1048,9 +1051,11 @@ export async function updateComerciante(db, id, payload) {
 }
 
 // Una sola sentencia: los puestos y el comerciante se dan de baja juntos aunque no haya transacción.
+// La baja también anula el PIN y la llave del portal, para que una reactivación no reviva un carnet viejo.
 async function darDeBajaComerciante(db, id) {
   await db.query(`
-    WITH baja AS (UPDATE puestos SET estado = 'inactivo' WHERE comerciante_id = $1)
+    WITH baja AS (UPDATE puestos SET estado = 'inactivo' WHERE comerciante_id = $1),
+         sin_portal AS (DELETE FROM comerciante_portal_acceso WHERE comerciante_id = $1)
     UPDATE comerciantes SET estado = 'inactivo', fecha_baja = now() WHERE id = $1`, [Number(id)]);
 }
 

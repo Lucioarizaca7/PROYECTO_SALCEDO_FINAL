@@ -8,7 +8,7 @@ import { buildPadronTemplate } from '../padronPlantilla.js';
 import { AppError } from '../errors.js';
 import { staffOnly, receivePadronWorkbook, rowById, resolveComercianteParam } from '../http/comunes.js';
 import { pool as db } from '../pg.js';
-import { generarPinPortal } from '../portalAcceso.js';
+import { emitirCarnets, generarPinPortal } from '../portalAcceso.js';
 
 export const router = express.Router();
 
@@ -161,6 +161,30 @@ router.post('/api/v1/comerciantes/:id/portal-pin',
   async (req, res) => {
     const data = await generarPinPortal(db, Number(req.params.id), req.user?.id);
     return res.status(201).json({ data, message: 'PIN del portal generado. Anótelo en el carnet: no se vuelve a mostrar.' });
+  }
+);
+
+// Carnet con llave del portal (decisión del 28/10/2026: solo super_admin lo emite, uno o en lote).
+// Las llaves se responden una sola vez; la auditoría guarda a quién se emitió, nunca la llave.
+const carnetSinLlaves = (body) => ({ emitidos: (body?.data || []).map((item) => item.comerciante_id) });
+
+router.post('/api/v1/comerciantes/carnets',
+  requireAuth,
+  requireRoles(['super_admin']),
+  auditMutation({ db, accion: 'EMITIR_CARNETS', entidad: 'comerciante_portal_acceso', serializeResponse: carnetSinLlaves }),
+  async (req, res) => {
+    const data = await emitirCarnets(db, req.body?.ids, req.user?.id);
+    return res.status(201).json({ data, total: data.length, message: `${data.length} carnet(s) emitido(s). Imprímalos ahora: las llaves no se vuelven a mostrar.` });
+  }
+);
+
+router.post('/api/v1/comerciantes/:id/carnet',
+  requireAuth,
+  requireRoles(['super_admin']),
+  auditMutation({ db, accion: 'EMITIR_CARNET', entidad: 'comerciante_portal_acceso', serializeResponse: carnetSinLlaves }),
+  async (req, res) => {
+    const data = await emitirCarnets(db, [Number(req.params.id)], req.user?.id);
+    return res.status(201).json({ data, message: 'Carnet emitido. Imprímalo ahora: la llave no se vuelve a mostrar.' });
   }
 );
 

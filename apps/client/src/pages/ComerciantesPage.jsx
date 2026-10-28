@@ -3,7 +3,7 @@ import { MerchantDirectory } from '../features/comerciantes/MerchantDirectory';
 import { useComerciantes } from '../hooks/useComerciantes';
 
 export function ComerciantesPage() {
-  const { comerciantes, catalogos, loading } = useSisrec();
+  const { user, comerciantes, catalogos, loading } = useSisrec();
   const merchants = useComerciantes();
 
   return (
@@ -27,6 +27,8 @@ export function ComerciantesPage() {
       onEdit={merchants.edit}
       onDeactivate={merchants.deactivate}
       onGeneratePortalPin={merchants.generatePortalPin}
+      // Solo super_admin emite carnets (decisión del 28/10/2026); el servidor vuelve a comprobarlo.
+      onIssueCards={user?.rol === 'super_admin' ? merchants.emitirCarnets : null}
     />
   );
 }
