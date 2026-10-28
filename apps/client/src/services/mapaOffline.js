@@ -1,5 +1,6 @@
 import { openOfflineDatabase } from './offlineStore';
 import { apiBase, authFetch } from './session';
+import { subirCambiosMapa } from './colaMapa';
 
 // Copia del mapa en IndexedDB para verlo sin señal, y cola de cambios del mapa hechos sin señal.
 
@@ -52,39 +53,62 @@ export async function mapFetch(url, options) {
   }
 }
 
+// Pide una operación sobre "mapa_pendientes" y espera a que termine la transacción.
+async function enPendientes(modo, operar) {
+  const db = await openOfflineDatabase();
+  const tx = db.transaction('mapa_pendientes', modo);
+  const request = operar(tx.objectStore('mapa_pendientes'));
+  return new Promise((resolve, reject) => {
+    tx.oncomplete = () => resolve(request?.result);
+    tx.onerror = () => reject(tx.error);
+  });
+}
+
+const leerPendientes = async () => (await enPendientes('readonly', (store) => store.getAll())) || [];
+
+// El mapa y Sitios escuchan este evento para mostrar o quitar el aviso de cambios rechazados.
+export const EVENTO_RECHAZOS_MAPA = 'sisrec:mapa-rechazados';
+const avisarRechazos = () => window.dispatchEvent(new Event(EVENTO_RECHAZOS_MAPA));
+
 // Devuelve cuántos cambios se enviaron: con 0 no hace falta recargar los datos.
+// Un cambio rechazado queda guardado y marcado (colaMapa.js) y no detiene a los que vienen detrás.
 export async function syncPendingMapMutations() {
   if (!navigator.onLine) return 0;
-  let enviados = 0;
-
-  const db = await openOfflineDatabase();
-  const readTx = db.transaction('mapa_pendientes', 'readonly');
-  const request = readTx.objectStore('mapa_pendientes').getAll();
-  const pending = await new Promise((resolve, reject) => {
-    request.onsuccess = () => resolve(request.result || []);
-    request.onerror = () => reject(request.error);
+  const resumen = await subirCambiosMapa({
+    pendientes: await leerPendientes(),
+    enviar: ({ operation, payload }) => authFetch(
+      operation === 'create' ? `${apiBase}/puestos-mapa` : `${apiBase}/puestos-mapa/${payload.id}`,
+      {
+        method: operation === 'create' ? 'POST' : operation === 'update' ? 'PUT' : 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: operation === 'delete' ? undefined : JSON.stringify(payload)
+      }
+    ),
+    quitar: (cambio) => enPendientes('readwrite', (store) => store.delete(cambio.id)),
+    marcarRechazado: (cambio, mensaje, status) => enPendientes('readwrite', (store) => store.put({
+      ...cambio, rechazado: true, mensaje, status, rechazadoEn: new Date().toISOString()
+    }))
   });
+  if (resumen.rechazados) avisarRechazos();
+  return resumen.enviados;
+}
 
-  for (const mutation of pending) {
-    const { operation, payload } = mutation;
-    const endpoint = operation === 'create'
-      ? `${apiBase}/puestos-mapa`
-      : `${apiBase}/puestos-mapa/${payload.id}`;
-    const response = await authFetch(endpoint, {
-      method: operation === 'create' ? 'POST' : operation === 'update' ? 'PUT' : 'DELETE',
-      headers: { 'Content-Type': 'application/json' },
-      body: operation === 'delete' ? undefined : JSON.stringify(payload)
-    });
+export async function readRejectedMapMutations() {
+  if (typeof indexedDB === 'undefined') return [];
+  return (await leerPendientes()).filter((cambio) => cambio.rechazado);
+}
 
-    if (!response.ok) break;
-
-    const deleteTx = db.transaction('mapa_pendientes', 'readwrite');
-    deleteTx.objectStore('mapa_pendientes').delete(mutation.id);
-    await new Promise((resolve, reject) => {
-      deleteTx.oncomplete = resolve;
-      deleteTx.onerror = () => reject(deleteTx.error);
-    });
-    enviados += 1;
-  }
+// "Reintentar": vuelve a la cola (por si ya se corrigió, p. ej. otro usuario liberó el lugar) y la sube.
+export async function retryMapMutation(cambio) {
+  const { rechazado: _r, mensaje: _m, status: _s, rechazadoEn: _e, ...pendiente } = cambio;
+  await enPendientes('readwrite', (store) => store.put(pendiente));
+  const enviados = await syncPendingMapMutations();
+  avisarRechazos();
   return enviados;
+}
+
+// "Descartar": lo decide el usuario; nunca se borra solo.
+export async function discardMapMutation(cambio) {
+  await enPendientes('readwrite', (store) => store.delete(cambio.id));
+  avisarRechazos();
 }

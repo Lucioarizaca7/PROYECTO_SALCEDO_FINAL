@@ -23,7 +23,7 @@
 - `features/comerciantes`: directorio y QR del comerciante.
 - `features/offline`: `useJornada`, `useOfflineQueue`, `ReviewPanel`, `DeviceSessions`, `FieldWorkPanel`.
 - `components/features/map`: `SitesMap` (Leaflet), `SitesMap25D` (mapbox-gl) y `sitesGeo.js`, que es lógica pura y tiene pruebas.
-- `services`: `session.js` (tokens, `authFetch`, renovación), `offlineQueue.js` + `offlineStore.js` (IndexedDB, huella SHA-256) y `jornadaOffline.js`.
+- `services`: `session.js` (tokens, `authFetch`, renovación), `offlineQueue.js` + `offlineStore.js` (IndexedDB, huella SHA-256), `jornadaOffline.js` y `mapaOffline.js` + `colaMapa.js` (cambios del mapa sin señal; los rechazados se ven en `CambiosRechazadosMapa`).
 - `utils`: `bluetoothPrint.js`, `offlinePrintQueue.js`, `testable/receiptFormatter.js`.
 
 ## Flujo de datos

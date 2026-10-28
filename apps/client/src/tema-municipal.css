@@ -1303,3 +1303,8 @@ tbody td {
   .secondary-button,
   .nav-item { transition: none; }
 }
+
+/* Cambios del mapa hechos sin señal que el servidor rechazó (CambiosRechazadosMapa.jsx) */
+.cambios-rechazados ul { display: grid; gap: 6px; margin: 8px 0 0; padding: 0; list-style: none; }
+.cambios-rechazados li { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px 12px; }
+.cambios-rechazados-acciones { display: inline-flex; gap: 12px; }

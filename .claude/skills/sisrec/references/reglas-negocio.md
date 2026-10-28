@@ -177,6 +177,10 @@ Depende de `tipo_comerciante`:
 - `GET /jornada/paquete` (`getJornadaPackage`) entrega al cobrador los comerciantes y saldos del periodo. Se guarda en IndexedDB (`offlineStore.js`).
 - Cada cobro offline lleva una huella SHA-256 (`offlineQueue.js`), que el servidor usa como clave de idempotencia.
 - Un conflicto nunca se resuelve en el cliente: va a `cobros_observados` y se revisa en `ReviewPanel`.
+- **Cambios del mapa sin señal** (`mapa_pendientes`, decisión del usuario, 28/10/2026): se suben en orden (`colaMapa.js`).
+  - Un rechazo que reintentar no arregla (400, 403, 404, 409, 410, 422) **no traba la cola**: el cambio queda marcado `rechazado` con el mensaje del servidor y se sigue con el resto.
+  - No se borra solo: Mapa y Sitios lo muestran (`CambiosRechazadosMapa`) con "Reintentar" y "Descartar"; descartarlo lo decide el usuario.
+  - Sin conexión, 401, 429 o un error del servidor (5xx) se para y se reintenta al volver la señal.
 
 ## Autenticación y auditoría
 
