@@ -11,6 +11,13 @@ export const formatRole = (rol) => {
   return text.charAt(0).toUpperCase() + text.slice(1);
 };
 
+// "martes 28 de octubre" en Salcedo, no en la zona del navegador (un celular con otra hora mostraría otro día).
+const fechaLarga = new Intl.DateTimeFormat('es-PE', { timeZone: 'America/Lima', weekday: 'long', day: 'numeric', month: 'long' });
+export const fechaLargaEnLima = (date = new Date()) => {
+  const texto = fechaLarga.format(date).replace(',', '');
+  return texto.charAt(0).toUpperCase() + texto.slice(1);
+};
+
 export const getInitials = (nombre) => {
   const words = String(nombre || '').trim().split(/\s+/).filter(Boolean);
   if (!words.length) return 'U';
