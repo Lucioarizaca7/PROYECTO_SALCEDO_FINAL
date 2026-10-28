@@ -2,7 +2,7 @@
 
 Ordenada de más a menos grave. Antes de tomar uno de estos puntos, comprobar que siga igual en el código.
 
-1. (Resuelto en la rama `seguridad/portal-y-sesion`: el portal pide DNI o código + PIN del carnet, con bloqueo tras 5 PIN errados, y devuelve el documento oculto.)
+1. (Resuelto: el portal pide DNI o código + llave del carnet, con bloqueo tras 5 llaves erradas, y devuelve el documento oculto. El PIN de la rama `seguridad/portal-y-sesion` se quitó en la 0017.)
 2. (Resuelto en la misma rama: el token de renovación va en la cookie HttpOnly `sisrec_refresh` y el de acceso solo en memoria.)
 3. (Resuelto en "Refactor 6", rama `claude/compassionate-hermann-e2df59`: `getPendingDebt` ya no corta en 300 comerciantes.)
 4. (Resuelto en "Refactor 6": `calcularLiquidacionLote` reemplaza el bucle N+1 en el panel, el mapa, la jornada y el riesgo de morosidad.)
@@ -106,7 +106,7 @@ Lo que **no** se trajo, para decidirlo aparte:
 | 45061dd, cd32230 | Varias tarifas por zona y `puestos_historial`: aquí el titular de cada día lo resuelve 0015; el cambio de zona sigue recalculando el pasado (ver arriba) |
 | a35684d | Carnet desde Pagos: el usuario no lo quiere; el arreglo de búsqueda ya estaba aquí |
 
-**Hallazgo al probar los libros:** una zona que no existe en el Excel no da error. `resolveCatalogId` en `padronImport.js` la manda a la primera zona sin avisar. Falta decidir si debe ser error de fila.
+**Hallazgo al probar los libros (resuelto el 28/10/2026, migración 0018):** una zona que no existía en el Excel caía en la primera zona sin avisar, y la búsqueda aproximada mandaba "Barrio Alto Salcedo" a la zona "SALCEDO". Ahora la zona se busca exacta y el puesto queda marcado "zona por regularizar" (ver `reglas-negocio.md`). Queda pendiente: los **rubros** siguen con búsqueda aproximada (`resolveCatalogId`) y podrían caer en otro rubro parecido; y la ruta `PUT /puestos-mapa/:id` deja cambiar la zona también al cobrador (la pantalla solo muestra "Asignar zona" a `super_admin`).
 
 ## Orden de refactorización sugerido (de menor a mayor riesgo)
 

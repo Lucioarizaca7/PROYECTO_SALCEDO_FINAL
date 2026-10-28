@@ -40,7 +40,7 @@ Por cada dato de la pantalla, decide si ya existe, si falta o si cambia. Rutas a
 | Pantalla | Rutas | Archivo |
 |---|---|---|
 | 01 Dashboard | `GET /dashboard` | `sistema.ts` |
-| 02 Comerciantes | `GET/POST /comerciantes`, `GET/PUT/DELETE /comerciantes/:id`, `POST /comerciantes/:id/portal-pin` | `comerciantes.ts` |
+| 02 Comerciantes | `GET/POST /comerciantes`, `GET/PUT/DELETE /comerciantes/:id` | `comerciantes.ts` |
 | 04 Emitir carnet | `POST /comerciantes/:id/carnet`, `POST /comerciantes/carnets` (solo super_admin) | `comerciantes.ts` |
 | 03 Importar padrón | `POST /comerciantes/importar-padron`, `GET /comerciantes/plantilla-padron` | `comerciantes.ts` |
 | 05 Pagos y cobros, M1 a M3 | `GET /liquidaciones/:comercianteId`, `GET /comerciantes/:id/saldo`, `GET/POST /cobros`, `POST /cobros/sincronizar(-lote)`, `POST /cobros/:id/anular`, `GET /comprobantes/:id/pdf`, `GET /jornada/paquete` | `cobros.ts` y `tarifas.ts` (liquidación y saldo) |
@@ -53,7 +53,7 @@ Por cada dato de la pantalla, decide si ya existe, si falta o si cambia. Rutas a
 | 12 Analítica | `GET /analitica/prediccion`, `GET /analitica/riesgo` | `sistema.ts` |
 | P1 Pública | `GET /publico/resumen`, `GET /tarifas`, `GET /zonas`, `GET /catalogos` | varios |
 | P2 Ingreso del personal | `POST /auth/login`, `POST /auth/refresh`, `POST /auth/logout` | `sesiones.ts` |
-| P3 a P5 Portal | `POST /portal/login` (PIN o llave del carnet), `GET /portal/recibos/:token/pdf` | `portal.ts` |
+| P3 a P5 Portal | `POST /portal/login` (llave del carnet), `GET /portal/recibos/:token/pdf` | `portal.ts` |
 
 Si una ruta no está en esta tabla, búscala con `grep -n "router\.\(get\|post\|put\|delete\)" apps/server/src/routes/*.ts`.
 
@@ -68,7 +68,7 @@ Sigue la skill `sisrec`:
 - **Rutas:** van en `apps/server/src/routes/<modulo>.ts`, con `requireAuth` y `requireRoles([...])` (o `...staffOnly`). Si escriben datos, también `auditMutation`, sin guardar secretos.
   - Las respuestas tienen la forma `{ data, message?, total? }` o `{ message }`.
   - Una ruta GET nueva sube el conteo fijo de `tests/api-seguridad.test.js`.
-- **Roles:** `super_admin`, `cobrador`, `auditor` y `comerciante`. El portal no tiene sesión guardada: cada consulta pide PIN o llave.
+- **Roles:** `super_admin`, `cobrador`, `auditor` y `comerciante`. El portal no tiene sesión guardada: cada consulta pide la llave del carnet.
 - **Frontend:** página en `apps/client/src/pages/`, lógica en `hooks/`, llamadas con `authFetch`. Cámbialo solo si el usuario lo pide.
 
 ## 4. Probar

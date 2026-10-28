@@ -131,6 +131,13 @@ function resolveCatalogId(items, value, fallbackId) {
   return found?.id ?? fallbackId;
 }
 
+// La zona se busca por nombre exacto (sin mayúsculas, tildes ni espacios de más): con la búsqueda aproximada de
+// los rubros, "Barrio Alto Salcedo" caía en la zona "SALCEDO" y se cobraba con su tarifa sin avisar.
+function zonaExacta(zonas, value) {
+  const target = normalize(value);
+  return target ? zonas.find((zona) => normalize(zona.nombre) === target)?.id ?? null : null;
+}
+
 function generatedCode(sheetName, rowNumber) {
   const prefix = normalize(sheetName).replace(/\s+/g, '-').slice(0, 12) || 'PADRON';
   return `${prefix}-${String(rowNumber).padStart(4, '0')}`.toUpperCase();
@@ -150,6 +157,7 @@ function documentoTemporal(name) {
 // Misma comparación que validatePuestoPlacement (db.js): zona + dirección sin mayúsculas ni espacios de borde.
 const ubicacion = (zonaId, direccion) => `${Number(zonaId)}|${String(direccion || '').trim().toLowerCase()}`;
 const nombreComparable = (name) => String(name || '').trim().toLowerCase();
+const nombreZona = (zonas, id) => zonas.find((zona) => Number(zona.id) === Number(id))?.nombre || 'la primera zona';
 
 export async function readPadronWorkbook(buffer) {
   const sheets = await readExcelFile(buffer);
@@ -238,9 +246,14 @@ export async function previewPadronSheets(sheets, { filename = '', db }) {
       const category = validCategory(rawCategory, 'ferial');
       const absence = isAbsent(value(detected.mapping.status));
       const rubroValue = cellText(value(detected.mapping.rubro)) || (defaultRubroId ? filename : sheet.name);
-      const zoneValue = cellText(value(detected.mapping.zone)) || sheet.name;
       const rubroId = resolveCatalogId(rubros, rubroValue, defaultRubroId);
-      const zonaId = resolveCatalogId(zonas, zoneValue, defaultZonaId);
+      // Zona: la de la columna, o la del nombre de la hoja si la columna viene vacía (libros con una hoja por
+      // zona). Si ninguna está registrada, el puesto queda en la primera zona, paga con su tarifa y se marca
+      // "zona por regularizar" con lo que traía el libro (decisión del 28/10/2026; antes se asignaba sin avisar).
+      const zoneCell = cellText(value(detected.mapping.zone));
+      const foundZonaId = zonaExacta(zonas, zoneCell || sheet.name);
+      const zonaId = foundZonaId ?? defaultZonaId;
+      const zonaPorRegularizar = foundZonaId ? null : zoneCell;
       const rowErrors = [];
       // Sin DNI/RUC el titular entra como pendiente de regularización, con un documento provisional.
       const temporal = !rawDocument;
@@ -258,7 +271,7 @@ export async function previewPadronSheets(sheets, { filename = '', db }) {
         rowErrors.push('Falta un metraje mayor que cero: la zona no tiene tipo de vía y su tarifa puede ser por metro cuadrado.');
       }
       if (!rubroId) rowErrors.push(`No hay un rubro configurado que coincida con "${rubroValue}".`);
-      if (!zonaId) rowErrors.push(`No hay una zona configurada para "${zoneValue}".`);
+      if (!zonaId) rowErrors.push('No hay ninguna zona registrada: cree al menos una antes de importar el padrón.');
       if (seenCodes.has(code)) rowErrors.push(`Código de puesto ${code} duplicado dentro del libro.`);
       seenCodes.add(code);
 
@@ -271,6 +284,7 @@ export async function previewPadronSheets(sheets, { filename = '', db }) {
         normalizedName: normalize(name),
         rubroId,
         zonaId,
+        zonaPorRegularizar,
         category,
         code,
         sector,
@@ -283,7 +297,9 @@ export async function previewPadronSheets(sheets, { filename = '', db }) {
         reactivates: false,
         regularizes: false,
         errors: rowErrors,
-        warnings: []
+        warnings: zonaPorRegularizar === null || !zonaId ? [] : [zoneCell
+          ? `La zona "${zoneCell}" no está registrada: el puesto queda en ${nombreZona(zonas, zonaId)} y se marca "zona por regularizar".`
+          : `Sin zona: el puesto queda en ${nombreZona(zonas, zonaId)} y se marca "zona por regularizar".`]
       });
       sheetRows += 1;
     }
@@ -379,6 +395,7 @@ export async function previewPadronSheets(sheets, { filename = '', db }) {
     newPosts: valid.filter((row) => !row.existingPostId).length,
     absentRows: valid.filter((row) => row.absence).length,
     pendingMerchants: distinctDocuments(valid.filter((row) => row.temporal)),
+    zonePendingPosts: valid.filter((row) => row.zonaPorRegularizar !== null).length,
     merchantsWithSeveralPosts: [...postsPerDocument.values()].filter((count) => count > 1).length,
     regularizedMerchants: valid.filter((row) => row.regularizes).map((row) => ({ sheet: row.sheet, row: row.row, name: row.name })),
     reactivatedMerchants: [...new Map(valid.filter((row) => row.reactivates).map((row) => [row.document, { sheet: row.sheet, row: row.row, name: row.name }])).values()],
@@ -439,7 +456,9 @@ export async function importPadronPreview(_db, preview, userId = 1) {
           zona_id: row.zonaId,
           direccion: row.direccion,
           codigo_puesto: row.code,
-          estado: row.absence ? 'disponible' : 'ocupado'
+          estado: row.absence ? 'disponible' : 'ocupado',
+          // null también borra la marca de un puesto que antes llegó sin zona y ahora trae una registrada.
+          zona_por_regularizar: row.zonaPorRegularizar ?? null
         };
         if (row.existingPostId) {
           // Sin metraje en el libro se conserva el que tiene el puesto.

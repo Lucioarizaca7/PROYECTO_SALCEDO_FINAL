@@ -5,7 +5,7 @@
  * Dos firmas HMAC con JWT_SECRET (cada una con su propio prefijo, para que una no sirva como la otra):
  *   verificación  R-000123.<12 hex>        pública y permanente: cualquiera con el recibo comprueba que es
  *                                          auténtico (número, fecha, monto y estado; sin datos personales).
- *   descarga      <id>.<vence>.<16 hex>    la recibe solo quien entró al portal con DNI + PIN; vale 30 min
+ *   descarga      <id>.<vence>.<16 hex>    la recibe solo quien entró al portal con la llave de su carnet; vale 30 min
  *                                          y abre únicamente ese recibo.
  */
 import { createHmac, timingSafeEqual } from 'node:crypto';

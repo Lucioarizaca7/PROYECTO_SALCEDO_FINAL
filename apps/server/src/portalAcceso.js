@@ -1,16 +1,16 @@
 /**
- * Acceso al portal del comerciante. Dos credenciales que conviven (decisión del 28/10/2026):
- *   - DNI o código + PIN de 6 dígitos (migración 0007);
- *   - DNI o código + llave del carnet (XXXX-XXXX-XX), o la llave sola desde el QR del reverso (0016).
+ * Acceso al portal del comerciante, solo con la llave del carnet (decisión del 28/10/2026, como el Penpot P3;
+ * el PIN de la 0007 se quitó en la 0017):
+ *   - DNI o código + llave del carnet (XXXX-XXXX-XX);
+ *   - la llave sola, desde el QR del reverso (leído con la cámara del celular o con el lector del portal).
  *
- * - El PIN se guarda con bcrypt y la llave con su huella SHA-256; las dos se muestran una sola vez.
- * - Tras 5 errores seguidos (PIN o llave) el acceso queda bloqueado 15 minutos (además del límite por IP).
+ * - La llave se guarda con su huella SHA-256 y se muestra una sola vez, al emitir el carnet.
+ * - Tras 5 llaves erradas seguidas el acceso queda bloqueado 15 minutos (además del límite por IP).
  * - DNI desconocido, credencial errada o comerciante sin credencial responden el mismo 401.
  * - El portal devuelve lo justo: el documento oculto salvo sus 3 últimos dígitos y los últimos 24 pagos.
  * - No hay sesión guardada: cada consulta vuelve a pedir la credencial.
  */
 import { createHash, randomInt, timingSafeEqual } from 'node:crypto';
-import bcrypt from 'bcryptjs';
 
 import { config } from './config.js';
 import { buscarComerciantePorCodigo, calcularLiquidacion, calcularDeudaAcumulada, esDocumentoTemporal } from './db.js';
@@ -18,8 +18,8 @@ import { withTransaction } from './pg.js';
 import { tokenDescarga } from './reciboPdf.js';
 import { AppError, NotFoundError, ValidationError } from './errors.js';
 
-export const PIN_MAX_INTENTOS = 5;
-export const PIN_BLOQUEO_MINUTOS = 15;
+export const MAX_INTENTOS_PORTAL = 5;
+export const BLOQUEO_PORTAL_MINUTOS = 15;
 const PAGOS_EN_PORTAL = 24;
 
 // Llave del carnet: sin 0/O, 1/I/L para que se lea bien impresa. 31^10 ≈ 8·10^14 combinaciones.
@@ -28,9 +28,7 @@ export const LLAVE_LARGO = 10;
 // Tope de una emisión en lote: un padrón entero de una feria, sin dejar que una petición bloquee la base.
 export const MAX_CARNETS_POR_LOTE = 500;
 
-const CREDENCIALES_INVALIDAS = 'Los datos no coinciden. Revise su DNI o código y el PIN o la llave de su carnet; si no los tiene, pídalos en la municipalidad.';
-// Se compara contra este hash cuando no hay comerciante o PIN, para que la respuesta tarde lo mismo.
-const HASH_DE_RELLENO = bcrypt.hashSync('sin-pin-registrado', 10);
+const CREDENCIALES_INVALIDAS = 'Los datos no coinciden. Revise su DNI o código y la llave de su carnet; si no tiene carnet, pídalo en la municipalidad.';
 
 export const ocultarDocumento = (documento) => {
   const value = String(documento || '');
@@ -49,39 +47,9 @@ function llaveAleatoria() {
   return llave;
 }
 
-// Evita PIN obvios (000000, 123456, 654321…) que alguien probaría primero.
-function pinAleatorio() {
-  for (;;) {
-    const pin = String(randomInt(0, 1_000_000)).padStart(6, '0');
-    const repetido = /^(\d)\1{5}$/.test(pin);
-    const escalera = '0123456789'.includes(pin) || '9876543210'.includes(pin);
-    if (!repetido && !escalera) return pin;
-  }
-}
-
-/** Genera (o reemplaza) el PIN del comerciante. Devuelve el PIN en claro: es la única vez que se ve. */
-export async function generarPinPortal(db, comercianteId, usuarioId = null) {
-  const id = Number(comercianteId);
-  if (!Number.isInteger(id) || id <= 0) throw new ValidationError('Comerciante no válido');
-  const { rows: [merchant] } = await db.query('SELECT id, estado FROM comerciantes WHERE id = $1', [id]);
-  if (!merchant) throw new NotFoundError('Comerciante no encontrado');
-  if (merchant.estado === 'inactivo') throw new ValidationError('El comerciante está dado de baja: no puede tener acceso al portal');
-
-  const pin = pinAleatorio();
-  const pinHash = await bcrypt.hash(pin, 10);
-  const { rows: [saved] } = await db.query(`
-    INSERT INTO comerciante_portal_acceso (comerciante_id, pin_hash, creado_por)
-    VALUES ($1, $2, $3)
-    ON CONFLICT (comerciante_id) DO UPDATE
-      SET pin_hash = EXCLUDED.pin_hash, creado_por = EXCLUDED.creado_por, creado_en = now(),
-          intentos_fallidos = 0, bloqueado_hasta = NULL
-    RETURNING comerciante_id, creado_en`, [id, pinHash, usuarioId ? Number(usuarioId) : null]);
-  return { comerciante_id: Number(saved.comerciante_id), pin, creado_en: saved.creado_en };
-}
-
 /**
  * Emite el carnet (una llave nueva) a uno o varios comerciantes, todo o nada. La llave nueva reemplaza
- * a la anterior, que deja de abrir el portal; el PIN, si lo tiene, sigue igual.
+ * a la anterior, que deja de abrir el portal.
  * Devuelve las llaves en claro: es la única vez que se ven.
  */
 export async function emitirCarnets(db, comercianteIds, usuarioId = null) {
@@ -129,24 +97,21 @@ async function registrarFallo(db, comercianteId) {
        SET bloqueado_hasta = CASE WHEN intentos_fallidos + 1 >= $2 THEN now() + make_interval(mins => $3) ELSE bloqueado_hasta END,
            intentos_fallidos = CASE WHEN intentos_fallidos + 1 >= $2 THEN 0 ELSE intentos_fallidos + 1 END
      WHERE comerciante_id = $1
-     RETURNING bloqueado_hasta > now() AS bloqueado`, [comercianteId, PIN_MAX_INTENTOS, PIN_BLOQUEO_MINUTOS]);
+     RETURNING bloqueado_hasta > now() AS bloqueado`, [comercianteId, MAX_INTENTOS_PORTAL, BLOQUEO_PORTAL_MINUTOS]);
   return Boolean(row?.bloqueado);
 }
 
-const bloqueadoError = () => new AppError(`Demasiados intentos errados. Intente de nuevo en ${PIN_BLOQUEO_MINUTOS} minutos o pida un carnet o PIN nuevo en la municipalidad.`, 429);
+const bloqueadoError = () => new AppError(`Demasiados intentos errados. Intente de nuevo en ${BLOQUEO_PORTAL_MINUTOS} minutos o pida un carnet nuevo en la municipalidad.`, 429);
 
 /**
- * Comprueba la credencial y devuelve los datos del portal. Acepta:
- *   { identifier, pin }   DNI o código + PIN
+ * Comprueba la llave y devuelve los datos del portal. Acepta:
  *   { identifier, llave } DNI o código + llave del carnet
  *   { llave }             la llave sola (QR del reverso del carnet)
  */
-export async function ingresarAlPortal(db, { identifier, pin, llave } = {}) {
+export async function ingresarAlPortal(db, { identifier, llave } = {}) {
   const value = String(identifier || '').trim();
-  const pinValue = String(pin || '').trim();
   const llaveValue = normalizarLlave(llave);
-  if (!pinValue && !llaveValue) throw new ValidationError('Ingrese su DNI o código y el PIN o la llave de su carnet');
-  if (pinValue && !value) throw new ValidationError('Ingrese su DNI o código de comerciante junto con su PIN');
+  if (!llaveValue) throw new ValidationError('Ingrese la llave de su carnet o escanee el QR del reverso');
 
   // Con la llave sola se busca al dueño por la huella; una llave inexistente no suma intentos a nadie
   // y solo la frena el límite por IP.
@@ -154,14 +119,12 @@ export async function ingresarAlPortal(db, { identifier, pin, llave } = {}) {
     ? await buscarComerciantePorCodigo(db, value)
     : (await db.query('SELECT comerciante_id FROM comerciante_portal_acceso WHERE llave_hash = $1', [huellaLlave(llaveValue)])).rows[0]?.comerciante_id;
   const { rows: [acceso] } = comercianteId ? await db.query(`
-    SELECT a.pin_hash, a.llave_hash, a.bloqueado_hasta > now() AS bloqueado
+    SELECT a.llave_hash, a.bloqueado_hasta > now() AS bloqueado
     FROM comerciante_portal_acceso a JOIN comerciantes c ON c.id = a.comerciante_id
     WHERE a.comerciante_id = $1 AND c.estado <> 'inactivo'`, [comercianteId]) : { rows: [] };
 
   if (acceso?.bloqueado) throw bloqueadoError();
-  const correcto = pinValue
-    ? await bcrypt.compare(pinValue, acceso?.pin_hash || HASH_DE_RELLENO)
-    : mismaHuella(huellaLlave(llaveValue), acceso?.llave_hash);
+  const correcto = mismaHuella(huellaLlave(llaveValue), acceso?.llave_hash);
   if (!acceso || !correcto) {
     if (acceso && await registrarFallo(db, comercianteId)) throw bloqueadoError();
     throw new AppError(CREDENCIALES_INVALIDAS, 401);

@@ -11,7 +11,7 @@
 - `db.js` mezcla SQL y reglas de negocio. Todas las funciones reciben `db` (el pool o un cliente de transacción) como primer argumento.
 - `auth.ts`: bcrypt para las contraseñas, JWT corto de acceso, refresh token por dispositivo (tabla `sesiones_dispositivo`) y los middlewares `requireAuth`, `requireRoles` y `auditMutation`.
 - `http/sesionCookie.ts`: la cookie HttpOnly `sisrec_refresh` (SameSite=Strict, Path=/api/v1/auth) que lleva el refresh token; el cuerpo de las respuestas nunca lo trae.
-- `portalAcceso.js`: PIN del portal (bcrypt, tabla `comerciante_portal_acceso`), bloqueo por intentos y datos recortados del portal.
+- `portalAcceso.js`: llave del carnet (huella SHA-256, tabla `comerciante_portal_acceso`), emisión de carnets, bloqueo por intentos y datos recortados del portal.
 - `pg.js`: `pool` (máximo 10 conexiones), `withTransaction(fn)` y `testSchema`. En las pruebas, cada proceso usa su propio esquema.
 - `validation.ts`, `config.ts`, `padronImport.js` (importa el padrón en Excel/CSV), `padronPlantilla.js` (plantilla oficial con `exceljs`) y `feriaZapatillasSeed.js`.
 
@@ -76,7 +76,7 @@ Roles: `super_admin`, `cobrador`, `auditor`, `comerciante`. `staffOnly` = los tr
 | Jornada | `GET /jornada/paquete` | cobrador |
 | Auditoría | `GET /auditoria`, `/auditoria/verificacion` | lectura |
 | Autenticación | `POST /auth/login`, `/auth/refresh`, `/auth/logout`, `GET/DELETE /auth/sesiones` | — |
-| Portal | `POST /portal/login` (identifier + pin), `POST /comerciantes/:id/portal-pin`, `GET /portal/:id/notificaciones`, `POST /notificaciones`, `GET /comprobantes/:id/pdf` | el PIN lo generan super_admin y auditor |
+| Portal | `POST /portal/login` (identifier + llave, o la llave sola), `POST /comerciantes/:id/carnet`, `POST /comerciantes/carnets`, `GET /portal/:id/notificaciones`, `POST /notificaciones`, `GET /comprobantes/:id/pdf` | el carnet lo emite solo super_admin |
 
 Para ver los roles exactos de una ruta: `grep -rn "'/api/v1/<ruta>" apps/server/src/routes/` y leer las líneas siguientes.
 
@@ -97,3 +97,6 @@ Para ver los roles exactos de una ruta: `grep -rn "'/api/v1/<ruta>" apps/server/
 - **0013:** cobro por día cobrado (tarifas generales `semanal` por tipo de vía, S/ 3 y S/ 2) y observación del cobrador en `asistencias_feriales`.
 - **0014:** tickets preimpresos: `ticket_series`, `ticket_lotes`, `tickets` (`UNIQUE (serie, numero)`), `transacciones.tickets`, `cierres_caja.tickets` y el parámetro `tickets_umbral_aviso`.
 - **0015:** `asistencias_feriales.comerciante_id` (titular del día de la marca; trigger `asistencia_titular`, CHECK `NOT VALID`) y `titular_de_asistencia(puesto, fecha)`, que reconstruye las marcas viejas con la auditoría.
+- **0016:** llave del carnet en `comerciante_portal_acceso` (`llave_hash` SHA-256, `llave_emitida_en/por`).
+- **0017:** el portal queda solo con la llave: se borra `pin_hash` y los accesos que solo tenían PIN.
+- **0018:** `puestos.zona_por_regularizar` (puesto del padrón sin zona o con zona no registrada).

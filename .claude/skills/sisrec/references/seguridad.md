@@ -13,7 +13,7 @@ Antes de tocar uno de estos controles, comprobar que sigue igual en el código (
 | Contraseñas en texto plano | bcrypt (`BCRYPT_SALT_ROUNDS`) | `auth.ts`, `db.js` (`createAdminUser`) |
 | Admin "hardcodeado" | Usuarios demo solo fuera de producción; en producción el primer admin se crea con `npm run crear-admin` | `db.js` (guardas `config.isProduction`), `src/cli/crear-admin.ts` |
 | CORS abierto | Lista blanca: `FRONTEND_URL` (obligatorio en producción) + localhost solo en desarrollo | `app.ts` |
-| Fuerza bruta | Límite general y de login (`express-rate-limit`); portal: 5 errores de PIN o llave → bloqueo 15 min (429), mismo 401 para cualquier credencial errada; la llave sola (QR) sin dueño solo la frena el límite por IP | `app.ts`, `http/comunes.ts` (`loginLimiter`), `portalAcceso.js` |
+| Fuerza bruta | Límite general y de login (`express-rate-limit`); portal: 5 llaves erradas → bloqueo 15 min (429), mismo 401 para cualquier credencial errada; la llave sola (QR) sin dueño solo la frena el límite por IP | `app.ts`, `http/comunes.ts` (`loginLimiter`), `portalAcceso.js` |
 | Cabeceras | helmet; HSTS solo en producción | `app.ts` |
 | Cuerpos enormes | `express.json({ limit: '1mb' })`; lotes con máximo (`MAX_LOTE_COBROS = 100`, anulaciones 100, tickets por cobro 60) | `app.ts`, `db.js` |
 | Acceso sin rol | `requireAuth` + `requireRoles`; prueba que cuenta las rutas GET y exige token | `auth.ts`, `tests/api-seguridad.test.js` |
@@ -21,7 +21,7 @@ Antes de tocar uno de estos controles, comprobar que sigue igual en el código (
 | Inyección SQL | Consultas con parámetros `$n` | `db.js`, `pg.js` |
 | Fuga de errores internos | El manejador global traduce errores de PostgreSQL a mensajes genéricos | `http/errorHandler.ts` |
 | Recibos falsos | QR con firma HMAC; PDF del portal con enlace firmado de 30 min | `/publico/verificar/:token`, `reciboPdf.js` |
-| Datos personales (Ley 29733) | Código con 3 dígitos del DNI; portal con documento oculto (y sin el `TEMP_DNI_` de un pendiente); PIN y llave fuera de `comerciantes` y nunca auditados | migraciones 0005, 0007 y 0016, `portalAcceso.js` |
+| Datos personales (Ley 29733) | Código con 3 dígitos del DNI; portal con documento oculto (y sin el `TEMP_DNI_` de un pendiente); llave fuera de `comerciantes` y nunca auditada; el hash del PIN se borró al quitarlo | migraciones 0005, 0007, 0016 y 0017, `portalAcceso.js` |
 | Llave del carnet robada de la base | Solo se guarda su huella SHA-256 (comparada con `timingSafeEqual`); viaja en el fragmento `#llave=`, que no llega al servidor ni a sus registros, y el portal lo borra de la barra al entrar | `portalAcceso.js`, `pages/PortalPage.jsx` |
 | Cobro fuera de toda caja | En línea, la fecha del cobro es la del servidor; sin señal, más de 3 días atrás o en el futuro queda observado | `db.js` (`fechaCobroEnLinea`, `fechaCobroFueraDeRango`), `routes/cobros.ts` |
 | Enumeración de correos | El login siempre ejecuta bcrypt (hash de relleno si el correo no existe) | `auth.ts` (`HASH_DE_RELLENO`) |

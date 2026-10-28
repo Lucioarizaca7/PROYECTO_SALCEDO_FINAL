@@ -1,10 +1,7 @@
 import { useEffect, useState } from 'react';
 
-export function MerchantQrDialog({ merchant, onClose, onGeneratePortalPin }) {
+export function MerchantQrDialog({ merchant, onClose }) {
   const [QrCode, setQrCode] = useState(null);
-  // El PIN del portal solo existe en esta ventana: se imprime en el carnet y no se vuelve a mostrar.
-  const [portalPin, setPortalPin] = useState(null);
-  const [pinStatus, setPinStatus] = useState({ loading: false, error: '' });
   const qrValue = merchant.qr_code || `SISREC://comerciante/${merchant.id}`;
 
   useEffect(() => {
@@ -23,18 +20,6 @@ export function MerchantQrDialog({ merchant, onClose, onGeneratePortalPin }) {
     return () => document.removeEventListener('keydown', handleKeyDown);
   }, [onClose]);
 
-  const generatePin = async () => {
-    if (portalPin && !window.confirm('¿Generar otro PIN? El que acaba de imprimir dejará de servir.')) return;
-    setPinStatus({ loading: true, error: '' });
-    try {
-      const result = await onGeneratePortalPin(merchant.id);
-      setPortalPin(result.pin);
-      setPinStatus({ loading: false, error: '' });
-    } catch (error) {
-      setPinStatus({ loading: false, error: error.message });
-    }
-  };
-
   return (
     <div className="merchant-qr-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
       <section className="merchant-qr-dialog" role="dialog" aria-modal="true" aria-labelledby="merchant-qr-heading">
@@ -50,19 +35,7 @@ export function MerchantQrDialog({ merchant, onClose, onGeneratePortalPin }) {
           <strong>{merchant.nombre}</strong>
           <span>{merchant.codigo}</span>
           <code>{qrValue}</code>
-          {portalPin && <div className="merchant-qr-pin"><span>PIN del portal</span><strong>{portalPin}</strong></div>}
         </div>
-        {onGeneratePortalPin && (
-          <div className="merchant-qr-pin-panel">
-            <p>{portalPin
-              ? 'Imprima el carnet ahora: el PIN no se vuelve a mostrar. Generar otro invalida este.'
-              : 'Con su DNI o código y este PIN, el comerciante consulta su deuda en el portal. Generar uno nuevo invalida el anterior.'}</p>
-            <button type="button" className="secondary-button" onClick={generatePin} disabled={pinStatus.loading}>
-              {pinStatus.loading ? 'Generando…' : portalPin ? 'Generar otro PIN' : 'Generar PIN del portal'}
-            </button>
-            {pinStatus.error && <div className="form-error" role="alert">{pinStatus.error}</div>}
-          </div>
-        )}
         <p className="merchant-qr-note">Este QR lleva el código del comerciante: correlativo, iniciales, rubro, los 3 últimos dígitos del DNI/RUC, zona, estado y fecha de registro.</p>
         <div className="merchant-qr-actions">
           <button type="button" className="secondary-button" onClick={() => window.print()}>Imprimir</button>

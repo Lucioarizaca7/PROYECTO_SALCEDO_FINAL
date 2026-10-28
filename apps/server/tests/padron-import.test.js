@@ -2,7 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
-  calcularLiquidacion, getComerciantes, getPuestos, initializeDatabase, insertZona, deactivateComerciante, marcarAsistencias, todayInLima
+  calcularLiquidacion, getComerciantes, getPuestos, getZonas, initializeDatabase, insertZona, deactivateComerciante, marcarAsistencias,
+  todayInLima, updatePuesto
 } from '../src/db.js';
 import {
   importPadronPreview, previewPadronSheets, readPadronWorkbook, guardarVistaPrevia, tomarVistaPrevia, descartarVistaPrevia
@@ -211,6 +212,41 @@ test('el metraje es opcional en una zona con tipo de vía y obligatorio sin ella
   assert.equal(preview.validRows, 1);
   assert.equal(preview.errors[0].row, 3);
   assert.match(preview.errors[0].message, /metraje/);
+});
+
+test('sin zona o con una zona no registrada, el puesto queda en la primera zona marcado por regularizar', async () => {
+  const db = await initializeDatabase();
+  const primera = (await getZonas(db))[0];
+  // La hoja no se llama como ninguna zona: la fila sin zona no puede tomarla del nombre de la hoja.
+  const preview = await previewPadronSheets(libro([
+    ['61234567', 'Zona Inventada', 'ZPR-01', 'BLOQUE Z', 'Barrio Inexistente QX', 'ferial', 'zapatillas', 3, 'Presente'],
+    ['62234567', 'Zona Vacía', 'ZPR-02', 'BLOQUE Z', null, 'ferial', 'zapatillas', 3, 'Presente']
+  ], 'HOJA QX SIN ZONA'), { filename: 'padron.xlsx', db });
+  assert.equal(preview.validRows, 2, 'no es error de fila: se importa y se regulariza después');
+  assert.equal(preview.zonePendingPosts, 2);
+  assert.match(preview.warnings[0].message, /"Barrio Inexistente QX" no está registrada.*zona por regularizar/);
+  assert.match(preview.warnings[1].message, /^Sin zona:.*zona por regularizar/);
+  await importPadronPreview(db, preview, 1);
+
+  const [inventada] = await puestosDe(db, (await porDocumento(db, '61234567')).id);
+  const [vacia] = await puestosDe(db, (await porDocumento(db, '62234567')).id);
+  assert.equal(Number(inventada.zona_id), Number(primera.id), 'paga con la tarifa de la primera zona');
+  assert.equal(inventada.zona_por_regularizar, 'Barrio Inexistente QX', 'guarda la zona que traía el padrón');
+  assert.equal(vacia.zona_por_regularizar, '');
+  assert.equal((await getPuestos(db, { conPagos: false })).find((p) => Number(p.id) === Number(vacia.id)).zona_por_regularizar, '', 'Sitios recibe la marca');
+
+  // Mover el puesto en el mapa no la toca; asignarle una zona la confirma.
+  const zona = await zonaNueva(db, 'asfaltada');
+  await updatePuesto(db, vacia.id, { latitud: -15.9, longitud: -70.0 });
+  assert.equal((await puestosDe(db, vacia.comerciante_id))[0].zona_por_regularizar, '');
+  await updatePuesto(db, vacia.id, { zona_id: zona.id });
+  const regularizado = (await puestosDe(db, vacia.comerciante_id))[0];
+  assert.equal(regularizado.zona_por_regularizar, null);
+  assert.equal(Number(regularizado.zona_id), Number(zona.id));
+
+  // Reimportar con una zona registrada también borra la marca.
+  await importar(db, [['61234567', 'Zona Inventada', 'ZPR-01', 'BLOQUE Z', zona.nombre, 'ferial', 'zapatillas', 3, 'Presente']]);
+  assert.equal((await puestosDe(db, inventada.comerciante_id))[0].zona_por_regularizar, null);
 });
 
 test('el pendiente de regularización sin metraje paga sus días cobrados', async () => {
