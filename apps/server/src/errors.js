@@ -15,6 +15,11 @@ export class ValidationError extends AppError {
   constructor(message) { super(message, 400); }
 }
 
+/** El rol del usuario no puede hacer ese cambio, aunque sí entre a la ruta (403). */
+export class ForbiddenError extends AppError {
+  constructor(message) { super(message, 403); }
+}
+
 /** El recurso pedido en la URL no existe (404). */
 export class NotFoundError extends AppError {
   constructor(message) { super(message, 404); }

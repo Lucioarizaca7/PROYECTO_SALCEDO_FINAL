@@ -106,7 +106,7 @@ Lo que **no** se trajo, para decidirlo aparte:
 | 45061dd, cd32230 | Varias tarifas por zona y `puestos_historial`: aquí el titular de cada día lo resuelve 0015; el cambio de zona sigue recalculando el pasado (ver arriba) |
 | a35684d | Carnet desde Pagos: el usuario no lo quiere; el arreglo de búsqueda ya estaba aquí |
 
-**Hallazgo al probar los libros (resuelto el 28/10/2026, migración 0018):** una zona que no existía en el Excel caía en la primera zona sin avisar, y la búsqueda aproximada mandaba "Barrio Alto Salcedo" a la zona "SALCEDO". Ahora la zona se busca exacta y el puesto queda marcado "zona por regularizar" (ver `reglas-negocio.md`). Queda pendiente: los **rubros** siguen con búsqueda aproximada (`resolveCatalogId`) y podrían caer en otro rubro parecido; y la ruta `PUT /puestos-mapa/:id` deja cambiar la zona también al cobrador (la pantalla solo muestra "Asignar zona" a `super_admin`).
+**Hallazgo al probar los libros (resuelto el 28/10/2026, migración 0018):** una zona que no existía en el Excel caía en la primera zona sin avisar, y la búsqueda aproximada mandaba "Barrio Alto Salcedo" a la zona "SALCEDO". Ahora la zona se busca exacta y el puesto queda marcado "zona por regularizar" (ver `reglas-negocio.md`). Queda pendiente: los **rubros** siguen con búsqueda aproximada (`resolveCatalogId`) y podrían caer en otro rubro parecido. (Resuelto el 28/10/2026: la ruta `PUT /puestos-mapa/:id` dejaba cambiar la zona también al cobrador; ahora solo `super_admin`, ver `seguridad.md`.)
 
 ## Orden de refactorización sugerido (de menor a mayor riesgo)
 

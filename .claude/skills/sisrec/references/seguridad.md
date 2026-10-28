@@ -28,6 +28,7 @@ Antes de tocar uno de estos controles, comprobar que sigue igual en el código (
 | Atribución falsa | El creador del comerciante y el cobrador del cobro salen del token | `routes/comerciantes.ts`, `routes/cobros.ts` |
 | Inyección CSV | `celdaCsv` antepone `'` a textos que empiezan con `= + - @` | `db.js` (`buildReportCsv`) |
 | Clickjacking | `X-Frame-Options: DENY` y CSP `frame-ancestors 'none'` en la app web (la CSP aún no limita scripts) | `Caddyfile` |
+| Cobrador que baja la tarifa de un puesto | `PUT /puestos-mapa/:id` solo deja cambiar la zona (que fija la tarifa del cobro por día) al `super_admin`: otro rol recibe 403 (`ForbiddenError`). La marca `zona_por_regularizar` no se escribe por la API | `db.js` (`updatePuesto`, opción `puedeCambiarZona`), `routes/puestos.ts` (`sinMarcaDelPadron`), `tests/api-seguridad.test.js` |
 | Listados enormes | `GET /cobros` con tope `MAX_COBROS_LISTADO`; el cobrador ve solo los suyos | `db.js` (`getCobros`) |
 | Archivos de entorno | `.env`, `apps/server/.env`, `.env.production` en `.gitignore`; plantilla `.env.production.example` sin valores reales | `.gitignore` |
 

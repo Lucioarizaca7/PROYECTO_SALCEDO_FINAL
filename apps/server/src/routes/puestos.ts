@@ -7,6 +7,12 @@ import { pool as db } from '../pg.js';
 
 export const router = express.Router();
 
+// La marca "zona por regularizar" solo la pone la importación del padrón (migrations/0018); por la API no se escribe.
+const sinMarcaDelPadron = (body) => {
+  const { zona_por_regularizar: _marca, ...cambios } = body || {};
+  return cambios;
+};
+
 // Cada puesto trae su estado de pago del mes (saldo_pendiente, monto_total, monto_pagado, estado_pago).
 router.get('/api/v1/puestos', ...staffOnly, async (req, res) => {
   const data = await getPuestos(db, { incluirInactivos: req.query.incluirInactivos === '1' });
@@ -23,7 +29,7 @@ router.post('/api/v1/puestos',
     serializeResponse: (body) => body?.data ?? body
   }),
   async (req, res) => {
-    const puesto = await insertPuesto(db, req.body || {});
+    const puesto = await insertPuesto(db, sinMarcaDelPadron(req.body));
     return res.status(201).json({ data: puesto, message: 'Puesto asignado correctamente' });
   }
 );
@@ -39,7 +45,7 @@ router.post('/api/v1/puestos-mapa',
   }),
   async (req, res) => {
     const puesto = await insertPuesto(db, {
-      ...req.body,
+      ...sinMarcaDelPadron(req.body),
       comerciante_id: req.body.comerciante_id ?? req.body.comercianteId,
       zona_id: req.body.zona_id ?? req.body.zonaId,
       direccion: req.body.direccion || req.body.sector || req.body.codigoPuesto,
@@ -61,7 +67,8 @@ router.put('/api/v1/puestos-mapa/:id',
     serializeResponse: (body) => body?.data ?? body
   }),
   async (req, res) => {
-    return res.json({ data: await updatePuesto(db, req.params.id, req.body || {}), message: 'Puesto geolocalizado actualizado correctamente' });
+    const puesto = await updatePuesto(db, req.params.id, sinMarcaDelPadron(req.body), { puedeCambiarZona: req.user?.rol === 'super_admin' });
+    return res.json({ data: puesto, message: 'Puesto geolocalizado actualizado correctamente' });
   }
 );
 
