@@ -397,7 +397,7 @@ export function SitesMap({ sites = [], zonas = [], searchMerchants, onCollect, o
                 </button>
               </>
             )}
-            <button type="button" className="table-action" disabled={detailBusy} onClick={() => runDetailAction(() => onDelete?.(currentSite))}>Dar de baja</button>
+            <button type="button" className="table-action peligro" disabled={detailBusy} onClick={() => runDetailAction(() => onDelete?.(currentSite))}>Dar de baja</button>
           </div>
           {detailError && <p className="form-error" role="alert">{detailError}</p>}
         </section>

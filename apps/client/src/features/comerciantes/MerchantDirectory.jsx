@@ -216,7 +216,7 @@ export function MerchantDirectory({
                       <div className="table-actions">
                         <button className="table-action qr-table-action" type="button" aria-label={`Ver código QR de ${name}`} onClick={() => setQrMerchant({ id: code, codigo: businessCode, nombre: name, qr_code: `SISREC://comerciante/${businessCode}` })}>Ver QR</button>
                         <button className="table-action" type="button" aria-label={`Editar ${name}`} onClick={() => onEdit(row)}>Editar</button>
-                        <button className="table-action" type="button" aria-label={`Dar de baja a ${name}`} onClick={() => onDeactivate(code)}>Dar de baja</button>
+                        <button className="table-action peligro" type="button" aria-label={`Dar de baja a ${name}`} onClick={() => onDeactivate(code)}>Dar de baja</button>
                       </div>
                     </td>
                   </tr>

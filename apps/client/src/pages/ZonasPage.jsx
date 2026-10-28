@@ -57,7 +57,7 @@ export function ZonasPage() {
                     <td>{Number(zona.total_calles || 0)}</td>
                     <td>
                       <button className="table-action" type="button" onClick={() => zonas.editZone(zona)}>Editar</button>
-                      <button className="table-action" type="button" onClick={() => zonas.deleteZone(zona.id)}>Eliminar</button>
+                      <button className="table-action peligro" type="button" onClick={() => zonas.deleteZone(zona.id)}>Eliminar</button>
                     </td>
                   </tr>
                 ))}
@@ -102,7 +102,7 @@ export function ZonasPage() {
                     <td>{calle.descripcion || '—'}</td>
                     <td>
                       <button className="table-action" type="button" onClick={() => zonas.editCalle(calle)}>Editar</button>
-                      <button className="table-action" type="button" onClick={() => zonas.deleteCalle(calle.id)}>Eliminar</button>
+                      <button className="table-action peligro" type="button" onClick={() => zonas.deleteCalle(calle.id)}>Eliminar</button>
                     </td>
                   </tr>
                 ))}

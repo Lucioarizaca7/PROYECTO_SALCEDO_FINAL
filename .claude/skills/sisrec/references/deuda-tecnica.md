@@ -75,6 +75,20 @@ Pendientes menores:
 - **Riesgo de morosidad N+1.** `getRiskDashboard` recalcula una vez al día con un `calcularLiquidacion` por comerciante (hasta 300); con un padrón grande conviene la liquidación en lote (paso 6).
 - **Tarifas superpuestas.** El tarifario local tiene varias tarifas activas iguales para `comida` desde 2026-01-01; `findApplicableTariff` toma una. Falta decidir si la base debe impedir dos tarifas vigentes para el mismo rubro, zona y tipo de vía.
 
+## Rediseño visual del Penpot (2026-10-28)
+
+- **Tres capas de estilos.** `tema-municipal.css` es ahora la capa del rediseño (tokens, menú por grupos, tarjetas, píldoras). Debajo sigue `styles.css` (~4600 líneas) con reglas que el tema pisa. Limpiarlo es un trabajo aparte.
+- **Tailwind sin uso.** `tailwind.config.js` tiene una paleta azul que no corresponde, y los `@apply` de `styles.css` (`.glass-card`, `.badge-*`) no se usan en ningún JSX. Se puede quitar Tailwind.
+- **Pantallas del Penpot que no se hicieron:**
+  - carnet con llave de acceso (sesión de 30 días, bloqueo tras 5 intentos);
+  - "Importar padrón" como página propia;
+  - "Para atender" y "Recaudación por zona" en el Dashboard;
+  - búsqueda global;
+  - portal con ingreso por carnet y aviso de sesión vencida.
+
+  Son funciones nuevas con reglas de negocio: hay que decidirlas antes.
+- **Página pública (P1).** Solo tomó fuentes y colores; su estructura sigue siendo la de antes.
+
 ## Orden de refactorización sugerido (de menor a mayor riesgo)
 
 Los pasos 1 a 3 y el 5 están en la rama `refactor/arquitectura` (commits "Refactor 1" a "Refactor 3" y "Refactor 5", 2026-10-16). El paso 4 está en la rama `claude/compassionate-hermann-e2df59` (commit 84e687e7), y el 6 se trabaja encima de ella; falta unirlas.

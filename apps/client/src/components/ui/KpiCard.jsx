@@ -2,8 +2,8 @@ export function KpiCard({ label, value, change, trend = 'up', icon = '↗', acce
   return (
     <div className="stat-card kpi-card">
       <div className="stat-top">
-        <span>{label}</span>
         <span className={`stat-icon ${accent}`}>{icon}</span>
+        <span>{label}</span>
       </div>
       <div className="stat-value">{value}</div>
       <div className="stat-change">

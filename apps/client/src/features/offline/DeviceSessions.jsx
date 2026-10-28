@@ -64,7 +64,7 @@ export function DeviceSessions() {
                 <td>{formatTime(row.creado_en)}</td>
                 <td>{formatTime(row.ultimo_uso_en)}</td>
                 <td>{formatTime(row.expira_en)}</td>
-                <td>{row.actual ? <span className="status paid">Esta sesión</span> : <button type="button" className="table-action" onClick={() => revoke(row)}>Revocar</button>}</td>
+                <td>{row.actual ? <span className="status paid">Esta sesión</span> : <button type="button" className="table-action peligro" onClick={() => revoke(row)}>Revocar</button>}</td>
               </tr>
             ))}
             {!rows.length && <tr><td colSpan="7">No hay sesiones abiertas.</td></tr>}
