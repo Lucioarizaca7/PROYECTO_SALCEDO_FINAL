@@ -1,4 +1,5 @@
 import { useSisrec } from '../app/SisrecContext';
+import { CambiosRechazadosMapa } from '../components/features/map/CambiosRechazadosMapa';
 import { paymentStatusText, SERVER_PAYMENT_STATUS } from '../components/features/map/sitesGeo';
 import { useSitios } from '../hooks/useSitios';
 import { formatPEN } from '../lib/formato';
@@ -30,6 +31,7 @@ export function SitiosPage() {
         </div>
       </div>
       {message && <div className="form-message">{message}</div>}
+      <CambiosRechazadosMapa />
       <div className="map-toolbar">
         <div>
           <strong>{rows.length} puestos</strong>

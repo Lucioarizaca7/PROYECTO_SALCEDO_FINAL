@@ -1,4 +1,5 @@
 import { useSisrec } from '../app/SisrecContext';
+import { CambiosRechazadosMapa } from '../components/features/map/CambiosRechazadosMapa';
 import { SitesMap } from '../components/features/map/SitesMap';
 import { useSitios } from '../hooks/useSitios';
 
@@ -16,6 +17,7 @@ export function MapaPage() {
         </div>
       </div>
       {sitios.message && <div className="form-message">{sitios.message}</div>}
+      <CambiosRechazadosMapa />
       <SitesMap
         sites={mapPuestos.filter((site) => site.estado !== 'inactivo')}
         zonas={catalogos.zonas}
