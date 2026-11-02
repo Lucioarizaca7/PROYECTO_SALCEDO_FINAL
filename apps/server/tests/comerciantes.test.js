@@ -207,6 +207,7 @@ test('updateTarifa rechaza actualizaciones con versión obsoleta', async () => {
 
   const tarifa = await insertTarifa(db, {
     rubro_id: 1,
+    zona_id: 1,
     tipo_tarifa: 'fija',
     monto_fijo: 20,
     monto_variable: 0,

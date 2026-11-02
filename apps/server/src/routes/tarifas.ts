@@ -22,7 +22,10 @@ router.post('/api/v1/tarifas',
     serializeResponse: (body) => body?.data ?? body
   }),
   async (req, res) => {
-    return res.status(201).json({ data: await insertTarifa(db, req.body || {}), message: 'Tarifa creada correctamente' });
+    const data = await insertTarifa(db, req.body || {});
+    const [cerrada] = data.tarifas_cerradas;
+    const message = cerrada ? `Tarifa creada. La anterior termina el ${cerrada.vigencia_fin}` : 'Tarifa creada correctamente';
+    return res.status(201).json({ data, message });
   }
 );
 
