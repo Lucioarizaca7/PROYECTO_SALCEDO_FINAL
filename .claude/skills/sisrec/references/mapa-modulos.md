@@ -100,3 +100,5 @@ Para ver los roles exactos de una ruta: `grep -rn "'/api/v1/<ruta>" apps/server/
 - **0016:** llave del carnet en `comerciante_portal_acceso` (`llave_hash` SHA-256, `llave_emitida_en/por`).
 - **0017:** el portal queda solo con la llave: se borra `pin_hash` y los accesos que solo tenían PIN.
 - **0018:** `puestos.zona_por_regularizar` (puesto del padrón sin zona o con zona no registrada).
+- **0019:** `asistencias_feriales.zona_id` y `puestos_zona_cambios`: cada día marcado guarda la zona que tenía el puesto.
+- **0020:** trigger `tarifa_sin_cruces`: dos tarifas activas del mismo rubro, zona y tipo de vía no cruzan fechas.

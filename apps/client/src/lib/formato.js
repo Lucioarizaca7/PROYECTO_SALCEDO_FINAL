@@ -32,7 +32,9 @@ export function textoTarifa(balance = {}) {
   // Sin días cobrados no hay tarifa que aplicar: "S/ 0" parecía una tarifa gratis.
   if (!dias && balance.no_devengo) return 'Sin días cobrados en el mes';
   if (!dias) return `S/ ${balance.tarifa?.monto_fijo ?? 0}`;
-  const enPuestos = puestos.length > 1 ? ` en ${puestos.length} puestos` : '';
+  // Un puesto que cambió de zona en el mes trae una fila por zona: se cuentan puestos, no filas.
+  const totalPuestos = new Set(puestos.map((item) => item.puesto_id)).size;
+  const enPuestos = totalPuestos > 1 ? ` en ${totalPuestos} puestos` : '';
   if (balance.monto_dia === null && puestos.length) {
     return puestos.map((item) => `S/ ${item.monto_dia} × ${item.dias} (${item.codigo_puesto || `puesto ${item.puesto_id}`})`).join(' + ');
   }
