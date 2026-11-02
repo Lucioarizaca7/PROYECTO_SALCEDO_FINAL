@@ -26,8 +26,8 @@ Solo `web` queda expuesto a internet, por los puertos 80 y 443.
 
 ```bash
 # como root, una sola vez
-adduser --disabled-password deploy && usermod -aG docker deploy
 curl -fsSL https://get.docker.com | sh
+adduser --disabled-password --gecos "" deploy && usermod -aG docker deploy
 ufw allow OpenSSH && ufw allow 80 && ufw allow 443 && ufw --force enable
 mkdir -p /opt/sisrec && chown deploy: /opt/sisrec
 ```
@@ -35,10 +35,12 @@ mkdir -p /opt/sisrec && chown deploy: /opt/sisrec
 Luego, como `deploy`:
 
 ```bash
-git clone https://github.com/luiarca/VISUAL_CODE.git /opt/sisrec
-cd /opt/sisrec/Proyecto_Final_Salcedo_Rentas
+git clone https://github.com/Lucioarizaca7/PROYECTO_SALCEDO_FINAL.git /opt/sisrec
+cd /opt/sisrec
 cp .env.production.example .env.production
 ```
+
+El clon toma la rama `main`: lo que se quiera desplegar debe estar unido ahí.
 
 En `.env.production` hay que completar:
 
@@ -88,7 +90,7 @@ $C node dist/cli/crear-usuario.js --rol auditor        # jefa de área / auditor
    - Las de vía asfaltada y sin asfaltar se crean con "Aplica a: zonas con vía asfaltada / sin asfaltar".
    - En Zonas, marcar el tipo de vía de cada zona.
 4. **Inicio de cobro:** en Tarifas, fijar el primer mes desde el que se suma la deuda acumulada (por ejemplo `2026-12`, el mes del piloto).
-5. **PIN del portal:** generar el PIN de cada comerciante desde Comerciantes → Ver QR, e imprimir el carnet.
+5. **Carnets del portal:** con una cuenta `super_admin`, emitir los carnets desde Comerciantes, uno por uno o en lote (hasta 500), e imprimirlos. La llave se muestra una sola vez y un carnet nuevo anula el anterior.
 
 ## 6. Respaldos
 
@@ -116,13 +118,13 @@ Para restaurar de verdad tras un desastre, detener la API y usar `pg_restore --c
 
 ## 8. Despliegues siguientes (GitHub Actions)
 
-- `.github/workflows/sisrec-ci.yml` corre en cada push o pull request que toque el proyecto:
+- `.github/workflows/sisrec-ci.yml` corre en cada push o pull request:
   - las pruebas de la API (con su propio PostgreSQL), del cliente y del modelo de analítica;
   - el chequeo de tipos y el build.
 - `.github/workflows/sisrec-deploy.yml` corre al crear un tag `sisrec-v*`:
   1. vuelve a pasar las pruebas;
   2. entra al servidor por SSH y hace `git checkout` del tag y `docker compose up -d --build`;
-  3. espera a que `/api/v1/health` responda.
+  3. espera a que `/api/v1/health` responda dentro del contenedor `api`. Si no responde en 5 minutos, el despliegue queda como fallido.
 
 **[tú]** En GitHub, en Settings → Secrets and variables → Actions, cargar estos secretos:
 
@@ -131,6 +133,7 @@ Para restaurar de verdad tras un desastre, detener la API y usar `pg_restore --c
 | `SISREC_SSH_HOST` | IP del servidor |
 | `SISREC_SSH_USER` | `deploy` |
 | `SISREC_SSH_KEY` | la clave privada SSH; la pública va en `~deploy/.ssh/authorized_keys` |
+| `SISREC_SSH_KNOWN_HOSTS` | la huella del servidor, con `ssh-keyscan <IP>`; compararla con la que muestra el panel del VPS |
 | `SISREC_APP_DIR` | `/opt/sisrec` |
 
 Después crear el entorno `produccion`, en Settings → Environments, para poder exigir una aprobación antes de cada despliegue.
