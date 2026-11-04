@@ -44,7 +44,7 @@ router.get('/api/v1/portal/:comercianteId/notificaciones', ...staffOnly, async (
 
 router.post('/api/v1/notificaciones',
   requireAuth,
-  requireRoles(['super_admin', 'cobrador', 'auditor']),
+  requireRoles(['super_admin', 'cobrador']),
   async (req, res) => {
     const notification = await createNotification(db, req.body || {});
     return res.status(201).json({ data: notification, message: 'Notificación registrada correctamente' });

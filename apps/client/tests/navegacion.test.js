@@ -22,6 +22,9 @@ test('el menú de cada rol solo muestra lo que su rol puede usar', () => {
   assert.ok(!keys('cobrador').includes('tarifas'));
   assert.ok(!keys('auditor').includes('pagos'));
   assert.ok(keys('auditor').includes('revision'));
+  // El auditor consulta las tarifas (solo lectura), pero no las de configuración del personal.
+  assert.ok(keys('auditor').includes('tarifas'));
+  assert.ok(!keys('auditor').includes('dispositivos'));
   assert.deepEqual(keys('super_admin'), navItems.map((item) => item.key));
   assert.equal(canSee(navItems.find((item) => item.key === 'dispositivos'), 'cobrador'), false);
   // El servidor responde 403 al cobrador en /auditoria: el menú no debe ofrecerla.

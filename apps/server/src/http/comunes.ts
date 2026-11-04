@@ -19,6 +19,7 @@ export const loginLimiter = rateLimit({
 });
 
 // Roles internos que pueden ver datos personales del padrón y de los cobros (Ley 29733).
+// El auditor (gerencia o alcaldía) es de solo lectura: entra en las consultas, nunca en una ruta que escribe.
 export const STAFF = ['super_admin', 'cobrador', 'auditor'];
 export const staffOnly = [requireAuth, requireRoles(STAFF)];
 

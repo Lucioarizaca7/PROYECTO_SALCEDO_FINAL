@@ -55,14 +55,14 @@ Offline: GET /jornada/paquete → IndexedDB → cola → POST /cobros/sincroniza
 
 ## Rutas por módulo (`/api/v1`)
 
-Roles: `super_admin`, `cobrador`, `auditor`, `comerciante`. `staffOnly` = los tres primeros.
+Roles: `super_admin`, `cobrador`, `auditor`, `comerciante`. `staffOnly` = los tres primeros. El auditor es de solo lectura: no aparece en ninguna ruta que escribe (04/11/2026).
 
 | Módulo | Rutas | Roles para modificar |
 |---|---|---|
 | Salud / público | `GET /health`, `GET /publico/resumen` | públicas |
 | Panel y analítica | `GET /dashboard`, `/analitica/prediccion`, `/analitica/riesgo`, `/reportes` | lectura del personal |
-| Catálogos | `GET /roles`, `/catalogos`; CRUD `/zonas`, `/calles` | super_admin, auditor |
-| Comerciantes | CRUD `/comerciantes`, `POST /comerciantes/importar-padron`, `GET /comerciantes/plantilla-padron`, `/comerciantes/:id/preferencias` | super_admin, auditor (las preferencias también cobrador) |
+| Catálogos | `GET /roles`, `/catalogos`; CRUD `/zonas`, `/calles` | super_admin |
+| Comerciantes | CRUD `/comerciantes`, `POST /comerciantes/importar-padron`, `GET /comerciantes/plantilla-padron`, `/comerciantes/:id/preferencias` | super_admin (las preferencias también cobrador); el auditor solo descarga la plantilla |
 | Puestos | `GET /puestos?incluirInactivos=1`, `POST /puestos`, `POST/PUT/DELETE /puestos-mapa`, `POST /puestos/:id/liberar` | super_admin, cobrador |
 | Tarifas | `GET/POST/PUT /tarifas` | según la ruta (ver `routes/tarifas.ts`) |
 | Liquidación | `GET /liquidaciones/:comercianteId`, `GET /comerciantes/:id/saldo` | lectura |
