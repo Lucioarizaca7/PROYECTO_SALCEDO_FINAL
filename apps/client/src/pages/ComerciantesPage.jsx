@@ -5,6 +5,8 @@ import { useComerciantes } from '../hooks/useComerciantes';
 export function ComerciantesPage() {
   const { user, comerciantes, catalogos, loading } = useSisrec();
   const merchants = useComerciantes();
+  // El auditor solo consulta el padrón (decisión del 04/11/2026); el servidor vuelve a comprobarlo.
+  const puedeEditar = user?.rol === 'super_admin';
 
   return (
     <MerchantDirectory
@@ -15,19 +17,19 @@ export function ComerciantesPage() {
       form={merchants.form}
       setForm={merchants.setForm}
       isFormOpen={merchants.showForm}
-      onToggleForm={merchants.toggleForm}
+      onToggleForm={puedeEditar ? merchants.toggleForm : null}
       editingId={merchants.editingId}
       importPreview={merchants.padronPreview}
       importMessage={merchants.padronMessage}
       importLoading={merchants.padronLoading}
-      onPreviewFile={merchants.previewPadron}
-      onImport={merchants.importPadron}
+      onPreviewFile={puedeEditar ? merchants.previewPadron : null}
+      onImport={puedeEditar ? merchants.importPadron : null}
       onDownloadTemplate={merchants.downloadPadronTemplate}
-      onSubmit={merchants.submit}
-      onEdit={merchants.edit}
-      onDeactivate={merchants.deactivate}
+      onSubmit={puedeEditar ? merchants.submit : null}
+      onEdit={puedeEditar ? merchants.edit : null}
+      onDeactivate={puedeEditar ? merchants.deactivate : null}
       // Solo super_admin emite carnets (decisión del 28/10/2026); el servidor vuelve a comprobarlo.
-      onIssueCards={user?.rol === 'super_admin' ? merchants.emitirCarnets : null}
+      onIssueCards={puedeEditar ? merchants.emitirCarnets : null}
     />
   );
 }

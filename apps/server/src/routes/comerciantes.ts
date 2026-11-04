@@ -44,7 +44,7 @@ router.get('/api/v1/comerciantes/plantilla-padron',
 // Excel. Si venció (15 min) o es de otro usuario responde 410 y el cliente reenvía el archivo.
 router.post('/api/v1/comerciantes/importar-padron',
   requireAuth,
-  requireRoles(['super_admin', 'auditor']),
+  requireRoles(['super_admin']),
   receivePadronWorkbook,
   async (req, res) => {
     const userId = Number(req.user?.id || 1);
@@ -133,7 +133,7 @@ router.get('/api/v1/comerciantes/:id/preferencias', ...staffOnly, async (req, re
 
 router.post('/api/v1/comerciantes/:id/preferencias',
   requireAuth,
-  requireRoles(['super_admin', 'cobrador', 'auditor']),
+  requireRoles(['super_admin', 'cobrador']),
   auditMutation({
     db,
     accion: 'ACTUALIZAR_PREFERENCIAS',
@@ -174,7 +174,7 @@ router.post('/api/v1/comerciantes/:id/carnet',
 
 router.post('/api/v1/comerciantes',
   requireAuth,
-  requireRoles(['super_admin', 'auditor']),
+  requireRoles(['super_admin']),
   validateComerciante,
   handleValidationErrors,
   auditMutation({
@@ -193,7 +193,7 @@ router.post('/api/v1/comerciantes',
 
 router.put('/api/v1/comerciantes/:id',
   requireAuth,
-  requireRoles(['super_admin', 'auditor']),
+  requireRoles(['super_admin']),
   auditMutation({
     db,
     accion: 'ACTUALIZAR_COMERCIANTE',
@@ -211,7 +211,7 @@ router.put('/api/v1/comerciantes/:id',
 
 router.delete('/api/v1/comerciantes/:id',
   requireAuth,
-  requireRoles(['super_admin', 'auditor']),
+  requireRoles(['super_admin']),
   auditMutation({
     db,
     accion: 'DAR_DE_BAJA_COMERCIANTE',

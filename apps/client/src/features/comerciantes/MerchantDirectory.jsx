@@ -50,9 +50,11 @@ export function MerchantDirectory({
           <h1 id="merchant-heading">Comerciantes</h1>
           <p>Listado del padrón municipal y estado operativo.</p>
         </div>
-        <button className="primary-button" type="button" onClick={onToggleForm}>
-          {isFormOpen ? 'Cerrar formulario' : '＋ Nuevo registro'}
-        </button>
+        {onToggleForm && (
+          <button className="primary-button" type="button" onClick={onToggleForm}>
+            {isFormOpen ? 'Cerrar formulario' : '＋ Nuevo registro'}
+          </button>
+        )}
       </div>
 
       <section className="panel padron-import-panel" aria-labelledby="padron-import-heading">
@@ -63,13 +65,15 @@ export function MerchantDirectory({
           </div>
           <button className="secondary-button" type="button" onClick={onDownloadTemplate}>Descargar plantilla oficial</button>
         </div>
-        <div className="padron-import-controls">
-          <label className="padron-file-control">
-            <span>Seleccionar archivo Excel</span>
-            <input type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" disabled={importLoading} onChange={(event) => onPreviewFile(event.target.files?.[0] || null)} />
-          </label>
-          {importLoading && <span className="import-progress" role="status">Procesando libro...</span>}
-        </div>
+        {onPreviewFile && (
+          <div className="padron-import-controls">
+            <label className="padron-file-control">
+              <span>Seleccionar archivo Excel</span>
+              <input type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" disabled={importLoading} onChange={(event) => onPreviewFile(event.target.files?.[0] || null)} />
+            </label>
+            {importLoading && <span className="import-progress" role="status">Procesando libro...</span>}
+          </div>
+        )}
         {importMessage && <div className="form-message" role="status" aria-live="polite">{importMessage}</div>}
         {importPreview && (
           <div className="padron-import-preview">
@@ -137,14 +141,14 @@ export function MerchantDirectory({
               </details>
             )}
             <p className="import-policy-note">Las filas “Ausente” se importan como puestos feriales disponibles para que la liquidación aplique no devengo. Sin DNI, el titular entra como pendiente de regularización y paga igual. El metraje es opcional en zonas con tipo de vía. Una fila con error se omite y no detiene a las demás. No se crean deudas ni cobros durante esta importación.</p>
-            <button className="primary-button" type="button" disabled={importLoading || importPreview.validRows === 0 || importPreview.workbookType === 'attendance'} onClick={onImport}>Confirmar importación de {importPreview.validRows} filas</button>
+            {onImport && <button className="primary-button" type="button" disabled={importLoading || importPreview.validRows === 0 || importPreview.workbookType === 'attendance'} onClick={onImport}>Confirmar importación de {importPreview.validRows} filas</button>}
           </div>
         )}
       </section>
 
       {message && <div className="form-message" role="status" aria-live="polite">{message}</div>}
 
-      {isFormOpen && (
+      {isFormOpen && onSubmit && (
         <form className="panel merchant-form" onSubmit={onSubmit} aria-labelledby="merchant-form-heading">
           <div className="panel-heading">
             <div>
@@ -262,8 +266,8 @@ export function MerchantDirectory({
                           </button>
                         )}
                         <button className="table-action qr-table-action" type="button" aria-label={`Ver código QR de ${name}`} onClick={() => setQrMerchant({ id: code, codigo: businessCode, nombre: name, qr_code: `SISREC://comerciante/${businessCode}` })}>Ver QR</button>
-                        <button className="table-action" type="button" aria-label={`Editar ${name}`} onClick={() => onEdit(row)}>Editar</button>
-                        <button className="table-action peligro" type="button" aria-label={`Dar de baja a ${name}`} onClick={() => onDeactivate(code)}>Dar de baja</button>
+                        {onEdit && <button className="table-action" type="button" aria-label={`Editar ${name}`} onClick={() => onEdit(row)}>Editar</button>}
+                        {onDeactivate && <button className="table-action peligro" type="button" aria-label={`Dar de baja a ${name}`} onClick={() => onDeactivate(code)}>Dar de baja</button>}
                       </div>
                     </td>
                   </tr>

@@ -13,19 +13,19 @@ export function TarifasPage() {
     <section className="page">
       <div className="page-heading">
         <div><div className="eyebrow">CONFIGURACIÓN / TARIFAS</div><h1>Tarifas y categorías</h1><p>Administra montos, unidad de cobro y vigencias del tarifario.</p></div>
-        <button className="primary-button" type="button" onClick={tarifas.toggleNew}>＋ Nueva tarifa</button>
+        {tarifas.puedeEditar && <button className="primary-button" type="button" onClick={tarifas.toggleNew}>＋ Nueva tarifa</button>}
       </div>
       {tarifas.message && <div className="form-error">{tarifas.message}</div>}
       <form className="panel merchant-form" onSubmit={tarifas.guardarInicioCobro}>
         <div className="merchant-form-grid">
           <label>
             <span>Deuda acumulada desde (inicio de cobro)</span>
-            <input type="month" required value={tarifas.inicioCobro} disabled={!tarifas.puedeEditarInicio} onChange={(event) => tarifas.setInicioCobro(event.target.value)} />
+            <input type="month" required value={tarifas.inicioCobro} disabled={!tarifas.puedeEditar} onChange={(event) => tarifas.setInicioCobro(event.target.value)} />
           </label>
-          {tarifas.puedeEditarInicio && <button className="secondary-button" type="submit">Guardar inicio de cobro</button>}
+          {tarifas.puedeEditar && <button className="secondary-button" type="submit">Guardar inicio de cobro</button>}
         </div>
       </form>
-      {tarifas.showForm && (
+      {tarifas.showForm && tarifas.puedeEditar && (
         <form className="panel merchant-form" onSubmit={tarifas.submit}>
           <div className="panel-heading"><div><div className="panel-title">{tarifas.editingId ? 'Editar tarifa' : 'Nueva tarifa'}</div><div className="panel-subtitle">Los cambios aplican según la vigencia configurada.</div></div></div>
           <div className="merchant-form-grid">
@@ -48,7 +48,7 @@ export function TarifasPage() {
       )}
       <div className="table-card">
         <table>
-          <thead><tr><th>Rubro</th><th>Aplica a</th><th>Tipo</th><th>Montos</th><th>Unidad</th><th>Vigencia</th><th>Estado</th><th>Acción</th></tr></thead>
+          <thead><tr><th>Rubro</th><th>Aplica a</th><th>Tipo</th><th>Montos</th><th>Unidad</th><th>Vigencia</th><th>Estado</th>{tarifas.puedeEditar && <th>Acción</th>}</tr></thead>
           <tbody>
             {tariffRecords.map((item) => (
               <tr key={item.id}>
@@ -59,7 +59,7 @@ export function TarifasPage() {
                 <td>{UNIDADES[item.unidad_medida] || item.unidad_medida}</td>
                 <td>{item.vigencia_inicio}{item.vigencia_fin ? ` a ${item.vigencia_fin}` : ' en adelante'}</td>
                 <td><span className="status paid">Activo</span></td>
-                <td><button className="table-action" type="button" onClick={() => tarifas.edit(item)}>Editar</button></td>
+                {tarifas.puedeEditar && <td><button className="table-action" type="button" onClick={() => tarifas.edit(item)}>Editar</button></td>}
               </tr>
             ))}
           </tbody>
