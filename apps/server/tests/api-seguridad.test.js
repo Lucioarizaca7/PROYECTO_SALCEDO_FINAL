@@ -26,6 +26,7 @@ before(async () => {
   for (const [rol, email, password] of [
     ['cobrador', 'cobrador@salcedo.gob.pe', 'cobro123'],
     ['admin', 'admin@salcedo.gob.pe', 'admin123'],
+    ['auditor', 'auditor@salcedo.gob.pe', 'audit123'],
     ['comerciante', 'comerciante@salcedo.gob.pe', 'comercio123']
   ]) {
     tokens[rol] = (await loginUser({ email, password }, pool)).token;
@@ -44,6 +45,22 @@ function registeredGetRoutes(stack = app.router.stack) {
     return layer.handle?.stack ? registeredGetRoutes(layer.handle.stack) : [];
   });
 }
+
+// Rutas que escriben (POST, PUT, PATCH, DELETE), con su método, de todos los routers montados.
+function registeredWriteRoutes(stack = app.router.stack) {
+  return stack.flatMap((layer) => {
+    if (layer.route) {
+      if (typeof layer.route.path !== 'string') return [];
+      return Object.keys(layer.route.methods || {})
+        .filter((method) => ['post', 'put', 'patch', 'delete'].includes(method))
+        .map((method) => ({ method: method.toUpperCase(), path: layer.route.path }));
+    }
+    return layer.handle?.stack ? registeredWriteRoutes(layer.handle.stack) : [];
+  });
+}
+
+// Escrituras que no cambian datos del sistema: entrar, renovar o cerrar la propia sesión.
+const SESION_PROPIA = new Set(['/api/v1/auth/login', '/api/v1/auth/refresh', '/api/v1/auth/logout', '/api/v1/auth/sesiones/:id', '/api/v1/portal/login']);
 
 const concrete = (path) => path.replace(/:[A-Za-z_]+/g, '1');
 
@@ -70,7 +87,7 @@ test('las rutas con datos personales rechazan al rol comerciante', async () => {
   }
 });
 
-test('la plantilla y la importación del padrón son solo del administrador y el auditor', async () => {
+test('la plantilla del padrón la descargan el administrador y el auditor; importar es solo del administrador', async () => {
   for (const rol of ['cobrador', 'comerciante']) {
     const headers = { Authorization: `Bearer ${tokens[rol]}` };
     assert.equal((await fetch(`${baseUrl}/api/v1/comerciantes/plantilla-padron`, { headers })).status, 403, rol);
@@ -86,6 +103,30 @@ test('la plantilla y la importación del padrón son solo del administrador y el
     method: 'POST', headers: { Authorization: `Bearer ${tokens.admin}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ previewToken: 'no-existe' })
   });
   assert.equal(vencida.status, 410, 'un token desconocido o vencido pide volver a subir el archivo');
+  const auditor = { Authorization: `Bearer ${tokens.auditor}` };
+  assert.equal((await fetch(`${baseUrl}/api/v1/comerciantes/plantilla-padron`, { headers: auditor })).status, 200, 'el auditor descarga la plantilla');
+  const importaAuditor = await fetch(`${baseUrl}/api/v1/comerciantes/importar-padron`, {
+    method: 'POST', headers: { ...auditor, 'Content-Type': 'application/json' }, body: JSON.stringify({ previewToken: 'x' })
+  });
+  assert.equal(importaAuditor.status, 403, 'el auditor no importa el padrón');
+});
+
+// Decisión del usuario (04/11/2026): el auditor (gerencia o alcaldía) solo audita y consulta.
+test('el auditor solo consulta: toda ruta que escribe le responde 403', async () => {
+  const headers = { 'Content-Type': 'application/json', Authorization: `Bearer ${tokens.auditor}` };
+  const writes = registeredWriteRoutes().filter(({ path }) => !SESION_PROPIA.has(path));
+  assert.ok(writes.length > 30, `se esperaban más rutas de escritura: ${writes.length}`);
+  const permitidas = [];
+  for (const { method, path } of writes) {
+    const response = await fetch(`${baseUrl}${concrete(path)}`, { method, headers, body: JSON.stringify({}) });
+    if (response.status !== 403) permitidas.push(`${method} ${path} → ${response.status}`);
+  }
+  assert.deepEqual(permitidas, [], `El auditor puede escribir en:\n${permitidas.join('\n')}`);
+
+  for (const path of ['/dashboard', '/reportes', '/auditoria', '/auditoria/verificacion', '/caja/cierres', '/tickets/lotes', '/cobros/observados', '/cobros', '/comerciantes', '/tarifas', '/zonas']) {
+    const response = await fetch(`${baseUrl}/api/v1${path}`, { headers });
+    assert.equal(response.status, 200, `el auditor consulta ${path}`);
+  }
 });
 
 test('solo el administrador asigna, reasigna y devuelve lotes de tickets', async () => {

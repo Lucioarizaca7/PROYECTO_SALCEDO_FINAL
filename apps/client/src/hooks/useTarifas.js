@@ -79,5 +79,5 @@ export function useTarifas() {
     }
   };
 
-  return { showForm, editingId, message, form, setForm, toggleNew, edit, submit, inicioCobro, setInicioCobro, guardarInicioCobro, puedeEditarInicio: user?.rol === 'super_admin' };
+  return { showForm, editingId, message, form, setForm, toggleNew, edit, submit, inicioCobro, setInicioCobro, guardarInicioCobro, puedeEditar: user?.rol === 'super_admin' };
 }
