@@ -14,7 +14,7 @@ Funciones de `db.js`:
 - `getPuestos(db, { incluirInactivos, conPagos, periodo })`. `/publico/resumen` usa `conPagos: false`.
 - `insertPuesto`: sin comerciante el puesto queda `disponible`; con comerciante queda `ocupado` por defecto.
 - `updatePuesto`: si recibe `comerciante_id` sin estado, pasa a `ocupado` (con id) o a `disponible` (con null).
-- **Solo `super_admin` cambia la zona de un puesto** (decisión del usuario, 28/10/2026): la zona fija la tarifa del cobro por día. El cobrador recibe 403 si pide otra zona, y reenviar la misma no confirma una "zona por regularizar"; sí mueve el puesto en el mapa y asigna o libera al titular. La importación del padrón (super_admin o auditor) sí asigna zonas.
+- **Solo `super_admin` cambia la zona de un puesto** (decisión del usuario, 28/10/2026): la zona fija la tarifa del cobro por día. El cobrador recibe 403 si pide otra zona, y reenviar la misma no confirma una "zona por regularizar"; sí mueve el puesto en el mapa y asigna o libera al titular. La importación del padrón (solo super_admin) sí asigna zonas.
 - `liberarPuesto` y `deactivatePuesto`.
 - `parseComercianteId`: `undefined` = no se envió; `null`, `''` o `0` = puesto libre.
 - `validatePuestoPlacement`: estado válido, zona existente, comerciante activo, y que no haya otro puesto en el mismo lugar físico.
@@ -184,6 +184,11 @@ Depende de `tipo_comerciante`:
 
 ## Autenticación y auditoría
 
+- **Roles del personal** (decisión del usuario, 04/11/2026):
+  - `super_admin` es la Jefa de Rentas: hace todos los cambios.
+  - `auditor` es la gerencia o la alcaldía (en la tesis, "administrador"): **solo consulta y audita**. Ve el panel, reportes, analítica, comerciantes, sitios, caja, tickets, tarifas, zonas, revisión de cobros y la auditoría, y descarga la plantilla del padrón. No escribe en ninguna ruta: zonas, calles, padrón, comerciantes, preferencias y notificaciones quedaron para `super_admin` (preferencias y notificaciones, también el cobrador). Solo puede cerrar sus propias sesiones.
+  - `cobrador`: cobra, marca asistencia y cierra su caja.
+  - Lo comprueba `tests/api-seguridad.test.js` ("el auditor solo consulta"): recorre todas las rutas que escriben y exige 403.
 - `POST /auth/login` devuelve un JWT corto (`config.jwtExpiresIn`) en el cuerpo y deja el refresh token de 12 h, ligado al dispositivo (`createDeviceSession`), en la cookie HttpOnly `sisrec_refresh`. `/auth/refresh` y `/auth/logout` solo leen la cookie.
 - En el cliente ningún token va en `localStorage`: el de acceso vive en memoria y, al recargar, `authFetch` pide uno nuevo con la cookie (`credentials: 'include'`).
 - Portal del comerciante (`portalAcceso.js`): **solo con la llave del carnet** (decisión del usuario, 28/10/2026, como el Penpot P3). El PIN de 6 dígitos se quitó (migración 0017: sin ruta que lo genere ni login que lo acepte; quien solo tenía PIN necesita su carnet).

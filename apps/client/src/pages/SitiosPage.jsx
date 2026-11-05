@@ -11,6 +11,8 @@ export function SitiosPage() {
   const { user, mapPuestos, catalogos } = useSisrec();
   const { message, filters, setFilters, sitesWithInactive, toggleInactive, collectFromSite, regularizarZona } = useSitios();
   const puedeRegularizar = user?.rol === 'super_admin';
+  // "Cobrar" lleva a Pagos y cobros, que el auditor no usa: él solo consulta.
+  const puedeCobrar = ['super_admin', 'cobrador'].includes(user?.rol);
 
   const source = filters.bajas && sitesWithInactive ? sitesWithInactive : mapPuestos;
   const rows = source.filter((site) => (
@@ -101,7 +103,7 @@ export function SitiosPage() {
                   <td>{conMontos ? formatPEN(site.monto_pagado) : '—'}</td>
                   <td>{conMontos ? formatPEN(site.saldo_pendiente) : '—'}</td>
                   <td><span className={`status ${status.tone}`} title={paymentStatusText(site)}>{status.label}</span></td>
-                  <td>{site.estado_pago === 'pendiente' && <button type="button" className="table-action" onClick={() => collectFromSite(site)}>Cobrar</button>}</td>
+                  <td>{puedeCobrar && site.estado_pago === 'pendiente' && <button type="button" className="table-action" onClick={() => collectFromSite(site)}>Cobrar</button>}</td>
                 </tr>
               );
             })}

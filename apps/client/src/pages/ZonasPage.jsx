@@ -4,7 +4,9 @@ import { useZonas } from '../hooks/useZonas';
 const TIPO_VIA_TEXTO = { asfaltada: 'Asfaltada', sin_asfaltar: 'Sin asfaltar' };
 
 export function ZonasPage() {
-  const { catalogos } = useSisrec();
+  const { catalogos, user } = useSisrec();
+  // El auditor solo consulta zonas y calles (decisión del 04/11/2026); el servidor vuelve a comprobarlo.
+  const puedeEditar = user?.rol === 'super_admin';
   const zonas = useZonas();
   const { zoneForm, setZoneForm, calleForm, setCalleForm } = zonas;
 
@@ -24,11 +26,12 @@ export function ZonasPage() {
         <div className="panel detail-card">
           <div className="panel-heading">
             <div>
-              <div className="panel-title">Crear o editar zona</div>
+              <div className="panel-title">{puedeEditar ? 'Crear o editar zona' : 'Zonas'}</div>
               <div className="panel-subtitle">Cada zona agrupa varias calles y puestos.</div>
             </div>
           </div>
 
+          {puedeEditar && (
           <form className="merchant-form" onSubmit={zonas.submitZone}>
             <div className="merchant-form-grid">
               <input required placeholder="Nombre de la zona" value={zoneForm.nombre} onChange={(event) => setZoneForm({ ...zoneForm, nombre: event.target.value })} />
@@ -42,11 +45,12 @@ export function ZonasPage() {
               {zonas.editingZoneId && <button type="button" className="secondary-button" onClick={zonas.cancelZone}>Cancelar</button>}
             </div>
           </form>
+          )}
 
           <div className="table-card" style={{ marginTop: '16px' }}>
             <table>
               <thead>
-                <tr><th>Zona</th><th>Descripción</th><th>Tipo de vía</th><th>Calles</th><th>Acciones</th></tr>
+                <tr><th>Zona</th><th>Descripción</th><th>Tipo de vía</th><th>Calles</th>{puedeEditar && <th>Acciones</th>}</tr>
               </thead>
               <tbody>
                 {zonas.zoneRecords.map((zona) => (
@@ -55,10 +59,12 @@ export function ZonasPage() {
                     <td>{zona.descripcion || 'Sin descripción'}</td>
                     <td>{TIPO_VIA_TEXTO[zona.tipo_via] || 'Sin dato'}</td>
                     <td>{Number(zona.total_calles || 0)}</td>
-                    <td>
-                      <button className="table-action" type="button" onClick={() => zonas.editZone(zona)}>Editar</button>
-                      <button className="table-action peligro" type="button" onClick={() => zonas.deleteZone(zona.id)}>Eliminar</button>
-                    </td>
+                    {puedeEditar && (
+                      <td>
+                        <button className="table-action" type="button" onClick={() => zonas.editZone(zona)}>Editar</button>
+                        <button className="table-action peligro" type="button" onClick={() => zonas.deleteZone(zona.id)}>Eliminar</button>
+                      </td>
+                    )}
                   </tr>
                 ))}
               </tbody>
@@ -69,11 +75,12 @@ export function ZonasPage() {
         <div className="panel detail-card">
           <div className="panel-heading">
             <div>
-              <div className="panel-title">Crear o editar calle</div>
+              <div className="panel-title">{puedeEditar ? 'Crear o editar calle' : 'Calles'}</div>
               <div className="panel-subtitle">Asocia cada vía a la zona correcta.</div>
             </div>
           </div>
 
+          {puedeEditar && (
           <form className="merchant-form" onSubmit={zonas.submitCalle}>
             <div className="merchant-form-grid">
               <select value={calleForm.zona_id} onChange={(event) => setCalleForm({ ...calleForm, zona_id: event.target.value })}>
@@ -88,11 +95,12 @@ export function ZonasPage() {
               {zonas.editingCalleId && <button type="button" className="secondary-button" onClick={zonas.cancelCalle}>Cancelar</button>}
             </div>
           </form>
+          )}
 
           <div className="table-card" style={{ marginTop: '16px' }}>
             <table>
               <thead>
-                <tr><th>Zona</th><th>Calle</th><th>Descripción</th><th>Acciones</th></tr>
+                <tr><th>Zona</th><th>Calle</th><th>Descripción</th>{puedeEditar && <th>Acciones</th>}</tr>
               </thead>
               <tbody>
                 {zonas.calleRecords.map((calle) => (
@@ -100,10 +108,12 @@ export function ZonasPage() {
                     <td>{calle.zona || 'Sin zona'}</td>
                     <td>{calle.nombre}</td>
                     <td>{calle.descripcion || '—'}</td>
-                    <td>
-                      <button className="table-action" type="button" onClick={() => zonas.editCalle(calle)}>Editar</button>
-                      <button className="table-action peligro" type="button" onClick={() => zonas.deleteCalle(calle.id)}>Eliminar</button>
-                    </td>
+                    {puedeEditar && (
+                      <td>
+                        <button className="table-action" type="button" onClick={() => zonas.editCalle(calle)}>Editar</button>
+                        <button className="table-action peligro" type="button" onClick={() => zonas.deleteCalle(calle.id)}>Eliminar</button>
+                      </td>
+                    )}
                   </tr>
                 ))}
               </tbody>
