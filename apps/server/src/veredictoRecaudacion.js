@@ -9,6 +9,7 @@
 export const UMBRAL_CAMBIO_PCT = 5;
 // Con menos meses no hay tendencia que afirmar. También es el tamaño de la base de comparación.
 export const MESES_BASE = 3;
+// Decisión del usuario, 05/11/2026 (este umbral y el de concentración).
 // Cuánto debe caer la asistencia o el cobro por día marcado de una zona para señalarlo como causa.
 export const UMBRAL_CAUSA_PCT = 10;
 // Parte de la caída total desde la que el problema se considera de una sola zona.
