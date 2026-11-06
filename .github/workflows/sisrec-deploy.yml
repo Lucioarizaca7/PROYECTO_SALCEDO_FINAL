@@ -1,0 +1,62 @@
+# Despliegue al servidor al crear un tag sisrec-v*. Secretos y entorno: docs/despliegue-produccion.md, sección 8.
+name: SISREC despliegue
+
+on:
+  push:
+    tags: ['sisrec-v*']
+
+permissions:
+  contents: read
+
+# Dos tags seguidos no deben pisarse a mitad de un docker compose.
+concurrency:
+  group: sisrec-despliegue
+  cancel-in-progress: false
+
+jobs:
+  pruebas:
+    uses: ./.github/workflows/sisrec-ci.yml
+
+  desplegar:
+    needs: pruebas
+    runs-on: ubuntu-latest
+    environment: produccion
+    steps:
+      - name: Preparar SSH
+        env:
+          SSH_KEY: ${{ secrets.SISREC_SSH_KEY }}
+          SSH_KNOWN_HOSTS: ${{ secrets.SISREC_SSH_KNOWN_HOSTS }}
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/sisrec
+          chmod 600 ~/.ssh/sisrec
+          printf '%s\n' "$SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
+
+      - name: Desplegar el tag y esperar a la API
+        env:
+          SSH_HOST: ${{ secrets.SISREC_SSH_HOST }}
+          SSH_USER: ${{ secrets.SISREC_SSH_USER }}
+          APP_DIR: ${{ secrets.SISREC_APP_DIR }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          # El tag llega como argumento a un shell remoto: solo se aceptan caracteres seguros.
+          [[ "$TAG" =~ ^sisrec-v[0-9A-Za-z._-]+$ ]] || { echo "Tag no válido: $TAG"; exit 1; }
+          ssh -i ~/.ssh/sisrec -o BatchMode=yes -o StrictHostKeyChecking=yes "$SSH_USER@$SSH_HOST" \
+            bash -s -- "$APP_DIR" "$TAG" <<'REMOTO'
+          set -euo pipefail
+          cd "$1"
+          git fetch --tags origin
+          git checkout --detach "refs/tags/$2"
+          compose="docker compose --env-file .env.production -f docker-compose.prod.yml"
+          $compose up -d --build
+          for intento in $(seq 1 60); do
+            if $compose exec -T api node -e "fetch('http://127.0.0.1:3003/api/v1/health').then((r) => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"; then
+              echo "API en línea con $2"
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "La API no respondió en 5 minutos"
+          $compose logs --tail 100 api
+          exit 1
+          REMOTO

@@ -1,0 +1,47 @@
+# Caddy: único contenedor expuesto a internet (80 y 443).
+# Obtiene y renueva el certificado HTTPS de {$DOMAIN} automáticamente.
+# Con DOMAIN=localhost usa una autoridad interna (solo para probar en la propia PC).
+
+{$DOMAIN} {
+	encode zstd gzip
+
+	# API: Caddy agrega X-Forwarded-For; la API confía en un proxy (TRUST_PROXY=1).
+	handle /api/* {
+		reverse_proxy api:3003
+	}
+
+	# Aplicación web (SPA): cualquier ruta desconocida vuelve a index.html.
+	handle {
+		root * /srv
+		try_files {path} /index.html
+		file_server
+	}
+
+	# Archivos con hash en el nombre: se pueden guardar en caché un año.
+	@assets path /assets/*
+	header @assets Cache-Control "public, max-age=31536000, immutable"
+
+	# El Service Worker y el index deben revisarse siempre para recibir versiones nuevas.
+	@fresh path /sw.js /index.html /
+	header @fresh Cache-Control "no-cache"
+
+	# Ningún otro sitio puede mostrar SISREC dentro de un iframe (clickjacking): X-Frame-Options para
+	# navegadores viejos y frame-ancestors para los actuales. La CSP aún no limita scripts ni estilos:
+	# hay que probarla antes con el mapa (mapbox-gl usa workers blob:) y las fuentes de Google.
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Frame-Options "DENY"
+		Content-Security-Policy "frame-ancestors 'none'; base-uri 'self'; object-src 'none'; form-action 'self'"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		Permissions-Policy "camera=(self), geolocation=(self), bluetooth=(self), microphone=()"
+		-Server
+	}
+
+	log {
+		output file /data/access.log {
+			roll_size 10MiB
+			roll_keep 10
+		}
+	}
+}

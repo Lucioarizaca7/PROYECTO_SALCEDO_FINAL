@@ -215,7 +215,8 @@ class BluetoothPrinter {
       ESC_POS_COMMANDS.CENTER,
       'MUNI SALCEDO\n',
       ESC_POS_COMMANDS.LEFT,
-      'RECIBO DE PAGO\n',
+      // Cobro sin señal: el número oficial (R-000123) lo asigna el servidor al sincronizar.
+      receipt.provisional ? 'RECIBO PROVISIONAL\n' : 'RECIBO DE PAGO\n',
       `Nro: ${receipt.comprobante || 'N/A'}\n`,
       `Fecha: ${fecha}\n`,
       `Comerciante: ${(receipt.comerciante || '-').slice(0, 20)}\n`, // Limit length

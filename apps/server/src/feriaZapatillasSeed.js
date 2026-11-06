@@ -201,13 +201,13 @@ export async function seedFeriaZapatillas(_db, plan, sourceFile, userId = 1) {
       const zoneName = plan.posts.find((post) => post.document === merchant.document)?.sheet || plan.blocks[0]?.sheet || 'BLOQUE';
       const zoneId = Number((await one('SELECT id FROM zonas WHERE LOWER(nombre) = LOWER($1) ORDER BY id LIMIT 1', [zoneName]))?.id || 0);
       if (!merchantId) {
-        merchantId = Number((await one(`INSERT INTO comerciantes (dni_ruc, nombre, rubro_id, zona_id, categoria, tipo_comerciante, estado, estado_empadronamiento, usuario_creador_id)
-          VALUES ($1, $2, $3, $4, 'ferial', 'ferial', 'pendiente', 'PENDIENTE_REGULARIZACION', $5) RETURNING id`, [merchant.document, merchant.name, rubroId, zoneId, creatorId])).id);
+        merchantId = Number((await one(`INSERT INTO comerciantes (dni_ruc, nombre, rubro_id, zona_id, tipo_comerciante, estado, estado_empadronamiento, usuario_creador_id)
+          VALUES ($1, $2, $3, $4, 'ferial', 'pendiente', 'PENDIENTE_REGULARIZACION', $5) RETURNING id`, [merchant.document, merchant.name, rubroId, zoneId, creatorId])).id);
         createdMerchants += 1;
       } else {
         const empadronamiento = existing.estado_empadronamiento === 'REGULARIZADO' ? 'REGULARIZADO' : 'PENDIENTE_REGULARIZACION';
         const status = empadronamiento === 'REGULARIZADO' ? 'activo' : 'pendiente';
-        await c.query(`UPDATE comerciantes SET nombre = $1, rubro_id = $2, categoria = 'ferial', tipo_comerciante = 'ferial', estado = $3, estado_empadronamiento = $4 WHERE id = $5`, [merchant.name, rubroId, status, empadronamiento, merchantId]);
+        await c.query(`UPDATE comerciantes SET nombre = $1, rubro_id = $2, tipo_comerciante = 'ferial', estado = $3, estado_empadronamiento = $4 WHERE id = $5`, [merchant.name, rubroId, status, empadronamiento, merchantId]);
         updatedMerchants += 1;
       }
       merchant.id = merchantId;

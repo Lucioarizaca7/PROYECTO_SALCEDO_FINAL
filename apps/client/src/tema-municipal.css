@@ -1,0 +1,1310 @@
+/*
+ * Tema municipal, rediseño de Penpot ("SISREC Salcedo · Rediseño", 28/10/2026).
+ * Del Penpot se toman la tipografía (Plus Jakarta Sans, DM Sans, DM Mono), las tarjetas blancas
+ * con borde suave, las píldoras de estado y el menú lateral por grupos. Los colores siguen siendo los
+ * del escudo y la bandera del C. P. Salcedo, no el azul del diseño.
+ * Se carga después de styles.css y solo cambia el aspecto: las páginas y sus clases siguen igual.
+ */
+:root {
+  /* Marca: verde del escudo (en el Penpot son los roles 900 / 700 / 500 / 50) */
+  --institucional: #0B5D3B;          /* acción principal, ítem activo (texto blanco 7.9:1) */
+  --institucional-oscuro: #084A2F;   /* barra lateral, barra del celular, panel de marca */
+  --institucional-hover: #0E6E46;
+  --institucional-claro: #E4F1EA;    /* fondos de selección */
+  --celeste: #0A6E9C;                /* celeste de la bandera: información y solo lectura (5.6:1) */
+  --celeste-bg: #E2F1F9;
+  --dorado: #F2B630;                 /* sol del escudo: acento, siempre con texto oscuro */
+  --dorado-hover: #DCA21F;
+  --dorado-tinta: #9A6212;           /* el dorado como texto (eyebrow, pendiente): 5.3:1 sobre blanco */
+  --dorado-bg: #FDF1DC;
+  --naranja: #C2410C;
+  --bandera: linear-gradient(90deg, #0B8F4D 0 40%, #FFFFFF 40% 70%, #0EA5D9 70% 100%);
+
+  /* Superficies y texto (Penpot: Superficie / Texto / Borde) */
+  --superficie: #F6F4F0;
+  --superficie-2: #EFECE6;
+  --tarjeta: #FFFFFF;
+  --tinta: #13261C;
+  --tinta-2: #5C6577;
+  --tinta-3: #8A8F99;                /* solo ayudas y marcadores: no alcanza 4.5:1 en texto chico */
+  --borde-suave: #E2DDD4;
+  --borde-campo: #D6D0C4;
+  --borde-fuerte: #B9B2A5;
+
+  /* Estados (Penpot: Estado) */
+  --verde-tinta: #1F7A47;
+  --verde-bg: #E5F3EA;
+  --rojo-tinta: #B3261E;
+  --rojo-bg: #FBE9E7;
+
+  /* Tipografía */
+  --font-sans: 'DM Sans', system-ui, sans-serif;
+  --font-display: 'Plus Jakarta Sans', 'DM Sans', system-ui, sans-serif;
+  --font-mono: 'DM Mono', ui-monospace, monospace;
+
+  /* Radios, sombra y espacios */
+  --radio-sm: 8px;
+  --radio-md: 12px;
+  --radio-lg: 16px;
+  --sombra-suave: 0 1px 2px rgba(19, 38, 28, 0.04), 0 4px 16px rgba(19, 38, 28, 0.04);
+  --espacio-1: 4px;
+  --espacio-2: 8px;
+  --espacio-3: 12px;
+  --espacio-4: 16px;
+  --espacio-5: 24px;
+  --espacio-6: 32px;
+
+  --anillo-foco: 0 0 0 3px #F2B630, 0 0 0 5px #084A2F;
+
+  /* Alias de styles.css: lo que aún los usa hereda el rediseño */
+  --civic-ink: var(--tinta);
+  --civic-muted: var(--tinta-2);
+  --civic-line: var(--borde-suave);
+  --civic-surface: var(--superficie);
+  --civic-surface-alt: var(--superficie-2);
+  --bg: var(--superficie);
+  --panel-alt: var(--superficie);
+  --text: var(--tinta);
+  --muted: var(--tinta-2);
+  --border: var(--borde-campo);
+  --green: var(--verde-tinta);
+  --green-soft: var(--verde-bg);
+  --amber: var(--dorado-tinta);
+  --amber-soft: var(--dorado-bg);
+  --red: var(--rojo-tinta);
+  --red-soft: var(--rojo-bg);
+  --radius: var(--radio-md);
+  --shadow: var(--sombra-suave);
+}
+
+body {
+  background: var(--superficie);
+  color: var(--tinta);
+  font-size: 15px;
+  line-height: 1.45;
+  -webkit-font-smoothing: antialiased;
+}
+
+h1, h2, h3, h4 { font-family: var(--font-display); }
+
+/* Foco visible en cualquier fondo: anillo dorado con borde verde oscuro */
+button:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible,
+a:focus-visible,
+.sidebar :focus-visible,
+.table-card button:focus-visible {
+  outline: none;
+  box-shadow: var(--anillo-foco);
+}
+
+.font-mono { font-family: var(--font-mono); }
+.tabular-nums { font-variant-numeric: tabular-nums; }
+
+/* Solo para lectores de pantalla (etiquetas de filtros, título de tablas). Tailwind no se compila, así que se define aquí. */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* Marca "S": cuadrado dorado del sol del escudo */
+.brand-mark,
+.marca-logo {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 40px;
+  height: 40px;
+  border: 0;
+  border-radius: 10px;
+  background: var(--dorado);
+  box-shadow: none;
+  color: var(--tinta);
+  font-family: var(--font-display);
+  font-size: 20px;
+  font-weight: 800;
+}
+
+.landing-brand { color: var(--institucional); }
+
+/* ---------- Marco: barra lateral ---------- */
+.app-shell { background: var(--superficie); }
+/* Sin esto una tabla ancha estira todo el panel y la página entera se desplaza de lado; así solo se
+   desplaza la tabla dentro de su tarjeta. */
+.main-panel { min-width: 0; }
+
+.sidebar {
+  width: 264px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--institucional-oscuro);
+  background-image: var(--bandera);
+  background-size: 100% 4px;
+  background-repeat: no-repeat;
+  border-right: 0;
+}
+
+.sidebar-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 28px 20px 20px;
+}
+
+.marca-sisrec {
+  color: #FFF;
+  font-family: var(--font-display);
+  font-size: 17px;
+  font-weight: 800;
+  letter-spacing: 0.2px;
+  line-height: 1.2;
+}
+
+.marca-sub {
+  color: #C9DDD1;
+  font-size: 13px;
+  line-height: 1.3;
+}
+
+.sidebar-nav {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 20px;
+  margin: 0;
+  padding: 4px 16px 16px;
+  overflow-y: auto;
+}
+
+.nav-grupo { display: grid; gap: 2px; }
+
+.nav-grupo-titulo {
+  padding: 0 0 6px;
+  color: #A9C4B4;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 1.2px;
+  text-transform: uppercase;
+}
+
+.nav-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 9px 12px;
+  border: 0;
+  border-radius: var(--radio-sm);
+  color: #E3EEE7;
+  font-size: 15px;
+  font-weight: 500;
+  transition: background-color 0.12s;
+}
+
+.nav-item svg { flex-shrink: 0; opacity: 0.9; }
+
+.nav-item:hover {
+  background: rgba(255, 255, 255, 0.08);
+  border-color: transparent;
+  color: #FFF;
+}
+
+.nav-item.active,
+.nav-item.active:hover {
+  background: var(--institucional-hover);
+  box-shadow: inset 3px 0 0 var(--dorado);
+  color: #FFF;
+  font-weight: 600;
+}
+
+/* Tarjeta "Hoy en Salcedo" al pie del menú */
+.sidebar-footer {
+  display: grid;
+  gap: 2px;
+  margin: 0 16px 16px;
+  padding: 14px;
+  border: 0;
+  border-radius: var(--radio-md);
+  background: rgba(255, 255, 255, 0.07);
+  color: #C9DDD1;
+  font-size: 13px;
+  line-height: 1.35;
+}
+
+.sidebar-hoy-eyebrow {
+  color: var(--dorado);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 1.2px;
+  text-transform: uppercase;
+}
+
+.sidebar-footer strong {
+  color: #FFF;
+  font-family: var(--font-display);
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.rol-solo-lectura {
+  justify-self: start;
+  margin-top: 8px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  background: var(--celeste-bg);
+  color: var(--celeste);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+/* ---------- Marco: barra superior ---------- */
+.topbar {
+  min-height: 72px;
+  padding: 12px 32px;
+  background: var(--tarjeta);
+  border-bottom: 1px solid var(--borde-suave);
+  backdrop-filter: none;
+}
+
+/* En el escritorio el título vive en el encabezado de la página; la barra solo lo muestra en el celular. */
+.topbar-titulo { display: none; }
+
+.topbar .eyebrow {
+  color: var(--tinta-2);
+  font-family: var(--font-sans);
+  font-size: 12px;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.topbar-left h2 {
+  margin: 0;
+  color: var(--tinta);
+  font-family: var(--font-display);
+  font-size: 17px;
+  font-weight: 700;
+  letter-spacing: 0;
+  line-height: 1.2;
+}
+
+.topbar-right { margin-left: auto; gap: 12px; }
+
+.menu-button,
+.notification-button {
+  border: 1px solid var(--borde-suave);
+  border-radius: var(--radio-md);
+  background: var(--tarjeta);
+  color: var(--tinta);
+}
+
+.notification-button:hover { background: var(--superficie); border-color: var(--borde-campo); }
+
+.search-box {
+  border: 1px solid var(--borde-suave);
+  border-radius: var(--radio-sm);
+  background: var(--superficie);
+  box-shadow: none;
+}
+
+.user-badge {
+  height: auto;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.user-avatar {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  background: var(--institucional-claro);
+  color: var(--institucional);
+  font-family: var(--font-display);
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.user-meta strong { color: var(--tinta); font-size: 15px; font-weight: 600; }
+.user-meta small { color: var(--tinta-2); font-size: 13px; font-weight: 400; }
+
+.boton-salir { display: inline-flex; align-items: center; gap: 8px; }
+
+/* Píldora de conexión: verde con señal, dorada sin señal */
+.sync-status-badge {
+  padding: 6px 12px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--verde-bg);
+  box-shadow: none;
+  color: var(--verde-tinta);
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.sync-status-badge .sync-label { color: inherit; }
+.sync-dot, .sync-dot.online, .sync-dot.offline { width: 8px; height: 8px; background: currentColor; box-shadow: none; }
+
+.sync-status-badge.sin-senal {
+  background: var(--dorado-bg);
+  color: var(--dorado-tinta);
+}
+
+.sync-pending {
+  border: 0;
+  border-radius: 999px;
+  background: var(--tarjeta);
+  color: var(--tinta);
+  font-family: var(--font-mono);
+}
+
+/* ---------- Páginas ---------- */
+.page-content {
+  padding: 32px 32px 48px;
+  background: var(--superficie);
+}
+
+.page { gap: 24px; }
+
+.page-heading { align-items: flex-end; padding: 0; }
+
+.page-heading h1 {
+  margin-top: 4px;
+  color: var(--tinta);
+  font-family: var(--font-display);
+  font-size: 28px;
+  font-weight: 700;
+  letter-spacing: -0.2px;
+  line-height: 1.2;
+}
+
+.page-heading p {
+  max-width: 680px;
+  margin-top: 6px;
+  color: var(--tinta-2);
+  font-size: 15px;
+  font-weight: 400;
+}
+
+/* Etiqueta del Penpot: DM Sans 700 / 11, mayúsculas, espaciado 1.2 */
+.eyebrow,
+.step-label {
+  color: var(--dorado-tinta);
+  font-family: var(--font-sans);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 1.2px;
+  text-transform: uppercase;
+}
+
+.stat-card,
+.panel,
+.table-card,
+.detail-card {
+  background: var(--tarjeta);
+  border: 1px solid var(--borde-suave);
+  border-radius: var(--radio-lg);
+  box-shadow: none;
+}
+
+.panel { padding: 20px 22px; }
+
+/* Indicador: ícono en recuadro + etiqueta, número grande, línea de variación */
+.stat-card { padding: 20px; }
+.kpi-card::before { content: none; }
+.kpi-card:hover { transform: none; box-shadow: var(--sombra-suave); }
+
+.stat-top {
+  justify-content: flex-start;
+  gap: 12px;
+  color: var(--tinta-2);
+  font-size: 14px;
+  font-weight: 400;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.stat-icon {
+  width: 36px;
+  height: 36px;
+  border: 0;
+  border-radius: 10px;
+  font-family: var(--font-display);
+  font-size: 14px;
+}
+
+.stat-icon.green { background: var(--verde-bg); color: var(--verde-tinta); }
+.stat-icon.blue { background: var(--celeste-bg); color: var(--celeste); }
+.stat-icon.amber { background: var(--dorado-bg); color: var(--dorado-tinta); }
+.stat-icon.red { background: var(--rojo-bg); color: var(--rojo-tinta); }
+
+.stat-value {
+  margin-top: 18px;
+  color: var(--tinta);
+  font-family: var(--font-display);
+  font-size: 30px;
+  font-weight: 800;
+  letter-spacing: -0.3px;
+  line-height: 1.1;
+}
+
+.stat-change { margin-top: 10px; color: var(--verde-tinta); font-size: 13px; font-weight: 400; }
+.stat-change .downchange { color: var(--rojo-tinta); }
+
+.date-chip {
+  padding: 8px 14px;
+  border: 1px solid var(--borde-suave);
+  border-radius: 999px;
+  background: var(--tarjeta);
+  box-shadow: none;
+  color: var(--tinta);
+  font-family: var(--font-sans);
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.panel-heading { margin-bottom: 14px; }
+
+.panel-title {
+  color: var(--tinta);
+  font-family: var(--font-display);
+  font-size: 17px;
+  font-weight: 700;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.panel-subtitle { margin-top: 2px; color: var(--tinta-2); font-size: 13px; font-weight: 400; }
+
+.metric-line {
+  padding: 10px 0;
+  border-bottom: 1px solid var(--borde-suave);
+  color: var(--tinta);
+}
+
+.metric-line:last-child { border-bottom: 0; }
+
+.dashboard-site-stats {
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+.metric-line strong { font-family: var(--font-display); font-weight: 700; }
+
+/* Tablas: encabezado en etiqueta sobre la superficie alterna, filas con divisor de 1 px */
+.table-card { overflow-x: auto; }
+
+thead th {
+  padding: 12px 16px;
+  background: var(--superficie-2);
+  border-bottom: 1px solid var(--borde-suave);
+  color: var(--tinta-2);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 1.2px;
+  text-align: left;
+  text-transform: uppercase;
+}
+
+tbody td {
+  padding: 14px 16px;
+  border-top: 1px solid var(--borde-suave);
+  color: var(--tinta);
+  font-size: 15px;
+}
+
+.table-card tbody tr:hover { background: #FBFAF8; }
+
+/* Estados: píldora con punto */
+.status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px;
+  border: 0;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0;
+  text-transform: none;
+  white-space: nowrap;
+}
+
+.status::before {
+  content: '';
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.status.paid { background: var(--verde-bg); color: var(--verde-tinta); }
+.status.pending { background: var(--dorado-bg); color: var(--dorado-tinta); }
+.status.danger { background: var(--rojo-bg); color: var(--rojo-tinta); }
+.status.neutral { background: var(--superficie-2); color: var(--tinta-2); }
+
+/* ---------- Botones ---------- */
+.primary-button,
+.secondary-button,
+.landing-login {
+  min-height: 40px;
+  padding: 0 18px;
+  border: 1px solid transparent;
+  border-radius: var(--radio-sm);
+  box-shadow: none;
+  font-family: var(--font-sans);
+  font-size: 15px;
+  font-weight: 600;
+  transition: background-color 0.12s, border-color 0.12s;
+}
+
+.primary-button,
+.landing-login {
+  background: var(--institucional);
+  color: #FFF;
+}
+
+.primary-button:hover,
+.landing-login:hover {
+  background: var(--institucional-hover);
+  box-shadow: none;
+  transform: none;
+}
+
+.secondary-button {
+  background: var(--tarjeta);
+  border-color: var(--borde-campo);
+  color: var(--institucional);
+}
+
+.secondary-button:hover { background: var(--superficie); border-color: var(--borde-fuerte); }
+.primary-button:active,
+.secondary-button:active { transform: translateY(1px); }
+
+.primary-button.compact,
+.secondary-button.compact { min-height: 36px; padding: 0 14px; font-size: 14px; }
+
+.primary-button:disabled,
+.secondary-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.secondary-button.danger-button,
+.danger-button {
+  border-color: #F3C9C4;
+  background: var(--rojo-bg);
+  color: var(--rojo-tinta);
+}
+
+/* Acciones de fila: en color de marca; solo las que dan de baja o eliminan van en rojo */
+.table-action {
+  border: 0;
+  background: transparent;
+  color: var(--institucional);
+  font-weight: 600;
+}
+
+.table-action.peligro { color: var(--rojo-tinta); }
+
+.link-button,
+.view-all,
+.qr-table-action {
+  color: var(--institucional);
+  font-weight: 600;
+}
+
+/* ---------- Formularios ---------- */
+.page label,
+.form-field > span { color: var(--tinta-2); font-size: 13px; font-weight: 500; }
+
+.page input:not([type='checkbox']):not([type='radio']),
+.page select,
+.page textarea {
+  min-height: 40px;
+  padding: 0 12px;
+  border: 1px solid var(--borde-campo);
+  border-radius: var(--radio-sm);
+  background: var(--tarjeta);
+  color: var(--tinta);
+  font-size: 15px;
+  font-weight: 400;
+}
+
+.page textarea { padding: 10px 12px; }
+
+.page input:not([type='checkbox']):not([type='radio']):focus,
+.page select:focus,
+.page textarea:focus { border-color: var(--institucional); }
+
+.page input[readonly] { background: var(--superficie); }
+
+.page input[type='file'] {
+  padding: 4px;
+  border-style: dashed;
+  color: var(--tinta-2);
+  font-size: 14px;
+}
+
+.page input[type='file']::file-selector-button {
+  margin-right: 12px;
+  padding: 6px 14px;
+  border: 1px solid var(--borde-campo);
+  border-radius: 6px;
+  background: var(--tarjeta);
+  color: var(--institucional);
+  font: 600 14px var(--font-sans);
+  cursor: pointer;
+}
+
+/* Filtros del padrón: buscador ancho y dos selectores en una sola fila */
+.merchant-filters { padding: 16px; }
+
+/* Código del comerciante: monoespaciada en el color de marca, se parte en los guiones */
+.merchant-code {
+  min-width: 13rem;
+  max-width: 17rem;
+  color: var(--institucional);
+  font-family: var(--font-mono);
+  font-size: 13px;
+}
+
+.table-actions { gap: 4px 14px; }
+
+.page input[type='checkbox'],
+.page input[type='radio'] { accent-color: var(--institucional); }
+
+/* Avisos: fondo suave del estado, título fuerte */
+.form-message,
+.form-error,
+.offline-banner {
+  padding: 12px 16px;
+  border: 0;
+  border-radius: var(--radio-md);
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.form-message { background: var(--verde-bg); color: var(--verde-tinta); }
+.form-error { background: var(--rojo-bg); color: var(--rojo-tinta); }
+
+.offline-banner {
+  border-left: 4px solid var(--dorado);
+  background: var(--dorado-bg);
+  color: var(--tinta);
+}
+
+.empty-state {
+  border: 1px dashed var(--borde-campo);
+  border-radius: var(--radio-md);
+  background: var(--superficie);
+  color: var(--tinta-2);
+}
+
+.alert-item {
+  padding: 12px 14px;
+  border: 0;
+  border-radius: var(--radio-md);
+  background: var(--dorado-bg);
+  color: var(--tinta);
+  font-size: 14px;
+}
+
+.activity-item strong { color: var(--tinta); font-weight: 600; }
+.activity-item small { color: var(--tinta-2); }
+.activity-bullet { background: var(--institucional); }
+
+/* Diálogos: tarjeta blanca de radio grande sobre velo oscuro */
+[role='dialog'] {
+  border: 0;
+  border-radius: 20px;
+  box-shadow: 0 24px 64px rgba(19, 38, 28, 0.24);
+}
+
+/* ---------- Cobro en el puesto ---------- */
+/* Los tres pasos van en un solo formulario: cada "01 · …" se ve como título de tarjeta, separado por un divisor */
+.payment-form { padding: 22px; }
+
+.payment-form .step-label {
+  margin: 0 0 12px;
+  color: var(--tinta);
+  font-family: var(--font-display);
+  font-size: 17px;
+  font-weight: 700;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.payment-form .step-label ~ .step-label {
+  margin-top: 22px;
+  padding-top: 22px;
+  border-top: 1px solid var(--borde-suave);
+}
+
+.qr-open-button { color: var(--institucional); }
+.merchant-summary {
+  border: 0;
+  border-radius: var(--radio-md);
+  background: var(--institucional-claro);
+  box-shadow: none;
+  color: var(--tinta);
+}
+
+.merchant-summary strong {
+  font-family: var(--font-display);
+  font-size: 18px;
+  font-weight: 700;
+  line-height: 1.25;
+}
+
+.merchant-summary span { color: var(--tinta-2); font-size: 13px; font-weight: 400; }
+
+.express-card {
+  margin-top: 12px;
+  padding: 18px 20px;
+  border: 1px solid #BFDCCB;
+  border-radius: var(--radio-lg);
+  background: var(--verde-bg);
+}
+
+.express-card .eyebrow { color: var(--verde-tinta); }
+
+.express-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.express-head strong {
+  display: block;
+  font-family: var(--font-display);
+  font-size: 18px;
+  font-weight: 700;
+}
+
+.express-last { margin-top: 10px; color: var(--tinta); font-size: 14px; }
+
+.express-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 12px;
+  margin-top: 14px;
+}
+
+.express-grid span { display: block; color: var(--tinta-2); font-size: 12px; }
+.express-grid strong { font-family: var(--font-mono); }
+
+.debt-breakdown {
+  border: 0;
+  border-radius: var(--radio-md);
+  background: transparent;
+}
+
+.debt-breakdown span { color: var(--tinta-2); font-weight: 400; }
+.debt-breakdown strong { color: var(--tinta); font-weight: 600; overflow-wrap: anywhere; }
+
+/* Saldo pendiente: banda rosada con el monto grande, como en el Penpot */
+.debt-total {
+  display: flex;
+  grid-column: 1 / -1;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 16px;
+  border: 0;
+  border-radius: var(--radio-md);
+  background: var(--rojo-bg);
+}
+
+.debt-total span { color: var(--tinta); font-weight: 600; }
+
+.debt-total strong {
+  color: var(--rojo-tinta);
+  font-family: var(--font-display);
+  font-size: 30px;
+  font-weight: 800;
+}
+
+.debt-months {
+  border: 0;
+  border-radius: var(--radio-md);
+  background: var(--rojo-bg);
+}
+
+.debt-months strong { font-family: var(--font-mono); color: var(--rojo-tinta); }
+
+/* Tickets a entregar: el número se lee de lejos */
+.ticket-panel {
+  border: 1px solid var(--borde-suave);
+  border-radius: var(--radio-lg);
+  background: var(--tarjeta);
+}
+
+.ticket-row > span { font-weight: 600; }
+.ticket-stepper strong { font-family: var(--font-mono); font-size: 22px; }
+.ticket-stepper .secondary-button { width: 44px; padding: 0; font-size: 20px; }
+
+.ticket-entrega strong {
+  color: var(--tinta);
+  font-family: var(--font-mono);
+  font-size: 22px;
+  letter-spacing: 0.5px;
+}
+
+.payment-submit {
+  min-height: 52px;
+  border-radius: var(--radio-md);
+  font-family: var(--font-display);
+  font-size: 17px;
+  font-weight: 700;
+}
+
+.payment-row { border-bottom: 1px solid var(--borde-suave); }
+.payment-row strong { color: var(--verde-tinta); font-family: var(--font-display); font-weight: 700; }
+
+/* Recibo: papel blanco, número oficial en monoespaciada */
+.receipt-card {
+  border: 1px dashed var(--borde-fuerte);
+  border-radius: var(--radio-lg);
+  background: var(--tarjeta);
+}
+
+.receipt-number,
+.receipt-lines strong { font-family: var(--font-mono); }
+.receipt-number { color: var(--tinta); font-size: 1.1rem; }
+.receipt-total strong { color: var(--verde-tinta); font-family: var(--font-display); font-size: 1.5rem; }
+
+.receipt-provisional {
+  border: 0;
+  border-radius: var(--radio-sm);
+  background: var(--dorado-bg);
+  color: var(--tinta);
+}
+
+/* ---------- Cierre de caja ---------- */
+.caja-esperado {
+  display: grid;
+  gap: 4px;
+  margin-bottom: 8px;
+}
+
+.caja-esperado > span {
+  color: var(--tinta-2);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 1.2px;
+  text-transform: uppercase;
+}
+
+.caja-esperado > strong {
+  font-family: var(--font-display);
+  font-size: 34px;
+  font-weight: 800;
+  line-height: 1.1;
+}
+
+.caja-diferencia {
+  font-family: var(--font-mono);
+  font-size: 15px;
+}
+
+/* ---------- Revisión de cobros ---------- */
+.review-tabs button.active {
+  background: var(--institucional);
+  border-color: var(--institucional);
+  color: #FFF;
+}
+
+.review-card {
+  border: 1px solid var(--borde-suave);
+  border-radius: var(--radio-lg);
+}
+
+/* ---------- Ingreso del personal (Penpot P2): panel de marca oscuro y tarjeta blanca ---------- */
+.login-screen { background: var(--superficie); }
+
+.login-art {
+  justify-content: center;
+  gap: 40px;
+  padding: 48px 64px;
+  background: var(--institucional-oscuro);
+  background-image: var(--bandera);
+  background-size: 100% 4px;
+  background-repeat: no-repeat;
+  color: #FFF;
+}
+
+.login-art::before { content: none; }
+.login-art .landing-brand { color: #FFF; }
+.login-art .landing-brand small { color: #C9DDD1; }
+.brand-inline { margin-bottom: 0; }
+.login-art-copy .eyebrow { color: var(--dorado); }
+
+.login-art-copy h1 {
+  margin-top: 10px;
+  color: #FFF;
+  font-family: var(--font-display);
+  font-size: clamp(2rem, 2.6vw, 2.6rem);
+  font-weight: 800;
+  line-height: 1.15;
+}
+
+.login-art-copy em { color: var(--dorado); }
+.login-art-copy p,
+.login-art-footer { color: #C9DDD1; font-weight: 400; }
+
+.login-form-wrap { align-items: center; }
+
+/* La marca de la tarjeta solo hace falta cuando el panel oscuro no se ve (celular) */
+@media (min-width: 1101px) {
+  .login-screen { grid-template-columns: 0.75fr 1fr; }
+  .mobile-login-brand { display: none; }
+}
+
+/* En el celular el panel oscuro ocuparía una pantalla entera antes del formulario: se va directo a la tarjeta */
+@media (max-width: 1100px) {
+  .login-art { display: none; }
+  .login-form-wrap { min-height: 100vh; padding: 24px 16px; }
+}
+
+.login-form,
+.portal-login {
+  width: min(420px, 100%);
+  padding: 32px;
+  border: 1px solid var(--borde-suave);
+  border-radius: var(--radio-lg);
+  background: var(--tarjeta);
+  backdrop-filter: none;
+  box-shadow: var(--sombra-suave);
+}
+
+.login-form h2 {
+  margin: 8px 0 6px;
+  color: var(--tinta);
+  font-family: var(--font-display);
+  font-size: 28px;
+  font-weight: 700;
+}
+
+.login-form p { color: var(--tinta-2); font-size: 14px; }
+.login-form label,
+.portal-login label { color: var(--tinta-2); font-size: 13px; font-weight: 500; }
+
+.login-form input,
+.portal-login input {
+  min-height: 44px;
+  padding: 0 14px;
+  border: 1px solid var(--borde-campo);
+  border-radius: var(--radio-sm);
+  background: var(--tarjeta);
+  color: var(--tinta);
+  font-size: 15px;
+}
+
+.login-form input:focus,
+.portal-login input:focus { border-color: var(--institucional); }
+
+.login-submit { width: 100%; min-height: 44px; }
+
+.demo-note {
+  border: 0;
+  border-radius: var(--radio-md);
+  background: var(--institucional-claro);
+  color: var(--tinta);
+}
+
+.login-back { color: var(--institucional); font-weight: 600; }
+.login-copyright { color: var(--tinta-2); }
+
+/* ---------- Portal del comerciante (Penpot P3–P4) ---------- */
+.portal-screen { background: var(--superficie); }
+.portal-header .landing-brand small { color: var(--tinta-2); }
+/* Ingreso con carnet (P3): campos con etiqueta, "Ingresar" y "Escanear el QR del reverso" a todo el ancho. */
+.portal-login label { display: block; margin-bottom: 6px; }
+.portal-login .primary-button,
+.portal-escanear { width: 100%; min-height: 44px; justify-content: center; }
+.portal-escanear { margin-top: 10px; }
+.portal-ayuda {
+  display: grid;
+  gap: 2px;
+  margin-top: 20px;
+  padding-top: 16px;
+  border-top: 1px solid var(--borde-suave);
+  color: var(--tinta-2);
+  font-size: 13px;
+  text-align: center;
+}
+.portal-ayuda strong { color: var(--tinta); font-size: 14px; }
+
+/* Sitios: puesto del padrón con zona por regularizar (migración 0018) */
+.zona-por-regularizar { display: grid; gap: 6px; margin-top: 6px; justify-items: start; }
+.zona-por-regularizar select { min-height: 32px; padding: 0 8px; border: 1px solid var(--borde-campo); border-radius: var(--radio-sm); background: var(--tarjeta); font-size: 13px; }
+
+.portal-debt {
+  border-radius: 20px;
+  box-shadow: var(--sombra-suave);
+}
+
+.portal-debt strong { font-family: var(--font-display); }
+
+.portal-reminder {
+  border: 0;
+  border-radius: var(--radio-md);
+  background: var(--dorado-bg);
+  color: var(--tinta);
+}
+
+/* ---------- Carnet del comerciante (Penpot "04 · Emitir carnet") ---------- */
+.status.con-carnet { background: var(--celeste-bg); color: var(--celeste); }
+
+/* Botón de acento: dorado con texto oscuro (el dorado no da contraste con texto blanco) */
+.boton-acento {
+  min-height: 40px;
+  padding: 0 18px;
+  border: 0;
+  border-radius: var(--radio-sm);
+  background: var(--dorado);
+  color: var(--tinta);
+  font: 600 15px var(--font-sans);
+  cursor: pointer;
+}
+
+.boton-acento:hover { background: var(--dorado-hover); }
+
+.barra-seleccion {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 16px;
+  padding: 12px 16px;
+  border-radius: var(--radio-md);
+  background: var(--institucional-oscuro);
+  color: #E3EEE7;
+  font-size: 14px;
+}
+
+.barra-seleccion strong { color: #FFF; font-size: 15px; }
+.barra-seleccion .link-button { margin-left: auto; color: #FFF; }
+.columna-seleccion { width: 44px; text-align: center; }
+.columna-seleccion input { width: 18px; height: 18px; accent-color: var(--institucional); }
+.table-card tbody tr.fila-seleccionada { background: var(--institucional-claro); }
+
+.carnet-dialog { width: min(100%, 760px); max-height: calc(100vh - 36px); overflow-y: auto; }
+.carnet-intro { margin: 0; color: var(--tinta-2); font-size: 14px; }
+.carnet-lista { margin: 0; padding-left: 18px; color: var(--tinta); font-size: 14px; }
+.carnet-hoja { display: grid; gap: 16px; }
+
+.carnet {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 16px;
+}
+
+.carnet-cara {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 16px;
+  border: 1px solid var(--borde-suave);
+  border-radius: var(--radio-lg);
+  background: var(--tarjeta);
+  box-shadow: var(--sombra-suave);
+}
+
+.carnet-reverso { border: 0; background: var(--institucional-oscuro); color: #E3EEE7; }
+.carnet-qr { display: grid; flex-shrink: 0; justify-items: center; gap: 4px; }
+.carnet-qr svg { padding: 4px; border-radius: 8px; background: #FFF; }
+.carnet-qr small { max-width: 116px; color: var(--tinta-2); font-size: 11px; text-align: center; }
+.carnet-datos { display: grid; gap: 4px; min-width: 0; font-size: 13px; }
+.carnet-datos strong { color: var(--tinta); font-family: var(--font-display); font-size: 17px; line-height: 1.25; }
+
+.carnet-marca {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+  color: var(--institucional-oscuro);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 1.2px;
+  text-transform: uppercase;
+}
+
+.carnet-marca .marca-logo { width: 22px; height: 22px; border-radius: 6px; font-size: 12px; }
+.carnet-rotulo { color: var(--tinta-2); font-size: 12px; }
+.carnet-reverso .carnet-rotulo { color: #C9DDD1; }
+.carnet-rotulo-dorado { color: var(--dorado) !important; font-size: 11px; font-weight: 700; letter-spacing: 1.2px; text-transform: uppercase; }
+/* El código completo (COM-0007-JJA-…) es largo: se parte en los guiones en vez de salirse de la cara */
+.carnet-codigo { color: var(--dorado-tinta); font-family: var(--font-mono); font-size: 14px; line-height: 1.3; overflow-wrap: anywhere; }
+.carnet-puesto { color: var(--tinta); }
+.carnet-llave { color: #FFF; font-family: var(--font-mono); font-size: 20px; letter-spacing: 1px; }
+.carnet-aviso { color: var(--dorado); font-size: 11px; }
+.carnet-qr-cargando { display: grid; width: 116px; height: 116px; place-items: center; }
+
+@media print {
+  .carnet-dialog { width: 100%; max-height: none; overflow: visible; box-shadow: none; }
+  .carnet-dialog .merchant-qr-heading,
+  .carnet-dialog .merchant-qr-actions,
+  .carnet-dialog .offline-banner { display: none; }
+  .carnet { break-inside: avoid; }
+  .carnet-cara { box-shadow: none; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+}
+
+/* ---------- Tablet: el menú se abre desde el botón ---------- */
+@media (max-width: 1100px) {
+  .sidebar { width: min(280px, 84vw); }
+  /* Cerrado, el menú queda fuera de la pantalla: su sombra no debe asomar por el borde izquierdo */
+  .sidebar:not(.open) { box-shadow: none; }
+  /* Abierto, el menú tapa la barra inferior del celular (z-index 40) para que se vea la tarjeta de hoy */
+  .sidebar.open { z-index: 50; }
+  .sidebar-backdrop.visible { z-index: 45; }
+  .topbar { padding: 12px 20px; }
+  .topbar .eyebrow { overflow: hidden; font-weight: 400; text-overflow: ellipsis; white-space: nowrap; }
+  .topbar-titulo { display: block; }
+  .topbar-right { width: auto; }
+  .page-content { padding: 24px 20px 40px; }
+}
+
+/* ---------- Celular del cobrador ---------- */
+@media (max-width: 640px) {
+  .topbar {
+    flex-wrap: nowrap;
+    min-height: 64px;
+    padding: 12px 16px;
+    background: var(--institucional-oscuro);
+    background-image: var(--bandera);
+    background-size: 100% 4px;
+    background-repeat: no-repeat;
+    background-position: bottom;
+    border-bottom: 0;
+    color: #FFF;
+  }
+
+  .topbar-left { min-width: 0; gap: 12px; }
+  .topbar-titulo { min-width: 0; }
+  .topbar-left h2 { overflow: hidden; color: #FFF; text-overflow: ellipsis; white-space: nowrap; }
+  .topbar .eyebrow { color: #C9DDD1; }
+
+  .menu-button {
+    width: 40px;
+    height: 40px;
+    border: 0;
+    background: rgba(255, 255, 255, 0.12);
+    color: #FFF;
+  }
+
+  .topbar-right { flex-wrap: nowrap; width: auto; gap: 8px; }
+
+  .topbar-right .search-box,
+  .topbar-right .notification-button,
+  .topbar-right .user-badge { display: none; }
+
+  /* En el celular no cabe el texto: Cerrar sesión queda como ícono */
+  .boton-salir {
+    width: 40px;
+    min-height: 40px;
+    padding: 0;
+    justify-content: center;
+    border: 0;
+    background: rgba(255, 255, 255, 0.12);
+    color: #FFF;
+  }
+
+  .boton-salir span { display: none; }
+
+  .sync-status-badge {
+    order: 0;
+    width: auto;
+    background: rgba(255, 255, 255, 0.14);
+    color: #FFF;
+  }
+
+  .sync-status-badge.sin-senal { background: var(--dorado); color: var(--tinta); }
+
+  .page-content { padding: 20px 16px 104px; background: var(--superficie); }
+
+  .page-heading { align-items: flex-start; }
+  .page-heading h1 { font-size: 24px; }
+
+  /* Dos tarjetas por fila: el monto se achica en vez de salirse */
+  .stat-card { min-width: 0; padding: 14px; }
+  .stat-value { font-size: clamp(22px, 7vw, 30px); overflow-wrap: anywhere; }
+
+  /* Campos y botones del tamaño de un dedo */
+  .page input:not([type='checkbox']):not([type='radio']),
+  .page select { min-height: 52px; font-size: 16px; border-radius: var(--radio-md); }
+  .primary-button,
+  .secondary-button { min-height: 48px; }
+
+  .payment-submit {
+    position: sticky;
+    bottom: 80px;
+    z-index: 5;
+    width: 100%;
+    min-height: 60px;
+    border-radius: 14px;
+    box-shadow: 0 8px 24px rgba(8, 74, 47, 0.28);
+    font-size: 20px;
+    line-height: 1.1;
+  }
+
+  .mobile-bottom-nav {
+    position: fixed;
+    z-index: 40;
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    left: 0;
+    right: 0;
+    bottom: 0;
+    gap: 0;
+    height: calc(68px + env(safe-area-inset-bottom));
+    padding: 0 0 env(safe-area-inset-bottom);
+    border: 0;
+    border-top: 1px solid var(--borde-suave);
+    border-radius: 0;
+    background: var(--tarjeta);
+    box-shadow: none;
+    backdrop-filter: none;
+  }
+
+  .mobile-bottom-nav a {
+    align-content: center;
+    gap: 4px;
+    min-height: 68px;
+    border-radius: 0;
+    color: var(--tinta-2);
+    font-size: 12px;
+    font-weight: 500;
+  }
+
+  .mobile-bottom-nav a.active {
+    background: transparent;
+    box-shadow: none;
+    color: var(--institucional);
+    font-weight: 700;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .primary-button,
+  .secondary-button,
+  .nav-item { transition: none; }
+}
+
+/* Cambios del mapa hechos sin señal que el servidor rechazó (CambiosRechazadosMapa.jsx) */
+.cambios-rechazados ul { display: grid; gap: 6px; margin: 8px 0 0; padding: 0; list-style: none; }
+.cambios-rechazados li { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px 12px; }
+.cambios-rechazados-acciones { display: inline-flex; gap: 12px; }

@@ -1,0 +1,228 @@
+/* Fase 2: PWA, trabajo en campo y revisión de cobros offline. */
+
+.status.danger {
+  background: var(--red-soft, #fdecec);
+  color: var(--red, #b91c1c);
+}
+
+/* Aviso de instalación / versión nueva de la PWA */
+.pwa-toast {
+  position: fixed;
+  left: 50%;
+  bottom: calc(16px + env(safe-area-inset-bottom, 0px));
+  transform: translateX(-50%);
+  z-index: 2000;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: min(560px, calc(100vw - 32px));
+  padding: 12px 14px;
+  border-radius: 14px;
+  background: var(--civic-ink, #0f172a);
+  color: #fff;
+  box-shadow: 0 12px 32px rgba(15, 23, 42, 0.28);
+  font-size: 0.92rem;
+}
+
+.pwa-toast span {
+  flex: 1;
+}
+
+.pwa-toast-close {
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font-size: 1.3rem;
+  line-height: 1;
+  cursor: pointer;
+  padding: 4px 6px;
+}
+
+@media (max-width: 760px) {
+  /* Encima de la barra inferior de acciones del celular */
+  .pwa-toast {
+    bottom: calc(84px + env(safe-area-inset-bottom, 0px));
+  }
+}
+
+/* Panel del cobrador: jornada y cola offline */
+.field-panel {
+  display: grid;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.field-panel-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.field-queue-head {
+  border-top: 1px solid var(--civic-line, #e2e8f0);
+  padding-top: 12px;
+}
+
+.field-queue {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+  max-height: 320px;
+  overflow-y: auto;
+}
+
+.field-queue-item {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid var(--civic-line, #e2e8f0);
+  background: var(--civic-surface, #f8fafc);
+}
+
+.field-queue-item.is-error {
+  border-color: rgba(185, 28, 28, 0.35);
+  background: var(--red-soft, #fdecec);
+}
+
+.field-queue-item > div:first-child {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.field-queue-item span {
+  font-size: 0.84rem;
+  color: var(--civic-muted, #475569);
+  overflow-wrap: anywhere;
+}
+
+.field-queue-item .field-queue-error {
+  color: var(--red, #b91c1c);
+}
+
+.field-queue-actions {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.offline-banner {
+  padding: 10px 14px;
+  border-radius: 12px;
+  background: var(--amber-soft, #fff4db);
+  color: #7a4b00;
+  font-weight: 600;
+  margin-bottom: 12px;
+}
+
+/* Revisión de cobros offline */
+.review-tabs {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 16px;
+}
+
+.review-tabs button {
+  border: 1px solid var(--civic-line, #e2e8f0);
+  background: var(--civic-card, #fff);
+  color: var(--civic-ink, #0f172a);
+  border-radius: 999px;
+  padding: 8px 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.review-tabs button.active {
+  background: var(--civic-blue, #0B5D3B);
+  border-color: var(--civic-blue, #0B5D3B);
+  color: #fff;
+}
+
+.review-list {
+  display: grid;
+  gap: 12px;
+}
+
+.review-card {
+  display: grid;
+  gap: 12px;
+}
+
+.review-card-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.review-card-head > div {
+  display: grid;
+  gap: 2px;
+}
+
+.review-card-head span {
+  color: var(--civic-muted, #475569);
+  font-size: 0.88rem;
+}
+
+.review-figures {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 10px;
+}
+
+.review-figures span {
+  display: block;
+  font-size: 0.78rem;
+  color: var(--civic-muted, #475569);
+}
+
+.review-reason {
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: var(--amber-soft, #fff4db);
+  color: #7a4b00;
+}
+
+.review-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.review-actions input {
+  flex: 1 1 240px;
+  min-width: 0;
+}
+
+.secondary-button.danger-button {
+  color: var(--red, #b91c1c);
+  border-color: rgba(185, 28, 28, 0.4);
+}
+
+.receipt-provisional {
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: var(--amber-soft, #fff4db);
+  color: #7a4b00;
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+/* Columna derecha de "Cobro rápido": panel de campo + cobros recientes */
+.payment-side {
+  display: grid;
+  gap: 16px;
+  align-content: start;
+  min-width: 0;
+}

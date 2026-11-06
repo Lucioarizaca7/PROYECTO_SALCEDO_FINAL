@@ -10,8 +10,8 @@ export function useMerchantDirectory(merchants) {
 
   const filteredMerchants = useMemo(() => {
     const query = search.trim().toLowerCase();
-    return merchants.filter(([, name, category, document, merchantZone]) => {
-      const matchesSearch = !query || [name, document, `cm-${document}`]
+    return merchants.filter(([, name, category, document, merchantZone, , , , businessCode]) => {
+      const matchesSearch = !query || [name, document, businessCode]
         .some((value) => String(value).toLowerCase().includes(query));
       const matchesRubro = !rubro || String(category).toLowerCase().includes(rubro.toLowerCase());
       const matchesZona = !zona || String(merchantZone).toLowerCase().includes(zona.toLowerCase());

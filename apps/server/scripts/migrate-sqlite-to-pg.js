@@ -104,9 +104,9 @@ async function main() {
     const comerciantes = all('comerciantes');
     for (const m of comerciantes) {
       await c.query(
-        `INSERT INTO comerciantes(id,dni_ruc,nombre,rubro_id,zona_id,categoria,tipo_comerciante,estado,estado_empadronamiento,usuario_creador_id,creado_en)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,COALESCE($11::timestamptz, now()))`,
-        [m.id, m.dni_ruc, m.nombre, m.rubro_id, m.zona_id, m.categoria || m.tipo_comerciante, m.tipo_comerciante, m.estado,
+        `INSERT INTO comerciantes(id,dni_ruc,nombre,rubro_id,zona_id,tipo_comerciante,estado,estado_empadronamiento,usuario_creador_id,creado_en)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,COALESCE($10::timestamptz, now()))`,
+        [m.id, m.dni_ruc, m.nombre, m.rubro_id, m.zona_id, m.tipo_comerciante || m.categoria, m.estado,
          m.estado_empadronamiento, userIds.has(m.usuario_creador) ? m.usuario_creador : null, m.fecha_registro]
       );
     }

@@ -1,0 +1,49 @@
+/* Código de negocio del comerciante (COM-0004-LAC-COMI-75163744-MCEN-ACT-20261016): largo, se parte en los guiones. */
+.merchant-code {
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 0.78rem;
+  max-width: 15rem;
+  overflow-wrap: anywhere;
+  line-height: 1.35;
+}
+
+/* PIN del portal en el carnet QR: se imprime junto al código; el panel con el botón no se imprime. */
+.merchant-qr-pin {
+  display: grid;
+  justify-items: center;
+  gap: 2px;
+  margin-top: 4px;
+  padding: 8px 14px;
+  border: 1px dashed var(--border);
+  border-radius: 10px;
+}
+
+.merchant-qr-pin span {
+  color: var(--muted);
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.merchant-qr-pin strong {
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 1.6rem;
+  letter-spacing: 0.25em;
+}
+
+.merchant-qr-pin-panel {
+  display: grid;
+  gap: 8px;
+}
+
+.merchant-qr-pin-panel p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+@media print {
+  .merchant-qr-pin-panel {
+    display: none;
+  }
+}

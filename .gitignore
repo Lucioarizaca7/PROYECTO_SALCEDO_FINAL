@@ -10,3 +10,12 @@ npm-debug.log*
 # planos CAD pesados (DWG/DXF)
 data/gis/
 temp/libredwg/
+
+# bases de prueba, temporales y respaldos locales
+data/*.sqlite
+apps/*/data/*.sqlite
+temp/
+apps/*/temp/
+*.backup
+*.log
+.env.production

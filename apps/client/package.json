@@ -9,7 +9,6 @@
     "preview": "vite preview --host"
   },
   "dependencies": {
-    "@tanstack/react-query": "^5.104.1",
     "html5-qrcode": "^2.3.8",
     "leaflet": "^1.9.4",
     "mapbox-gl": "1.13.3",
@@ -24,6 +23,7 @@
     "autoprefixer": "^10.4.20",
     "postcss": "^8.4.49",
     "tailwindcss": "^3.4.15",
-    "vite": "^5.4.10"
+    "vite": "^5.4.10",
+    "vite-plugin-pwa": "^0.21.2"
   }
 }

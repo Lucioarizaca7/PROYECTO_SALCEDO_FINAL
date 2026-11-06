@@ -3,18 +3,9 @@
  * Utiliza validaciones básicas sin dependencias externas para mantener simplicidad
  */
 
-import { config } from 'dotenv';
-import { resolve } from 'node:path';
-import { Request, Response, NextFunction } from 'express';
+import type { Request, Response, NextFunction } from 'express';
 import { validationResult } from 'express-validator';
 import { body, param } from 'express-validator';
-
-// Cargar variables de entorno desde el directorio raíz del proyecto
-// Desde apps/server:
-//   .. = apps
-//   .. = Proyecto_Final_Salcedo_Rentas (directorio raíz)
-const envPath = resolve(process.cwd(), '..', '..', '.env');
-config({ path: envPath });
 
 // Validaciones comunes
 export const validateEmail = body('email')
@@ -96,7 +87,7 @@ export const validateCobro = [
     .withMessage('Monto debe ser un número positivo'),
   body('metodo_pago')
     .customSanitizer((value) => String(value ?? '').trim().toLowerCase())
-    .isIn(['efectivo', 'yape', 'plin', 'pos', 'manual'])
+    .isIn(['efectivo', 'yape', 'plin', 'pos'])
     .withMessage('Método de pago no válido'),
   body('fecha_cobro')
     .optional({ values: 'falsy' })

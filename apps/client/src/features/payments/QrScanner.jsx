@@ -2,7 +2,17 @@ import { useEffect, useRef, useState } from 'react';
 
 const scannerElementId = 'sisrec-qr-reader';
 
-export function QrScanner({ onScan, onClose }) {
+// Textos del cobro en campo; el portal del comerciante pasa los suyos para el QR del reverso del carnet.
+const TEXTOS_COBRO = {
+  eyebrow: 'COBRO EN CAMPO',
+  instruccion: 'Apunta el código QR del comerciante',
+  detectado: 'Código detectado. Buscando comerciante...',
+  sinLectura: 'No se detectó un QR en 10 segundos. Puedes cerrar y buscar manualmente.',
+  cerrar: 'Cerrar y buscar manualmente'
+};
+
+export function QrScanner({ onScan, onClose, textos: textosPropios }) {
+  const textos = { ...TEXTOS_COBRO, ...textosPropios };
   const scannerRef = useRef(null);
   const onScanRef = useRef(onScan);
   const onCloseRef = useRef(onClose);
@@ -44,7 +54,7 @@ export function QrScanner({ onScan, onClose }) {
     const onSuccess = async (decodedText) => {
       if (handledRef.current) return;
       handledRef.current = true;
-      setStatus('Código detectado. Buscando comerciante...');
+      setStatus(textos.detectado);
       await stopScanner();
       if (mounted) onScanRef.current(decodedText);
     };
@@ -65,7 +75,7 @@ export function QrScanner({ onScan, onClose }) {
           await stopScanner();
           return;
         }
-        setStatus('Apunta el código QR del comerciante');
+        setStatus(textos.instruccion);
         const torch = scanner.getRunningTrackCameraCapabilities?.().torchFeature?.();
         setCanUseFlash(Boolean(torch?.isSupported?.()));
       } catch (cameraError) {
@@ -79,7 +89,7 @@ export function QrScanner({ onScan, onClose }) {
     timeoutRef.current = window.setTimeout(() => {
       if (!handledRef.current && mounted) {
         setStatus('');
-        setError('No se detectó un QR en 10 segundos. Puedes cerrar y buscar manualmente.');
+        setError(textos.sinLectura);
       }
     }, 10000);
     startScanner();
@@ -106,13 +116,13 @@ export function QrScanner({ onScan, onClose }) {
       <section className="qr-scanner-modal" role="dialog" aria-modal="true" aria-labelledby="qr-scanner-title">
         <div className="qr-scanner-heading">
           <div>
-            <span className="eyebrow">COBRO EN CAMPO</span>
+            <span className="eyebrow">{textos.eyebrow}</span>
             <h2 id="qr-scanner-title">Escanear QR</h2>
           </div>
           <button ref={closeButtonRef} className="qr-scanner-close-icon" type="button" onClick={onClose} aria-label="Cerrar escáner">×</button>
         </div>
 
-        <p className="qr-scanner-instruction">Apunta el código QR del comerciante</p>
+        <p className="qr-scanner-instruction">{textos.instruccion}</p>
         <div className="qr-camera-frame">
           <div id={scannerElementId} />
           <span className="qr-guide" aria-hidden="true" />
@@ -122,7 +132,7 @@ export function QrScanner({ onScan, onClose }) {
 
         <div className="qr-scanner-actions">
           {canUseFlash && <button type="button" className="secondary-button" onClick={toggleFlash}>{flashOn ? 'Apagar flash' : 'Encender flash'}</button>}
-          <button type="button" className="primary-button" onClick={onClose}>Cerrar y buscar manualmente</button>
+          <button type="button" className="primary-button" onClick={onClose}>{textos.cerrar}</button>
         </div>
       </section>
     </div>
