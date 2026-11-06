@@ -8,6 +8,7 @@ import { pool, withTransaction, closePool, testSchema } from './pg.js';
 import { config } from './config.js';
 import { ValidationError, NotFoundError, ConflictError, ForbiddenError } from './errors.js';
 import { pronosticarSeries } from './prediccion.js';
+import { veredictoRecaudacion } from './veredictoRecaudacion.js';
 
 const migrationsDir = join(dirname(fileURLToPath(import.meta.url)), '..', 'migrations');
 
@@ -466,6 +467,21 @@ export async function getPendingDebt(db, period = currentPeriod(), maxMerchants 
 // en 3 s, el respaldo local con el mismo algoritmo (prediccion.js). Nada de factores fijos.
 const MESES_HISTORIA = 12;
 
+// Días marcados por mes y zona del comerciante, la misma zona con la que se agrupan los cobros en la proyección.
+// Sirve para saber si una caída viene de menos asistencia o de que asisten y no pagan. Como en la liquidación,
+// la marca de la app manda sobre las del Excel de ese puesto y día.
+function diasMarcadosPorZona(db, desde, hasta) {
+  return rows(db, `
+    SELECT to_char(a.fecha, 'YYYY-MM') AS mes, c.zona_id, z.nombre AS zona, COUNT(DISTINCT (a.puesto_id, a.fecha))::int AS dias
+    FROM asistencias_feriales a
+    JOIN comerciantes c ON c.id = a.comerciante_id
+    LEFT JOIN zonas z ON z.id = c.zona_id
+    WHERE a.asistio AND to_char(a.fecha, 'YYYY-MM') BETWEEN $1 AND $2
+      AND (a.sesion = '' OR NOT EXISTS (
+        SELECT 1 FROM asistencias_feriales app WHERE app.puesto_id = a.puesto_id AND app.fecha = a.fecha AND app.sesion = ''))
+    GROUP BY 1, 2, 3`, [desde, hasta]);
+}
+
 async function proyectarSeries(series, horizonteMeses) {
   if (config.analyticsUrl) {
     try {
@@ -544,6 +560,19 @@ export async function generateForecastProjection(db, options = {}) {
     .sort((a, b) => b.proyectado - a.proyectado);
 
   const totalProyectado = alHorizonte(total);
+
+  // Una zona con marcas y sin cobros también cuenta: es justo el caso de "asisten y no pagan".
+  const zonasVeredicto = new Map(Object.keys(series).filter((clave) => clave.startsWith('zona:')).map((clave) => [clave, {
+    zona: nombres[clave], cobrado: series[clave], dias: usados.map(() => 0)
+  }]));
+  if (usados.length) {
+    for (const fila of await diasMarcadosPorZona(db, usados[0], usados[usados.length - 1])) {
+      const clave = `zona:${fila.zona_id}`;
+      if (!zonasVeredicto.has(clave)) zonasVeredicto.set(clave, { zona: fila.zona || 'Sin nombre', cobrado: usados.map(() => 0), dias: usados.map(() => 0) });
+      zonasVeredicto.get(clave).dias[usados.indexOf(fila.mes)] = fila.dias;
+    }
+  }
+
   const result = {
     periodo: period,
     horizonte_dias: horizonDays,
@@ -563,6 +592,12 @@ export async function generateForecastProjection(db, options = {}) {
     },
     serie: usados.map((periodo, i) => ({ periodo, monto: series.total[i] })),
     proyeccion_mensual: total?.proyeccion_mensual || [],
+    veredicto: veredictoRecaudacion({
+      serie: series.total,
+      proyectado: total?.proyeccion_mensual?.[0] ?? 0,
+      mape: total?.mape ?? null,
+      zonas: [...zonasVeredicto.values()]
+    }),
     porZona: desglose('zona:', 'zona_id', 'zona'),
     porRubro: desglose('rubro:', 'rubro_id', 'rubro')
   };
