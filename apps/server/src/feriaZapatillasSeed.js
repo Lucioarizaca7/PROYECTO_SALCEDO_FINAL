@@ -188,6 +188,10 @@ export async function seedFeriaZapatillas(_db, plan, sourceFile, userId = 1) {
     for (const block of plan.blocks.filter((item) => item.candidates > 0)) {
       await c.query('INSERT INTO zonas (nombre, descripcion) SELECT $1::text, $2::text WHERE NOT EXISTS (SELECT 1 FROM zonas WHERE LOWER(nombre) = LOWER($1::text))', [block.sheet, `Sector ferial ${block.sheet}`]);
     }
+    // La tarifa del seed reemplaza la general del rubro: dos activas no pueden cruzarse (migración 0020).
+    await c.query(`UPDATE tarifas SET activo = FALSE, version = version + 1
+      WHERE rubro_id = $1::int AND zona_id IS NULL AND tipo_via IS NULL AND activo AND (vigencia_fin IS NULL OR vigencia_fin >= '2026-01-01')
+        AND NOT EXISTS (SELECT 1 FROM tarifas WHERE rubro_id = $1::int AND tipo_tarifa = 'variable' AND monto_fijo = 0 AND monto_variable = 2 AND unidad_medida = 'metro_cuadrado' AND vigencia_inicio = '2026-01-01')`, [rubroId]);
     await c.query(`INSERT INTO tarifas (rubro_id, tipo_tarifa, monto_fijo, monto_variable, unidad_medida, vigencia_inicio, vigencia_fin, activo, version)
       SELECT $1::int, 'variable', 0, 2, 'metro_cuadrado', '2026-01-01', NULL, TRUE, 1
       WHERE NOT EXISTS (SELECT 1 FROM tarifas WHERE rubro_id = $1::int AND tipo_tarifa = 'variable' AND monto_fijo = 0 AND monto_variable = 2 AND unidad_medida = 'metro_cuadrado' AND vigencia_inicio = '2026-01-01')`, [rubroId]);

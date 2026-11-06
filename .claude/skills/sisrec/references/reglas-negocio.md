@@ -66,6 +66,14 @@ Depende de `tipo_comerciante`:
   - No marca cuando se paga un mes anterior.
   - Si el cobro se rechaza, la marca no queda.
   - Así un cobro sin señal que llega antes que la marca no va a revisión.
+- **Cambio de zona de un puesto** (decisión del usuario, 02/11/2026, migración 0019): la zona nueva rige desde el día del cambio. Cada marca guarda su zona (`asistencias_feriales.zona_id`), así que los días anteriores conservan su tarifa y el mismo mes puede tener dos tramos (dos filas en `puestos_cobrados`). Una marca que llega después pero es de antes del cambio toma la zona de su fecha (`zona_de_asistencia`).
+  - **Excepción:** asignar una "zona por regularizar" corrige también los días pasados, porque la zona anterior era provisional. Puede subir o bajar la deuda de esos días; lo ya pagado no se toca.
+  - Un trigger registra cada cambio en `puestos_zona_cambios`, sea cual sea el camino (Sitios, mapa o padrón).
+  - No cubre la tarifa mensual, que depende de la zona del comerciante.
+- **Tarifas sin cruces** (decisión del usuario, 02/11/2026, migración 0020): dos tarifas activas del mismo rubro, zona y tipo de vía no pueden cruzar sus fechas; lo impide el trigger `tarifa_sin_cruces`.
+  - Crear una que empieza después cierra la anterior el día previo (`insertTarifa`, `tarifas_cerradas` en la respuesta y en la auditoría).
+  - Se rechaza con 409 si empieza el mismo día o antes, o si termina antes que la anterior, porque quedaría un tramo sin tarifa.
+  - Editar nunca cierra otra tarifa: si las fechas se cruzan, se rechaza.
 - Las tarifas generales de la migración 0013 rigen desde el mes en que se aplicó. Los meses anteriores siguen con la tarifa del rubro, así cargar el tipo de vía no reescribe la historia.
 - Un mes sin días cobrados devuelve `no_devengo` pero con `monto_pagado` (lo pagado se ve y la deuda acumulada lo muestra).
 - `diasAsistidos`: la marca de la app (`sesion = ''`) manda sobre las del Excel del mismo puesto y día ("no salió" anula una P importada).

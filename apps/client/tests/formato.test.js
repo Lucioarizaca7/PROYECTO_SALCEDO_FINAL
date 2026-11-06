@@ -14,6 +14,7 @@ test('sin cobro por día muestra el monto de la tarifa', () => {
 test('con cobro por día: monto de un día × días cobrados, y cada puesto cuenta', () => {
   assert.equal(textoTarifa({ tarifa: { monto_fijo: 3 }, monto_dia: 3, dias_asistidos: 1, puestos_cobrados: [{ puesto_id: 1, dias: 1, monto_dia: 3 }] }), 'S/ 3 × 1 día cobrado');
   assert.equal(textoTarifa({ tarifa: { monto_fijo: 3 }, monto_dia: 3, dias_asistidos: 2, puestos_cobrados: [{ puesto_id: 1, dias: 1, monto_dia: 3 }, { puesto_id: 2, dias: 1, monto_dia: 3 }] }), 'S/ 3 × 2 días cobrados en 2 puestos');
+  assert.equal(textoTarifa({ tarifa: { monto_fijo: 3 }, monto_dia: 3, dias_asistidos: 2, puestos_cobrados: [{ puesto_id: 1, dias: 1, monto_dia: 3 }, { puesto_id: 1, dias: 1, monto_dia: 3 }] }), 'S/ 3 × 2 días cobrados', 'un puesto que cambió de zona sigue siendo un puesto');
 });
 
 test('puestos con montos distintos muestran el detalle', () => {
