@@ -62,7 +62,7 @@ Pendientes menores:
   - `concepto` y `observaciones` del cobro, y el nombre al editar un comerciante, no tienen largo máximo;
   - el log de accesos de Caddy guarda la URL completa (DNI en `?search=`, enlaces firmados de recibos).
 - Las tarifas por rubro que estén en la base real siguen activas: en una zona sin tipo de vía se siguen usando.
-- **Cambio de zona de un puesto (2026-10-27):** la liquidación toma la zona actual del puesto, así que cambiarla recalcula los meses pasados con la tarifa de la zona nueva. La rama de GitHub `claude/gifted-mendel-9fxas5` lo resuelve con `puestos_historial` (zona y tarifa por tramos de fechas); aquí falta.
+- **Cambio de zona de un puesto:** (Resuelto el 02/11/2026, migración 0019, ver `reglas-negocio.md`.) Queda: cambiar la **zona del comerciante** (tarifa mensual) o el **tipo de vía de una zona** todavía recalcula los meses pasados.
 - **Importación del padrón:**
   - el `previewToken` vive en la memoria de la API: con varias instancias o tras un reinicio, la confirmación responde 410 y el cliente reenvía el archivo;
   - confirmar 3 000 filas tarda ~32 s en local (Docker en Windows), unas 12 consultas por fila. Para bajar de un segundo haría falta guardar en lote con `unnest`, con una prueba que compare el resultado con `insertComerciante`/`insertPuesto`;
@@ -73,7 +73,7 @@ Pendientes menores:
 - **Calles sin estado.** La tabla `calles` no tiene columna `estado`; la pantalla ofrecía Activo/Inactivo y no se guardaba (todas salían "Inactivo"). Se quitó el selector. Si hace falta dar de baja calles, va una migración nueva con `estado` y su CHECK.
 - **Barra superior.** Se quitaron la caja "Buscar registro" y el botón de notificaciones porque no tenían ninguna acción. Una búsqueda global sería una función nueva.
 - **Riesgo de morosidad N+1.** `getRiskDashboard` recalcula una vez al día con un `calcularLiquidacion` por comerciante (hasta 300); con un padrón grande conviene la liquidación en lote (paso 6).
-- **Tarifas superpuestas.** El tarifario local tiene varias tarifas activas iguales para `comida` desde 2026-01-01; `findApplicableTariff` toma una. Falta decidir si la base debe impedir dos tarifas vigentes para el mismo rubro, zona y tipo de vía.
+- **Tarifas superpuestas.** (Resuelto el 02/11/2026, migración 0020, ver `reglas-negocio.md`.)
 
 ## Rediseño visual del Penpot (2026-10-28)
 
@@ -103,7 +103,7 @@ Lo que **no** se trajo, para decidirlo aparte:
 |---|---|
 | 54fe11c | Monto por zona por día de feria y `frecuencia_pago`: choca con el cobro por día marcado (0013) |
 | 27bf9a6 | Ausente = falta de esa feria: aquí el ausente deja el puesto disponible |
-| 45061dd, cd32230 | Varias tarifas por zona y `puestos_historial`: aquí el titular de cada día lo resuelve 0015; el cambio de zona sigue recalculando el pasado (ver arriba) |
+| 45061dd, cd32230 | Varias tarifas por zona y `puestos_historial`: aquí el titular de cada día lo resuelve 0015 y la zona de cada día, 0019 |
 | a35684d | Carnet desde Pagos: el usuario no lo quiere; el arreglo de búsqueda ya estaba aquí |
 
 **Hallazgo al probar los libros (resuelto el 28/10/2026, migración 0018):** una zona que no existía en el Excel caía en la primera zona sin avisar, y la búsqueda aproximada mandaba "Barrio Alto Salcedo" a la zona "SALCEDO". Ahora la zona se busca exacta y el puesto queda marcado "zona por regularizar" (ver `reglas-negocio.md`). Queda pendiente: los **rubros** siguen con búsqueda aproximada (`resolveCatalogId`) y podrían caer en otro rubro parecido. (Resuelto el 28/10/2026: la ruta `PUT /puestos-mapa/:id` dejaba cambiar la zona también al cobrador; ahora solo `super_admin`, ver `seguridad.md`.)

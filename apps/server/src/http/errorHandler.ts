@@ -8,6 +8,7 @@ import { AppError } from '../errors.js';
 const PG_ERRORS: Record<string, [number, string]> = {
   '23505': [409, 'El registro ya existe'],
   '23503': [400, 'El registro referenciado no existe o está en uso'],
+  '23P01': [409, 'El registro se cruza con otro vigente'],
   '23514': [400, 'Datos no válidos'],
   '22P02': [400, 'Datos no válidos']
 };
