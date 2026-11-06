@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { loginUser, hasRoleAccess, requireAuth, requireRoles } from '../src/auth.ts';
-import { initializeDatabase, recordAudit, getAuditTrail, syncOfflineCobro, createNotification, getNotifications, getMerchantPortal, generateForecastProjection, scoreMorosidadComerciante, verifyAuditChain } from '../src/db.js';
+import { initializeDatabase, recordAudit, getAuditTrail, syncOfflineCobro, createNotification, getNotifications, obtenerPortalComerciante, generateForecastProjection, scoreMorosidadComerciante, verifyAuditChain } from '../src/db.js';
 
 test('loginUser acepta credenciales válidas y devuelve usuario', async () => {
   const db = await initializeDatabase();
@@ -10,6 +10,23 @@ test('loginUser acepta credenciales válidas y devuelve usuario', async () => {
 
   assert.equal(result.user.rol, 'super_admin');
   assert.ok(result.token.length > 10);
+});
+
+test('loginUser tarda lo mismo con un correo inexistente que con una clave errada (no revela qué correos existen)', async () => {
+  const db = await initializeDatabase();
+  const medir = async (email) => {
+    const tiempos = [];
+    for (let vez = 0; vez < 3; vez += 1) {
+      const inicio = process.hrtime.bigint();
+      await assert.rejects(() => loginUser({ email, password: 'clave-errada' }, db), /credenciales/i);
+      tiempos.push(Number(process.hrtime.bigint() - inicio) / 1e6);
+    }
+    return tiempos.sort((a, b) => a - b)[1];
+  };
+  const claveErrada = await medir('admin@salcedo.gob.pe');
+  const correoInexistente = await medir('nadie-existe@salcedo.gob.pe');
+  // Sin bcrypt de relleno el correo inexistente respondía en una fracción del tiempo (solo la consulta).
+  assert.ok(correoInexistente >= claveErrada * 0.5, `inexistente ${correoInexistente.toFixed(1)} ms vs clave errada ${claveErrada.toFixed(1)} ms`);
 });
 
 test('loginUser rechaza credenciales inválidas', async () => {
@@ -115,7 +132,8 @@ test('syncOfflineCobro detecta duplicados por hash idempotente y evita reinserta
     codigo_operacion: 'OFFLINE-001',
     hash_transaccion: 'hash-offline-001',
     periodo: '2026-09',
-    fecha_cobro: '2026-09-16T10:00:00.000Z'
+    // Hora reciente: sin señal, una fecha de más de 3 días quedaría observada (fechaCobroFueraDeRango).
+    fecha_cobro: new Date().toISOString()
   };
 
   const first = await syncOfflineCobro(db, payload);
@@ -128,9 +146,9 @@ test('syncOfflineCobro detecta duplicados por hash idempotente y evita reinserta
   assert.equal(Number(totalCobros), 1);
 });
 
-test('getMerchantPortal y createNotification exponen el portal del comerciante y su historial de avisos', async () => {
+test('obtenerPortalComerciante y createNotification exponen el portal del comerciante y su historial de avisos', async () => {
   const db = await initializeDatabase();
-  const portal = await getMerchantPortal(db, '20123456780');
+  const portal = await obtenerPortalComerciante(db, '20123456780');
 
   assert.equal(portal.comerciante.nombre, 'Comerciante Demo');
   assert.ok(Array.isArray(portal.pagos));
@@ -150,10 +168,11 @@ test('getMerchantPortal y createNotification exponen el portal del comerciante y
 test('generateForecastProjection y scoreMorosidadComerciante entregan métricas predictivas razonables', async () => {
   const db = await initializeDatabase();
 
-  const forecast = await generateForecastProjection(db, { period: '2026-09', horizonteDias: 90 });
-  assert.ok(Number(forecast.totalProyectado) > 0);
+  // Sin cobros en los meses anteriores no hay nada que proyectar: 0 y "sin_datos", no una cifra inventada.
+  const forecast = await generateForecastProjection(db, { period: '2020-09', horizonteDias: 90 });
+  assert.equal(forecast.totalProyectado, 0);
+  assert.equal(forecast.modelo.nombre, 'sin_datos');
   assert.ok(Array.isArray(forecast.porZona));
-  assert.ok(forecast.porZona.length >= 1);
 
   const score = await scoreMorosidadComerciante(db, 1);
   assert.ok(score.score >= 0 && score.score <= 1);

@@ -1,0 +1,149 @@
+/* Página pública (pages/InicioPage.jsx): estructura del Penpot P1 con los tokens de tema-municipal.css. */
+.pp {
+  min-height: 100vh;
+  background: var(--superficie);
+  color: var(--tinta);
+  font-family: var(--font-sans);
+}
+
+.pp-contenedor { width: 100%; max-width: 1200px; margin: 0 auto; padding: 0 24px; box-sizing: border-box; }
+.pp h1, .pp h2, .pp h3 { font-family: var(--font-display); color: var(--institucional-oscuro); }
+.pp h2 { margin: 6px 0 24px; font-size: clamp(24px, 3vw, 30px); font-weight: 700; }
+.pp h3 { margin: 0; font-size: 17px; font-weight: 700; }
+.pp p { margin: 0; }
+
+.pp-rotulo { color: var(--dorado-tinta); font-size: 12px; font-weight: 700; letter-spacing: 0.08em; }
+.pp-rotulo-claro { color: var(--dorado); }
+
+/* Botones */
+.pp-boton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 44px;
+  padding: 0 18px;
+  border: 1px solid transparent;
+  border-radius: var(--radio-sm);
+  font-family: var(--font-sans);
+  font-size: 15px;
+  font-weight: 600;
+  text-decoration: none;
+  cursor: pointer;
+  transition: background-color 0.12s, border-color 0.12s;
+}
+.pp-boton:focus-visible, .pp a:focus-visible, .pp-pie button:focus-visible { outline: 3px solid var(--dorado); outline-offset: 2px; }
+.pp-boton-principal { background: var(--institucional); color: #FFF; }
+.pp-boton-principal:hover { background: var(--institucional-hover); }
+.pp-boton-borde { background: var(--tarjeta); border-color: var(--borde-campo); color: var(--institucional); }
+.pp-boton-borde:hover { background: var(--institucional-claro); }
+.pp-boton-dorado { background: var(--dorado); color: var(--tinta); }
+.pp-boton-dorado:hover { background: var(--dorado-hover); }
+.pp-boton-claro { background: transparent; border-color: rgba(255, 255, 255, 0.55); color: #FFF; }
+.pp-boton-claro:hover { background: rgba(255, 255, 255, 0.12); }
+
+/* Navegación */
+.pp-nav { position: sticky; top: 0; z-index: 10; background: var(--tarjeta); border-bottom: 1px solid var(--borde-suave); }
+.pp-nav-fila { display: flex; align-items: center; gap: 28px; min-height: 76px; }
+.pp-marca { display: flex; align-items: center; gap: 12px; color: inherit; text-decoration: none; }
+.pp-escudo {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+  background: var(--dorado);
+  color: var(--tinta);
+  font-family: var(--font-display);
+  font-size: 20px;
+  font-weight: 800;
+}
+.pp-marca strong { display: block; font-family: var(--font-display); font-size: 16px; color: var(--institucional-oscuro); }
+.pp-marca small { display: block; color: var(--tinta-2); font-size: 13px; }
+.pp-enlaces { display: flex; gap: 28px; margin-left: auto; }
+.pp-enlaces a { color: var(--tinta); font-size: 15px; font-weight: 600; text-decoration: none; }
+.pp-enlaces a:hover { color: var(--institucional); }
+.pp-nav-acciones { display: flex; gap: 12px; }
+
+/* Portada: el lago de Salcedo bajo el verde institucional */
+.pp-portada {
+  background:
+    linear-gradient(100deg, rgba(8, 74, 47, 0.97) 0%, rgba(8, 74, 47, 0.9) 55%, rgba(8, 74, 47, 0.72) 100%),
+    url('../../assets/images/salcedo-lake-backdrop.jpg') center / cover;
+  color: #FFF;
+}
+.pp-portada-fila { display: grid; grid-template-columns: 1.2fr 0.8fr; gap: 56px; align-items: center; padding-top: 72px; padding-bottom: 72px; }
+.pp-mensaje h1 { margin: 14px 0 16px; color: #FFF; font-size: clamp(34px, 4.6vw, 48px); font-weight: 800; line-height: 1.1; }
+.pp-mensaje p { max-width: 560px; color: #D7E8DE; font-size: 16px; line-height: 1.6; }
+.pp-acciones { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 28px; }
+.pp-portada-imagen { margin: 0; }
+.pp-portada-imagen img {
+  display: block;
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  object-fit: cover;
+  border-radius: var(--radio-lg);
+  box-shadow: 0 24px 48px -20px rgba(0, 0, 0, 0.5);
+}
+
+/* Secciones */
+.pp-seccion { padding: 72px 0; }
+.pp-seccion-blanca { background: var(--tarjeta); }
+.pp-tarjeta { background: var(--tarjeta); border: 1px solid var(--borde-suave); border-radius: var(--radio-lg); }
+
+.pp-pasos { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 20px; margin: 0; padding: 0; list-style: none; }
+.pp-paso { display: grid; gap: 10px; align-content: start; padding: 24px; background: var(--superficie); border-radius: var(--radio-lg); }
+.pp-paso p { color: var(--tinta-2); font-size: 15px; line-height: 1.55; }
+.pp-paso-icono { display: grid; place-items: center; width: 48px; height: 48px; margin-bottom: 6px; border-radius: var(--radio-md); background: var(--institucional-claro); color: var(--institucional); }
+.pp-icono { width: 24px; height: 24px; }
+
+.pp-beneficios { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; }
+.pp-beneficio { overflow: hidden; }
+.pp-beneficio img { display: block; width: 100%; height: 190px; object-fit: cover; }
+.pp-beneficio-cuerpo { padding: 22px 24px 26px; }
+.pp-beneficio ul { display: grid; gap: 10px; margin: 14px 0 0; padding: 0; list-style: none; }
+.pp-beneficio li { position: relative; padding-left: 26px; color: var(--tinta); font-size: 15px; line-height: 1.5; }
+.pp-beneficio li::before {
+  content: '✓';
+  position: absolute;
+  left: 0;
+  top: 1px;
+  color: var(--verde-tinta);
+  font-weight: 700;
+}
+
+.pp-indicadores { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
+.pp-indicador { display: grid; gap: 6px; padding: 22px; }
+.pp-indicador span { color: var(--tinta-2); font-size: 14px; }
+.pp-indicador strong { font-family: var(--font-display); font-size: 30px; font-weight: 800; color: var(--institucional-oscuro); font-variant-numeric: tabular-nums; }
+.pp-indicador small { color: var(--verde-tinta); font-size: 13px; }
+
+.pp-portal { display: grid; grid-template-columns: 0.9fr 1.1fr; margin-top: 20px; overflow: hidden; }
+.pp-portal img { display: block; width: 100%; height: 100%; min-height: 220px; object-fit: cover; }
+.pp-portal-cuerpo { display: grid; gap: 10px; align-content: center; justify-items: start; padding: 28px; }
+.pp-portal-cuerpo p { color: var(--tinta-2); font-size: 15px; line-height: 1.55; margin-bottom: 6px; }
+
+/* Pie */
+.pp-pie { background: var(--institucional-oscuro); color: #B9D3C4; font-size: 14px; }
+.pp-pie-fila { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 24px; padding-top: 28px; padding-bottom: 28px; }
+.pp-pie strong { color: #FFF; font-size: 15px; }
+.pp-pie span { margin-left: auto; }
+.pp-pie button { padding: 0; border: 0; background: none; color: #FFF; font: inherit; font-weight: 600; text-decoration: underline; cursor: pointer; }
+
+@media (max-width: 960px) {
+  .pp-enlaces { display: none; }
+  .pp-nav-acciones { margin-left: auto; }
+  .pp-portada-fila, .pp-beneficios, .pp-portal { grid-template-columns: 1fr; }
+  .pp-portada-fila { gap: 32px; padding-top: 48px; padding-bottom: 48px; }
+  .pp-pasos, .pp-indicadores { grid-template-columns: 1fr; }
+  .pp-seccion { padding: 52px 0; }
+}
+
+@media (max-width: 600px) {
+  .pp-contenedor { padding-left: 16px; padding-right: 16px; }
+  .pp-nav-fila { flex-wrap: wrap; gap: 10px; padding-top: 10px; padding-bottom: 10px; }
+  .pp-marca small { display: none; }
+  .pp-nav-acciones { width: 100%; margin-left: 0; }
+  .pp-nav-acciones .pp-boton { flex: 1; padding: 0 8px; font-size: 13px; white-space: nowrap; }
+  .pp-pie span { margin-left: 0; }
+}

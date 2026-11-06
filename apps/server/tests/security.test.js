@@ -33,11 +33,13 @@ async function runValidators(validators, body) {
   return { res, nexted };
 }
 
-test('auth.ts toma el secreto JWT del entorno y no lo deja fijo en el código', () => {
+test('el secreto JWT viene del entorno (config.ts) y no está fijo en el código', () => {
   assert.ok(process.env.JWT_SECRET, 'JWT_SECRET debe estar definido en el entorno de pruebas');
-  const source = readFileSync(new URL('../src/auth.ts', import.meta.url), 'utf8');
-  assert.match(source, /process\.env\.JWT_SECRET/);
-  assert.doesNotMatch(source, /jwtSecret\s*=\s*['"`]/);
+  const configSource = readFileSync(new URL('../src/config.ts', import.meta.url), 'utf8');
+  const authSource = readFileSync(new URL('../src/auth.ts', import.meta.url), 'utf8');
+  assert.match(configSource, /env\.JWT_SECRET/);
+  assert.match(authSource, /config\.jwtSecret/);
+  assert.doesNotMatch(authSource, /jwtSecret\s*=\s*['"`]/);
 });
 
 test('validateLogin rechaza un correo con formato inválido', async () => {

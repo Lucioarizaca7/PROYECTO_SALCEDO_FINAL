@@ -1,0 +1,77 @@
+# Pruebas de SISREC en cada push o pull request. sisrec-deploy.yml también las llama antes de desplegar.
+name: SISREC CI
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  api:
+    runs-on: ubuntu-latest
+    services:
+      # Base desechable de esta corrida: cada archivo de prueba crea su propio esquema.
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: sisrec
+          POSTGRES_USER: sisrec
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U sisrec -d sisrec"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://sisrec@127.0.0.1:5432/sisrec
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      # El secreto vive solo en esta corrida; no se guarda en el repositorio.
+      - name: Generar JWT_SECRET de prueba
+        run: echo "JWT_SECRET=$(openssl rand -hex 48)" >> "$GITHUB_ENV"
+      - name: Chequeo de tipos
+        working-directory: apps/server
+        run: npx tsc --noEmit
+      - name: Pruebas de la API
+        working-directory: apps/server
+        run: npm test
+      - name: Build de la API
+        run: npm run build --workspace apps/server
+
+  cliente:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Pruebas del cliente
+        working-directory: apps/client
+        run: node --test tests/*.test.js
+      - name: Build del cliente
+        run: npm run build --workspace apps/client
+
+  analitica:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      # El modelo no tiene dependencias: se prueba sin instalar requirements.txt.
+      - name: Pruebas del modelo
+        working-directory: apps/analytics
+        run: python -m unittest -v

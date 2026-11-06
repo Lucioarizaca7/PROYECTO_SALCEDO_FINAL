@@ -6,8 +6,8 @@ import {
   insertComerciante,
   getComerciantes,
   insertPuesto,
-  calculateLiquidation,
-  insertCobro,
+  calcularLiquidacion,
+  registrarCobro,
   insertTarifa,
   updateTarifa
 } from '../src/db.js';
@@ -103,7 +103,7 @@ test('insertPuesto evita la doble asignación del mismo puesto físico', async (
   }, /puesto|asignaci[oó]n/i);
 });
 
-test('calculateLiquidation respeta la política de no devengo para ferial sin asistencia', async () => {
+test('calcularLiquidacion respeta la política de no devengo para ferial sin asistencia', async () => {
   const db = await initializeDatabase();
 
   const comerciante = await insertComerciante(db, {
@@ -117,13 +117,45 @@ test('calculateLiquidation respeta la política de no devengo para ferial sin as
     usuario_creador: 1
   });
 
-  const result = await calculateLiquidation(db, comerciante.id, '2026-09');
+  const result = await calcularLiquidacion(db, comerciante.id, '2026-09');
   assert.equal(result.saldo, 0);
   assert.equal(result.estado, 'pagado');
   assert.equal(result.no_devengo, true);
 });
 
-test('insertCobro rechaza cobros duplicados por código de operación', async () => {
+test('al eventual se le cobra un día de la tarifa de su rubro, solo una vez por día', async () => {
+  const db = await initializeDatabase();
+  // Tarifa propia de la zona (tiene prioridad sobre la general): S/ 6 por día cobrado.
+  await insertTarifa(db, { rubro_id: 3, zona_id: 1, tipo_tarifa: 'fija', monto_fijo: 6, monto_variable: 0, unidad_medida: 'semanal', vigencia_inicio: '2026-01-01', version: 1 });
+  const comerciante = await insertComerciante(db, {
+    dni_ruc: '75163744', nombre: 'Ambulante Eventual', rubro_id: 3, zona_id: 1,
+    categoria: 'eventual', tipo_comerciante: 'eventual', estado: 'activo', usuario_creador: 1
+  });
+
+  const hoy = await calcularLiquidacion(db, comerciante.id);
+  assert.equal(hoy.cobro_diario, true);
+  assert.equal(hoy.no_devengo, false);
+  assert.equal(hoy.monto_total, 6);
+  assert.equal(hoy.saldo, 6);
+  assert.equal(hoy.vencida, false);
+
+  await registrarCobro(db, { comerciante_id: comerciante.id, cobrador_id: 2, monto: 6, metodo_pago: 'efectivo', concepto: 'Cobro del día' });
+  const pagado = await calcularLiquidacion(db, comerciante.id);
+  assert.equal(pagado.saldo, 0);
+  assert.equal(pagado.estado, 'pagado');
+  await assert.rejects(
+    registrarCobro(db, { comerciante_id: comerciante.id, cobrador_id: 2, monto: 6, metodo_pago: 'efectivo', concepto: 'Cobro del día' }),
+    /excede el saldo pendiente de S\/ 0\.00/
+  );
+
+  // Otro día del mes vuelve a deber su día; un periodo distinto del día no devenga.
+  const otroDia = await calcularLiquidacion(db, comerciante.id, '2026-09', { dia: '2026-09-15' });
+  assert.equal(otroDia.saldo, 6);
+  assert.equal(otroDia.dia, '2026-09-15');
+  assert.equal((await calcularLiquidacion(db, comerciante.id, '2026-08', { dia: '2026-09-15' })).no_devengo, true);
+});
+
+test('registrarCobro rechaza cobros duplicados por código de operación', async () => {
   const db = await initializeDatabase();
 
   const comerciante = await insertComerciante(db, {
@@ -145,7 +177,7 @@ test('insertCobro rechaza cobros duplicados por código de operación', async ()
     estado: 'ocupado'
   });
 
-  await insertCobro(db, {
+  await registrarCobro(db, {
     comerciante_id: comerciante.id,
     cobrador_id: 2,
     monto: 20,
@@ -157,7 +189,7 @@ test('insertCobro rechaza cobros duplicados por código de operación', async ()
   });
 
   await assert.rejects(async () => {
-    await insertCobro(db, {
+    await registrarCobro(db, {
       comerciante_id: comerciante.id,
       cobrador_id: 2,
       monto: 10,
