@@ -1289,14 +1289,14 @@ async function withPaymentStatus(db, puestos, periodo = currentPeriod()) {
       : []
   );
 
-  const liquidaciones = new Map();
-  for (const merchantId of principalPorComerciante.keys()) {
+  // De a LIQUIDACIONES_EN_PARALELO: una por una, el mapa con ~3000 comerciantes tardaba 7,4 s (11/11/2026).
+  const liquidaciones = new Map(await enGrupos(db, [...principalPorComerciante.keys()], async (merchantId) => {
     try {
-      liquidaciones.set(merchantId, await calcularLiquidacion(db, merchantId, periodo));
+      return [merchantId, await calcularLiquidacion(db, merchantId, periodo)];
     } catch (error) {
-      liquidaciones.set(merchantId, { error: error.message });
+      return [merchantId, { error: error.message }];
     }
-  }
+  }));
 
   return puestos.map((puesto) => {
     const result = { ...puesto, periodo, saldo_pendiente: 0, monto_total: 0, monto_pagado: 0, cobro_diario: false, puesto_principal: null, motivo: null };
@@ -2363,13 +2363,21 @@ export async function obtenerPortalComerciante(db, identifier) {
   return { comerciante: merchant, pagos: payments, deuda: liquidation };
 }
 
+// Un mensaje de WhatsApp o SMS cabe de sobra; antes no tenía tope y el cuerpo admitía hasta 1 MB (11/11/2026).
+const MAX_MENSAJE_NOTIFICACION = 1000;
+const TIPO_NOTIFICACION_RE = /^[a-z_]{3,40}$/;
+
 export async function createNotification(db, payload) {
   const merchantId = Number(payload.comerciante_id);
-  const tipo = String(payload.tipo || 'recordatorio_deuda');
+  const tipo = String(payload.tipo || 'recordatorio_deuda').trim();
   const canal = String(payload.canal || 'whatsapp');
   const mensaje = String(payload.mensaje || '').trim();
   if (!merchantId || !mensaje || !['whatsapp', 'sms', 'email'].includes(canal)) {
     throw new ValidationError('Comerciante, canal y mensaje son obligatorios');
+  }
+  if (!TIPO_NOTIFICACION_RE.test(tipo)) throw new ValidationError('El tipo de notificación no es válido (minúsculas y guion bajo)');
+  if (mensaje.length > MAX_MENSAJE_NOTIFICACION) {
+    throw new ValidationError(`El mensaje no puede pasar de ${MAX_MENSAJE_NOTIFICACION} caracteres`);
   }
   if (!(await first(db, 'SELECT id FROM comerciantes WHERE id = $1', [merchantId]))) throw new ValidationError('Comerciante no encontrado');
   const created = await first(db,
@@ -2431,6 +2439,14 @@ function codigoOperacionDelPago(payload, metodoPago) {
   return metodoPago === 'efectivo' ? idempotencia : (digital || idempotencia);
 }
 
+// Otro cobro ya usó ese número de operación. Es un error de datos (reintentar no lo arregla): en línea responde
+// 409 y sin señal queda rechazado a la vista, en el celular y en los errores de sincronización.
+function codigoOperacionRepetido(metodoPago, codigo, comprobante) {
+  return Object.assign(
+    new ConflictError(`El código de operación ${codigo} de ${metodoPago.toUpperCase()} ya se usó en el cobro ${comprobante || 'anterior'}: revise el número del pago`),
+    { permanent: true, codigoRepetido: true });
+}
+
 function createTransactionHash({ comercianteId, cobradorId, monto, concepto, periodo, metodoPago, salt }) {
   const seed = [comercianteId, cobradorId, monto, concepto, periodo || 'sin-periodo', metodoPago, salt || Date.now()].join('|');
   return createHash('sha256').update(seed).digest('hex');
@@ -2483,9 +2499,17 @@ export async function registrarCobro(db, payload, { audit = null, allowExcess = 
     salt: uniqueCode
   });
 
-  const duplicate = await first(db,
-    'SELECT id FROM transacciones WHERE codigo_operacion = $1 OR hash_transaccion = $2', [uniqueCode, hashTransaccion]);
-  if (duplicate) throw new ConflictError('Ya existe un cobro registrado con ese código de operación o hash transaccional');
+  // El mismo hash es el mismo cobro reenviado. El mismo código de operación con otro hash es OTRO cobro que
+  // repite el número de Yape/Plin/POS (mal digitado o el mismo pago contado dos veces): no es un reenvío, y
+  // sin señal no puede darse por "ya registrado" (el celular lo borraba y el dinero no entraba). El número
+  // es único por método (uq_transacciones_operacion): un Yape y un POS con el mismo número no chocan.
+  const duplicate = await first(db, `
+    SELECT t.id, t.hash_transaccion = $2 AS mismo_hash, cp.numero_correlativo AS comprobante
+    FROM transacciones t LEFT JOIN comprobantes cp ON cp.id = t.comprobante_id
+    WHERE (t.metodo_pago = $3 AND t.codigo_operacion = $1) OR t.hash_transaccion = $2
+    ORDER BY (t.hash_transaccion = $2) DESC LIMIT 1`, [uniqueCode, hashTransaccion, metodoPago]);
+  if (duplicate?.mismo_hash) throw new ConflictError('Ya existe un cobro registrado con ese hash transaccional');
+  if (duplicate) throw codigoOperacionRepetido(metodoPago, uniqueCode, duplicate.comprobante);
 
   const clientDate = payload.fecha_cobro && !Number.isNaN(Date.parse(payload.fecha_cobro)) ? new Date(payload.fecha_cobro) : new Date();
   const inicioAtencion = parseInicioAtencion(payload.inicio_atencion ?? payload.inicioAtencion, clientDate);
@@ -2675,9 +2699,8 @@ export async function syncOfflineCobro(_db, payload, { audit = null } = {}) {
 
   try {
     const result = await withTransaction(async (client) => {
-      const duplicate = await first(client,
-        'SELECT id FROM transacciones WHERE hash_transaccion = $1 OR codigo_operacion = $2',
-        [hashValue, normalized.codigo_operacion || hashValue]);
+      // Solo el mismo hash es un reenvío. Un código de operación repetido lo rechaza registrarCobro.
+      const duplicate = await first(client, 'SELECT id FROM transacciones WHERE hash_transaccion = $1', [hashValue]);
       if (duplicate) return null;
       return registrarCobro(client, { ...normalized, hash_transaccion: hashValue }, { audit, allowExcess: true });
     });
@@ -2693,11 +2716,16 @@ export async function syncOfflineCobro(_db, payload, { audit = null } = {}) {
     await logSyncQueue({ deviceId, hash: hashValue, payload: normalized, estado: 'procesado' });
     return { status: 'SUCCESS', message: 'Cobro sincronizado correctamente', data: result };
   } catch (error) {
-    const message = String(error.message || '');
-    if (error.code === '23505' || /ya existe un cobro registrado/i.test(message)) {
+    // Dos envíos del mismo cobro a la vez: el segundo choca con el hash del primero y es un reenvío. Cualquier
+    // otro choque (el código de operación de otro cobro) es un error a la vista, nunca un "duplicado" mudo.
+    if (error.code === '23505' && error.constraint === 'uq_transacciones_operacion') {
+      error = codigoOperacionRepetido(normalized.metodo_pago, normalized.codigo_operacion, null);
+    } else if ((error.code === '23505' && error.constraint === 'transacciones_hash_transaccion_key')
+      || /ya existe un cobro registrado con ese hash/i.test(String(error.message || ''))) {
       await logSyncQueue({ deviceId, hash: hashValue, payload: normalized, estado: 'duplicado' });
       return ignored();
     }
+    const message = String(error.message || '');
     await logSyncQueue({ deviceId, hash: hashValue, payload: normalized, estado: 'error', error: message });
     if (error.permanent === undefined) error.permanent = isPermanentSyncError(error);
     throw error;
@@ -2869,21 +2897,31 @@ async function getUmbralTickets(db) {
 // ordenanza cambia el monto, los tickets viejos ya no sirven). Sin puestos (el eventual) cuenta la zona del
 // comerciante. Una lista vacía significa que el cobro no lleva ticket.
 export async function seriesDelComerciante(db, merchant, periodo = currentPeriod()) {
-  const zonas = new Map((await rows(db, `
-    SELECT zona_id, COUNT(*)::int AS puestos FROM puestos
-    WHERE comerciante_id = $1 AND estado <> 'inactivo' AND zona_id IS NOT NULL GROUP BY zona_id`, [merchant.id]))
-    .map((fila) => [Number(fila.zona_id), fila.puestos]));
-  // Los días marcados en una zona anterior del puesto se pagan con su tarifa, así que también con su serie.
-  const zonasMarcadas = await rows(db, `
-    SELECT zona_id, COUNT(DISTINCT puesto_id)::int AS puestos FROM asistencias_feriales
-    WHERE comerciante_id = $1 AND asistio AND to_char(fecha, 'YYYY-MM') = $2 GROUP BY zona_id`, [merchant.id, periodo]);
-  for (const fila of zonasMarcadas) {
-    if (!zonas.has(Number(fila.zona_id))) zonas.set(Number(fila.zona_id), fila.puestos);
+  // Cada tramo es una zona con su tipo de vía: el de hoy para los puestos actuales y el del día para lo marcado.
+  const tramos = new Map();
+  const agregar = (zonaId, tipoVia, puestos) => {
+    const clave = `${zonaId}|${tipoVia ?? ''}`;
+    if (!tramos.has(clave)) tramos.set(clave, { zonaId: Number(zonaId), tipoVia: tipoVia ?? null, puestos });
+  };
+  for (const fila of await rows(db, `
+    SELECT p.zona_id, z.tipo_via, COUNT(*)::int AS puestos FROM puestos p JOIN zonas z ON z.id = p.zona_id
+    WHERE p.comerciante_id = $1 AND p.estado <> 'inactivo' GROUP BY p.zona_id, z.tipo_via`, [merchant.id])) {
+    agregar(fila.zona_id, fila.tipo_via, fila.puestos);
   }
-  if (!zonas.size && merchant.zona_id) zonas.set(Number(merchant.zona_id), 1);
+  // Los días marcados en otra zona o con otro tipo de vía (la calle se asfaltó en el mes, 0021) se pagan con
+  // su tarifa, así que también con su serie: S2 por los días sin asfaltar aunque hoy la zona sea S3.
+  for (const fila of await rows(db, `
+    SELECT zona_id, tipo_via, COUNT(DISTINCT puesto_id)::int AS puestos FROM asistencias_feriales
+    WHERE comerciante_id = $1 AND asistio AND to_char(fecha, 'YYYY-MM') = $2 GROUP BY zona_id, tipo_via`, [merchant.id, periodo])) {
+    agregar(fila.zona_id, fila.tipo_via, fila.puestos);
+  }
+  if (!tramos.size && merchant.zona_id) {
+    const zona = await first(db, 'SELECT tipo_via FROM zonas WHERE id = $1', [Number(merchant.zona_id)]);
+    agregar(merchant.zona_id, zona?.tipo_via, 1);
+  }
   const series = new Map();
-  for (const [zonaId, puestos] of zonas) {
-    const tarifa = await findApplicableTariff(db, { ...merchant, zona_id: zonaId }, periodo);
+  for (const { zonaId, tipoVia, puestos } of tramos.values()) {
+    const tarifa = await findApplicableTariff(db, { ...merchant, zona_id: zonaId }, periodo, { tipoVia });
     if (tarifa?.unidad_medida !== 'semanal' || !tarifa.tipo_via) continue;
     const serie = await first(db, 'SELECT codigo, valor FROM ticket_series WHERE tipo_via = $1 AND activa', [tarifa.tipo_via]);
     if (!serie || Number(serie.valor) !== dailyTariffAmount(tarifa, `${periodo}-01`)) continue;
@@ -3335,8 +3373,9 @@ export async function getJornadaPackage(db, { periodo = currentPeriod() } = {}) 
     FROM comerciantes c JOIN rubros r ON r.id = c.rubro_id JOIN zonas z ON z.id = c.zona_id
     WHERE c.estado IN ${ESTADOS_QUE_PAGAN_SQL} ORDER BY c.nombre`);
 
-  const comerciantes = [];
-  for (const merchant of merchants) {
+  // De a LIQUIDACIONES_EN_PARALELO: uno por uno, el paquete de ~3000 comerciantes tardaba 22,5 s y el
+  // celular esperaba con la pantalla de descarga (11/11/2026). enGrupos conserva el orden por nombre.
+  const comerciantes = await enGrupos(db, merchants, async (merchant) => {
     let deuda = { monto_total: 0, monto_pagado: 0, saldo: 0, no_devengo: true, tarifa: null };
     let acumulada = null;
     try {
@@ -3345,7 +3384,7 @@ export async function getJornadaPackage(db, { periodo = currentPeriod() } = {}) 
     } catch {
       // Sin tarifa vigente: se descarga con saldo 0 (tampoco se podría cobrar en línea).
     }
-    comerciantes.push({
+    return {
       ...merchant,
       id: Number(merchant.id),
       periodo,
@@ -3367,8 +3406,8 @@ export async function getJornadaPackage(db, { periodo = currentPeriod() } = {}) 
       dias_asistidos: deuda.dias_asistidos ?? null,
       // Series de ticket con las que se le cobra (un ticket por puesto y día cobrado); vacía = sin ticket.
       series_cobro: await seriesDelComerciante(db, merchant, periodo)
-    });
-  }
+    };
+  });
 
   return {
     generado_en: new Date().toISOString(),

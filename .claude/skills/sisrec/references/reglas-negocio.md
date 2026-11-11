@@ -149,13 +149,15 @@ Depende de `tipo_comerciante`:
 
 - `registrarCobro(db, payload, { audit, allowExcess })`:
   - Si recibe el pool, abre su propia transacción. Si recibe un cliente, usa la transacción que ya está abierta.
-  - `codigo_operacion` (o `idempotency_key`) evita que el mismo cobro se registre dos veces.
+  - el **hash** (`hash_transaccion`, el mismo en línea y en la cola del celular) evita que el mismo cobro se registre dos veces;
+  - el `codigo_operacion` es único **por método** (`uq_transacciones_operacion`): un Yape y un POS con el mismo número no chocan. Otro cobro con un número ya usado en el mismo método responde 409 con el recibo donde se usó (11/11/2026).
   - Genera la `transaccion` y su `comprobante` (con número correlativo).
 - **Fecha del cobro** (decisión del usuario, 2026-10-22). Decide en qué caja diaria cuenta el cobro:
   - en línea (`POST /cobros`) manda la hora del servidor; la del celular solo se usa si difiere menos de 5 minutos (`fechaCobroEnLinea`);
   - sin señal se acepta la hora del celular hasta `DIAS_COBRO_SIN_SENAL = 3` días atrás y 5 minutos en el futuro. Fuera de ese rango el cobro **no se descarta**: queda observado con el motivo "fecha fuera de rango" (`fechaCobroFueraDeRango`).
 - `GET /cobros` (decisión del usuario, 2026-10-22): el cobrador ve solo sus cobros; administrador y auditor, todos. Devuelve los más recientes, con tope `MAX_COBROS_LISTADO = 500`; los totales van por `/reportes`.
 - `syncOfflineCobro` devuelve `SUCCESS`, `IGNORED` (ya se había recibido) u `OBSERVED` (se aceptó y va a revisión, por ejemplo porque excede el saldo).
+  - `IGNORED` es **solo el mismo hash**. Un cobro sin señal con otro hash y un número de operación ya usado en su método queda `rechazado`: el celular lo conserva con el motivo y sale en `GET /cobros/sincronizacion/errores`. Antes se daba por duplicado, el celular lo borraba y el dinero no entraba (11/11/2026).
 - `syncOfflineBatch`: como máximo `MAX_LOTE_COBROS = 100` cobros por lote. Responde 200 con `data.resumen` (sincronizado, observado, duplicado, rechazado), aunque haya cobros rechazados.
 - `resolveCobroObservado`: bloquea la fila con `SELECT … FOR UPDATE` dentro de `withTransaction`.
 - **Código de operación** (corregido el 10/11/2026): es el número de Yape, Plin o POS. En efectivo no existe:
@@ -181,7 +183,7 @@ Depende de `tipo_comerciante`:
 - **Series:** `ticket_series`, una por tipo de vía:
   - S3 = S/ 3, vía asfaltada;
   - S2 = S/ 2, sin asfaltar.
-- **Series de un comerciante:** las da `seriesDelComerciante`. Es la serie del tipo de vía de cada puesto, siempre que:
+- **Series de un comerciante:** las da `seriesDelComerciante`. Es la serie del tipo de vía de cada puesto (y, para los días ya marcados en el mes, la del tipo de vía de ese día, migración 0021: tras asfaltar, los días de antes van con S2), siempre que:
   - la tarifa de ese puesto sea por día cobrado (`semanal`) con tipo de vía;
   - el valor de la serie sea igual al monto de un día de esa tarifa.
 
