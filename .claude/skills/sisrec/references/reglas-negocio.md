@@ -111,7 +111,13 @@ Depende de `tipo_comerciante`:
 
 **Lo pagado de un mes** (`paidInPeriod`): cobros confirmados con `periodo_aplicado` = ese mes, o sin él y cobrados (día de Lima) en ese mes. `registrarCobro` guarda `periodo_aplicado` = el periodo liquidado (NULL para el eventual), así un pago de hoy puede cancelar un mes anterior.
 
-**Deuda acumulada** (`calcularDeudaAcumulada`): recorre los meses desde `max(mes de alta, parametros_sistema.inicio_cobro)` hasta el actual llamando a `calcularLiquidacion` en cada uno (no hay otra fórmula). El eventual no acumula. Devuelve `periodos`, `meses_impagos`, `periodo_mas_antiguo` (el que se cobra primero), `deuda_vencida`, `deuda_mes` y `deuda_total`. Va en `/comerciantes/:id/saldo`, `/liquidaciones/:id`, el portal y el paquete de jornada.
+**Tipo de comerciante de cada mes** (migración 0023, decisión del usuario del 11/11/2026): el cambio de tipo rige desde su día. `comerciantes_tipo_cambios` lo guarda (trigger) y `tipoEnPeriodo` decide el tipo de cada mes:
+- el mes en curso, con el tipo actual;
+- un mes pasado, con el que tenía; si en ese mes fue ferial o permanente aunque sea unos días, se liquida con ese tipo (sus días marcados se deben), no como eventual.
+
+Antes pasar a un ferial a eventual borraba su deuda atrasada entera, y pasar un eventual a permanente le creaba deuda de meses en que era eventual.
+
+**Deuda acumulada** (`calcularDeudaAcumulada`): recorre los meses desde `max(mes de alta, parametros_sistema.inicio_cobro)` hasta el actual llamando a `calcularLiquidacion` en cada uno (no hay otra fórmula). El eventual no acumula, pero solo los meses en que fue eventual (ver abajo). Devuelve `periodos`, `meses_impagos`, `periodo_mas_antiguo` (el que se cobra primero), `deuda_vencida`, `deuda_mes` y `deuda_total`. Va en `/comerciantes/:id/saldo`, `/liquidaciones/:id`, el portal y el paquete de jornada.
 
 **Varios puestos:** con cobro por día (tarifa `semanal` o ferial) paga por cada puesto marcado. Con tarifa mensual o diaria de rubro sigue pagando por uno solo, el principal.
 
