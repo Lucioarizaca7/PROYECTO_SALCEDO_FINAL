@@ -115,7 +115,7 @@ Corregidos, con prueba en `tests/api-seguridad.test.js`, `tests/tipo-via-de-cada
 - **Tarifas:** editar el monto de una tarifa que ya regía cambiaba los meses pasados. El formulario de tarifa nueva traía una fecha de inicio pasada.
 - **`GET /calles`:** no pedía rol.
 
-Queda: un cobro sin señal de un comerciante sin ninguna tarifa aplicable se rechaza (`transacciones.tarifa_id` es NOT NULL), aunque el dinero ya se recibió. Es raro con las tarifas generales por tipo de vía, pero conviene que quede observado.
+(Resuelto el 11/11/2026 en la séptima revisión, migración 0024: el cobro sin señal sin tarifa queda observado.)
 
 Ramas viejas (decisión del usuario, 11/11/2026): `limpieza/archivos-sobrantes` se unió a esta rama. `fix/arranque-local` está obsoleta (puerto 4000 y `apiService.js`, que ya no existen; `.env.example` ya estaba) y el usuario la borró del remoto (11/11/2026).
 
@@ -132,6 +132,13 @@ Corregidos, con prueba en `tests/codigo-operacion.test.js`, `tests/tipo-via-de-c
 - **`POST /notificaciones`** sin auditoría ni largo máximo; **`GET /catalogos` y `GET /roles`** sin rol.
 
 Queda: el paquete de jornada calcula dos veces el mes en curso (`calcularLiquidacion` y otra vez dentro de `calcularDeudaAcumulada`). Con un padrón mucho mayor convendrá la liquidación en lote (paso 6).
+
+## Séptima revisión del 11/11/2026: comerciantes sin tarifa vigente
+
+Corregidos, con prueba en `tests/cobro-sin-tarifa.test.js`:
+- **Cobro sin señal de un comerciante sin tarifa:** se rechazaba al sincronizar, y el dinero ya recibido quedaba fuera. Ahora queda observado (migración 0024).
+- **Portal sin tarifa:** respondía 400 y el comerciante no veía sus recibos.
+- **Portal:** un cobro observado sin revisar salía "Válido".
 
 ## Sexta revisión del 11/11/2026: el tipo de comerciante rige desde el cambio
 

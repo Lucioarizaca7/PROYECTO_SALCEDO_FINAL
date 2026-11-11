@@ -166,6 +166,7 @@ Antes pasar a un ferial a eventual borraba su deuda atrasada entera, y pasar un 
 - `GET /cobros` (decisión del usuario, 2026-10-22): el cobrador ve solo sus cobros; administrador y auditor, todos. Devuelve los más recientes, con tope `MAX_COBROS_LISTADO = 500`; los totales van por `/reportes`.
 - `syncOfflineCobro` devuelve `SUCCESS`, `IGNORED` (ya se había recibido) u `OBSERVED` (se aceptó y va a revisión, por ejemplo porque excede el saldo).
   - `IGNORED` es **solo el mismo hash**. Un cobro sin señal con otro hash y un número de operación ya usado en su método queda `rechazado`: el celular lo conserva con el motivo y sale en `GET /cobros/sincronizacion/errores`. Antes se daba por duplicado, el celular lo borraba y el dinero no entraba (11/11/2026).
+- **Cobro sin señal de un comerciante sin tarifa vigente** (migración 0024, 11/11/2026): queda observado con `tarifa_id` NULL y el motivo "sin tarifa vigente", para que el administrador revise el rubro, la zona o la tarifa. Antes se rechazaba y el dinero ya recibido quedaba fuera. En línea se sigue rechazando. `calcularLiquidacion` marca ese error con `sinTarifa`.
 - `syncOfflineBatch`: como máximo `MAX_LOTE_COBROS = 100` cobros por lote. Responde 200 con `data.resumen` (sincronizado, observado, duplicado, rechazado), aunque haya cobros rechazados.
 - `resolveCobroObservado`: bloquea la fila con `SELECT … FOR UPDATE` dentro de `withTransaction`.
 - **Código de operación** (corregido el 10/11/2026): es el número de Yape, Plin o POS. En efectivo no existe:
@@ -264,3 +265,8 @@ Antes pasar a un ferial a eventual borraba su deuda atrasada entera, y pasar un 
 - `session.js` renueva el token una sola vez aunque fallen varias peticiones a la vez (`refreshing`), y emite `SESSION_EXPIRED_EVENT` si no puede.
 - Las sesiones se pueden revocar desde el panel (`DELETE /auth/sesiones/:id`).
 - `auditMutation` guarda el estado anterior y el nuevo en `auditoria_logs`, encadenados con un hash. `verifyAuditChain` detecta si alguien los alteró.
+
+## Portal del comerciante (11/11/2026)
+
+- Sin tarifa vigente el portal abre igual: la deuda del mes va en 0 con `sin_tarifa`, y la pantalla dice "Aún no hay una tarifa vigente para su puesto" en vez de "Cuenta al día". Antes respondía 400 y no se veían ni los recibos.
+- Un cobro observado que aún no se revisó sale "En revisión", no "Válido": la municipalidad todavía puede anularlo.
