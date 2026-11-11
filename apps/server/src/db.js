@@ -1675,11 +1675,43 @@ function periodMultiplier(periodo, unidad) {
   return 1;
 }
 
-async function findMerchantPost(db, merchantId) {
+// fecha: los metros que tenía el puesto ese día (0025, para un mes pasado); sin ella, los de hoy.
+async function findMerchantPost(db, merchantId, fecha = null) {
   return first(db, `
-    SELECT id, metros_cuadrados, estado FROM puestos
+    SELECT id, ${fecha ? 'metros_de_puesto(id, $2::date)' : 'metros_cuadrados'} AS metros_cuadrados, estado FROM puestos
     WHERE comerciante_id = $1 AND estado NOT IN ('disponible', 'inactivo')
-    ORDER BY id LIMIT 1`, [merchantId]);
+    ORDER BY id LIMIT 1`, fecha ? [merchantId, fecha] : [merchantId]);
+}
+
+// Cómo era el comerciante en un mes pasado, en una sola consulta: el rubro y la zona del día 1 de ese mes
+// (migración 0025) y sus cambios de tipo (0023, para tipoEnPeriodo). Rige desde el cambio: antes un mes pasado se
+// liquidaba con los datos de hoy y corregir un rubro recalculaba meses ya pagados. El mes en curso usa los de hoy.
+// Va en la misma consulta que ya se hacía por los cambios de tipo, así un mes pasado no suma consultas (medido con
+// 3051 comerciantes: el recálculo del riesgo y la jornada quedan igual). metrosCambiaron evita metros_de_puesto
+// cuando el comerciante nunca cambió un metraje (casi siempre).
+async function comercianteDelMes(db, merchant, periodo) {
+  if (periodo >= currentPeriod()) return { merchant, cambiosTipo: [], metrosCambiaron: false };
+  const datos = await first(db, `
+    SELECT (SELECT valor_anterior FROM comerciantes_datos_cambios
+             WHERE comerciante_id = $1 AND campo = 'rubro_id' AND desde > $2::date ORDER BY desde, id LIMIT 1) AS rubro_previo,
+           (SELECT valor_anterior FROM comerciantes_datos_cambios
+             WHERE comerciante_id = $1 AND campo = 'zona_id' AND desde > $2::date ORDER BY desde, id LIMIT 1) AS zona_previa,
+           COALESCE((SELECT json_agg(json_build_object('tipo_anterior', tipo_anterior, 'tipo_nuevo', tipo_nuevo,
+                       'desde', ${DAY('desde')}) ORDER BY desde, id)
+                     FROM comerciantes_tipo_cambios WHERE comerciante_id = $1), '[]'::json) AS cambios_tipo,
+           EXISTS (SELECT 1 FROM puestos_metros_cambios m JOIN puestos p ON p.id = m.puesto_id
+                    WHERE p.comerciante_id = $1 AND m.desde > $2::date) AS metros_cambiaron`,
+  [merchant.id, `${periodo}-01`]);
+  const conCambios = datos.rubro_previo !== null || datos.zona_previa !== null;
+  return {
+    merchant: conCambios ? {
+      ...merchant,
+      rubro_id: datos.rubro_previo === null ? merchant.rubro_id : Number(datos.rubro_previo),
+      zona_id: datos.zona_previa === null ? merchant.zona_id : Number(datos.zona_previa)
+    } : merchant,
+    cambiosTipo: datos.cambios_tipo,
+    metrosCambiaron: datos.metros_cambiaron
+  };
 }
 
 // Monto de un día de la tarifa: la diaria y la semanal (por día cobrado) tal cual; la mensual (o por m²)
@@ -1747,16 +1779,19 @@ function ultimoDiaDelMes(periodo) {
 // La zona también es la de la marca (migración 0019): si el puesto cambió de zona en el mes, sale una fila por
 // cada zona, porque cada tramo paga su tarifa. Lo mismo el tipo de vía (0021): si la calle se asfaltó en el
 // mes, los días de antes pagan S/ 2 y los de después S/ 3.
-async function asistenciasPorPuesto(db, merchantId, periodo) {
+// diaMetros: los metros de los puestos ese día (0025, un mes pasado con cambios de metraje); NULL, los de hoy.
+async function asistenciasPorPuesto(db, merchantId, periodo, diaMetros = null) {
   const data = await rows(db, `
-    SELECT p.id AS puesto_id, p.codigo_puesto, a.zona_id, a.tipo_via, p.metros_cuadrados, COUNT(DISTINCT a.fecha)::int AS dias,
+    SELECT p.id AS puesto_id, p.codigo_puesto, a.zona_id, a.tipo_via,
+           CASE WHEN $3::date IS NULL THEN p.metros_cuadrados ELSE metros_de_puesto(p.id, $3::date) END AS metros_cuadrados,
+           COUNT(DISTINCT a.fecha)::int AS dias,
            array_agg(DISTINCT ${DAY('a.fecha')} ORDER BY ${DAY('a.fecha')}) AS fechas
     FROM asistencias_feriales a JOIN puestos p ON p.id = a.puesto_id
     WHERE a.comerciante_id = $1 AND a.asistio AND to_char(a.fecha, 'YYYY-MM') = $2
       AND (a.sesion = '' OR NOT EXISTS (
         SELECT 1 FROM asistencias_feriales app WHERE app.puesto_id = a.puesto_id AND app.fecha = a.fecha AND app.sesion = ''))
     GROUP BY p.id, a.zona_id, a.tipo_via ORDER BY p.id, MIN(a.fecha)`,
-  [merchantId, periodo]);
+  [merchantId, periodo, diaMetros]);
   return data.map((fila) => ({ ...fila, puesto_id: Number(fila.puesto_id), zona_id: Number(fila.zona_id) }));
 }
 
@@ -1952,16 +1987,20 @@ async function liquidarPorAsistencia(db, { merchant, periodo, tarifa, puesto, as
 // lo encuentra (dia, AAAA-MM-DD en Lima; por omisión hoy). En otro periodo no devenga.
 export async function calcularLiquidacion(db, comercianteId, periodo, { dia = null } = {}) {
   periodo = periodo || (dia ? dia.slice(0, 7) : currentPeriod());
-  const merchant = await findComerciante(db, comercianteId);
-  if (!merchant) throw new NotFoundError('Comerciante no encontrado');
+  const actual = await findComerciante(db, comercianteId);
+  if (!actual) throw new NotFoundError('Comerciante no encontrado');
+  // Un mes pasado se liquida con el rubro y la zona que tenía el día 1 de ese mes (0025).
+  const { merchant, cambiosTipo, metrosCambiaron } = await comercianteDelMes(db, actual, periodo);
+  // Los metros del día 1 solo se buscan si algún puesto del comerciante cambió de metraje después de esa fecha.
+  const diaDelMes = metrosCambiaron ? `${periodo}-01` : null;
 
   // Un mes pasado se liquida con el tipo que tenía ese mes (0023); el mes en curso, con el actual.
   const merchantType = periodo < currentPeriod()
-    ? tipoEnPeriodo(merchant.tipo_comerciante, await cambiosDeTipo(db, merchant.id), periodo)
+    ? tipoEnPeriodo(merchant.tipo_comerciante, cambiosTipo, periodo)
     : String(merchant.tipo_comerciante || '').trim().toLowerCase();
   // Un pendiente de regularización (titular sin DNI) paga igual que cualquier otro: decisión del usuario,
   // 2026-10-27. Antes no devengaba si le faltaba el metraje.
-  const puesto = await findMerchantPost(db, merchant.id);
+  const puesto = await findMerchantPost(db, merchant.id, diaDelMes);
 
   const noDevengo = (motivo, extra = {}) => ({
     comerciante: merchant,
@@ -2009,7 +2048,7 @@ export async function calcularLiquidacion(db, comercianteId, periodo, { dia = nu
   if (merchantType === 'ferial') {
     // Paga solo los días que asistió en el mes, en cualquiera de sus puestos (también el que conserva
     // como ausente). Varias marcas del mismo día cuentan una vez.
-    const asistencias = await asistenciasPorPuesto(db, merchant.id, periodo);
+    const asistencias = await asistenciasPorPuesto(db, merchant.id, periodo, diaDelMes);
     if (!asistencias.length) return noDevengo('ferial_sin_asistencia', { metros_cuadrados: 0, dias_asistidos: 0, monto_pagado: await paidInPeriod(db, merchant.id, periodo) });
 
     // La del día 1 es solo el respaldo: cada día marcado busca la suya (sin ninguna, sinTarifaVigente).
@@ -2022,7 +2061,7 @@ export async function calcularLiquidacion(db, comercianteId, periodo, { dia = nu
 
   // Tarifa por día cobrado: el permanente paga los días que el cobrador marcó; sin marcas no devenga.
   if (tarifa.unidad_medida === 'semanal') {
-    const asistencias = await asistenciasPorPuesto(db, merchant.id, periodo);
+    const asistencias = await asistenciasPorPuesto(db, merchant.id, periodo, diaDelMes);
     if (!asistencias.length) return noDevengo('sin_asistencia', { tarifa, metros_cuadrados: 0, dias_asistidos: 0, monto_pagado: await paidInPeriod(db, merchant.id, periodo) });
     return liquidarPorAsistencia(db, { merchant, periodo, tarifa, puesto, asistencias });
   }
