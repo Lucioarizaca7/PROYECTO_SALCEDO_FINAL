@@ -371,8 +371,31 @@ test('el cobrador solo corrige la ubicación de un puesto: titular, liberar y ba
   assert.equal((await pedir(tokens.admin, 'DELETE', `/puestos-mapa/${puesto.id}`)).status, 200);
 });
 
-test('las calles solo las ve el personal: el rol comerciante recibe 403', async () => {
-  const pedir = (rol) => fetch(`${baseUrl}/api/v1/calles`, { headers: { Authorization: `Bearer ${tokens[rol]}` } });
-  assert.equal((await pedir('comerciante')).status, 403);
-  assert.equal((await pedir('cobrador')).status, 200);
+test('calles, catálogos y roles solo los ve el personal: el rol comerciante recibe 403', async () => {
+  for (const ruta of ['/api/v1/calles', '/api/v1/catalogos', '/api/v1/roles']) {
+    const pedir = (rol) => fetch(`${baseUrl}${ruta}`, { headers: { Authorization: `Bearer ${tokens[rol]}` } });
+    assert.equal((await pedir('comerciante')).status, 403, ruta);
+    assert.equal((await pedir('cobrador')).status, 200, ruta);
+  }
+});
+
+test('una notificación manual tiene tope de largo y queda en la auditoría', async () => {
+  const [comerciante] = await getComerciantes(pool, { limit: 1 });
+  const enviar = (cuerpo) => fetch(`${baseUrl}/api/v1/notificaciones`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${tokens.cobrador}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ comerciante_id: comerciante.id, canal: 'whatsapp', ...cuerpo })
+  });
+  assert.equal((await enviar({ mensaje: 'x'.repeat(1001) })).status, 400, 'antes no tenía tope');
+  assert.equal((await enviar({ mensaje: 'Recordatorio', tipo: 'Tipo <b>raro</b>' })).status, 400);
+
+  const creada = await enviar({ mensaje: `Recordatorio de prueba ${process.pid}` });
+  assert.equal(creada.status, 201);
+  // auditMutation graba después de responder: se espera un momento.
+  let auditada = false;
+  for (let intento = 0; intento < 20 && !auditada; intento += 1) {
+    auditada = (await getAuditTrail(pool, { entidad: 'notificaciones', limit: 20 })).some((fila) => fila.accion === 'CREAR_NOTIFICACION');
+    if (!auditada) await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  assert.ok(auditada, 'antes se grababa sin auditoría');
 });

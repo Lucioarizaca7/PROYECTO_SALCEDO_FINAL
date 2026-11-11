@@ -122,6 +122,17 @@ Ramas viejas (decisión del usuario, 11/11/2026): `limpieza/archivos-sobrantes` 
 Quedan:
 - **Tamaño del papel al imprimir el recibo:** sale del alto medido en pantalla. Puede sobrar un poco de papel al final.
 
+## Cuarta revisión del 11/11/2026: cobros sin señal, tickets y velocidad
+
+Corregidos, con prueba en `tests/codigo-operacion.test.js`, `tests/tipo-via-de-cada-dia.test.js` y `tests/api-seguridad.test.js`:
+- **Código de operación repetido sin señal:** otro cobro con un número de Yape/Plin/POS ya usado se daba por "duplicado"; el celular lo borraba y el dinero no entraba. Ahora solo el mismo hash es duplicado; lo demás queda rechazado a la vista.
+- **Número de operación comparado sin el método:** un POS con el mismo número que un Yape se rechazaba, aunque la base lo permite.
+- **Tickets tras asfaltar una calle** (regresión de la 0021): la serie salía solo del tipo de vía de hoy, y el cobro de los días sin asfaltar con ticket S2 se rechazaba.
+- **Paquete de jornada y mapa lentos:** con 3051 comerciantes, `GET /jornada/paquete` tardaba 22,5 s y `GET /puestos` 7,4 s (una liquidación tras otra). Con `enGrupos` bajan a ~7,3 s y ~2,4 s.
+- **`POST /notificaciones`** sin auditoría ni largo máximo; **`GET /catalogos` y `GET /roles`** sin rol.
+
+Queda: el paquete de jornada calcula dos veces el mes en curso (`calcularLiquidacion` y otra vez dentro de `calcularDeudaAcumulada`). Con un padrón mucho mayor convendrá la liquidación en lote (paso 6).
+
 ## Rediseño visual del Penpot (2026-10-28)
 
 - **Tres capas de estilos.** `tema-municipal.css` es ahora la capa del rediseño (tokens, menú por grupos, tarjetas, píldoras). Debajo sigue `styles.css` (~4600 líneas) con reglas que el tema pisa. Limpiarlo es un trabajo aparte.

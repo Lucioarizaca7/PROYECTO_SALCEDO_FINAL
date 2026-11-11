@@ -15,9 +15,9 @@ Antes de tocar uno de estos controles, comprobar que sigue igual en el código (
 | CORS abierto | Lista blanca: `FRONTEND_URL` (obligatorio en producción) + localhost solo en desarrollo | `app.ts` |
 | Fuerza bruta | Límite general y de login (`express-rate-limit`); portal: 5 llaves erradas → bloqueo 15 min (429), mismo 401 para cualquier credencial errada; la llave sola (QR) sin dueño solo la frena el límite por IP | `app.ts`, `http/comunes.ts` (`loginLimiter`), `portalAcceso.js` |
 | Cabeceras | helmet; HSTS solo en producción | `app.ts` |
-| Cuerpos enormes | `express.json({ limit: '1mb' })`; lotes con máximo (`MAX_LOTE_COBROS = 100`, anulaciones 100, tickets por cobro 60) | `app.ts`, `db.js` |
-| Acceso sin rol | `requireAuth` + `requireRoles`; prueba que cuenta las rutas GET y exige token | `auth.ts`, `tests/api-seguridad.test.js` |
-| Cambios sin rastro | `auditMutation` + cadena de hash en `auditoria_logs`; `verifyAuditChain` | `auth.ts`, `db.js` |
+| Cuerpos enormes | `express.json({ limit: '1mb' })`; lotes con máximo (`MAX_LOTE_COBROS = 100`, anulaciones 100, tickets por cobro 60); notificación manual hasta `MAX_MENSAJE_NOTIFICACION = 1000` caracteres | `app.ts`, `db.js` |
+| Acceso sin rol | `requireAuth` + `requireRoles`; prueba que cuenta las rutas GET y exige token. `/calles`, `/catalogos` y `/roles` piden `staffOnly` (11/11/2026) | `auth.ts`, `tests/api-seguridad.test.js` |
+| Cambios sin rastro | `auditMutation` + cadena de hash en `auditoria_logs`; `verifyAuditChain`. `POST /notificaciones` se grababa sin auditoría hasta el 11/11/2026 | `auth.ts`, `db.js`, `routes/portal.ts` |
 | Inyección SQL | Consultas con parámetros `$n` | `db.js`, `pg.js` |
 | Fuga de errores internos | El manejador global traduce errores de PostgreSQL a mensajes genéricos | `http/errorHandler.ts` |
 | Recibos falsos | QR con firma HMAC; PDF del portal con enlace firmado de 30 min | `/publico/verificar/:token`, `reciboPdf.js` |

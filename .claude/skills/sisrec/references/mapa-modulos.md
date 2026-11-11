@@ -61,7 +61,7 @@ Roles: `super_admin`, `cobrador`, `auditor`, `comerciante`. `staffOnly` = los tr
 |---|---|---|
 | Salud / público | `GET /health`, `GET /publico/resumen` | públicas |
 | Panel y analítica | `GET /dashboard`, `/analitica/prediccion`, `/analitica/riesgo`, `/reportes` | lectura del personal |
-| Catálogos | `GET /roles`, `/catalogos`; CRUD `/zonas`, `/calles` | super_admin |
+| Catálogos | `GET /roles`, `/catalogos`, `/calles` (lectura del personal); CRUD `/zonas`, `/calles` | super_admin |
 | Comerciantes | CRUD `/comerciantes`, `POST /comerciantes/importar-padron`, `GET /comerciantes/plantilla-padron`, `/comerciantes/:id/preferencias` | super_admin (las preferencias también cobrador); el auditor solo descarga la plantilla |
 | Puestos | `GET /puestos?incluirInactivos=1`, `POST /puestos`, `POST/PUT /puestos-mapa` (el cobrador solo la ubicación) | super_admin, cobrador |
 | Puestos (titular y baja) | `POST /puestos/:id/liberar`, `DELETE /puestos-mapa/:id` | super_admin |

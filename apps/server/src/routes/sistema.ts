@@ -1,7 +1,6 @@
 // Salud, panel, analítica, reportes y catálogos de solo lectura.
 import express from 'express';
 import { currentPeriod, getDbStats, getRubros, getZonas, getPuestos, getOperationalDashboard, getReportRows, buildReportCsv, generateForecastProjection, getRiskDashboard, indicadoresPanel } from '../db.js';
-import { requireAuth } from '../auth.js';
 import { staffOnly, roles } from '../http/comunes.js';
 import { pool as db } from '../pg.js';
 import { config } from '../config.js';
@@ -96,11 +95,12 @@ router.get('/api/v1/analitica/riesgo', ...staffOnly, async (req, res) => {
   return res.json({ data, message: 'Scoring de morosidad actualizado' });
 });
 
-router.get('/api/v1/roles', requireAuth, (_req, res) => {
+// Catálogos internos: solo el personal (antes bastaba cualquier token, contra la regla de roles explícitos).
+router.get('/api/v1/roles', ...staffOnly, (_req, res) => {
   res.json({ roles });
 });
 
-router.get('/api/v1/catalogos', requireAuth, async (_req, res) => {
+router.get('/api/v1/catalogos', ...staffOnly, async (_req, res) => {
   res.json({
     rubros: await getRubros(db),
     zonas: await getZonas(db)

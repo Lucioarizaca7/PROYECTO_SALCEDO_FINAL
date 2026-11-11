@@ -2,7 +2,7 @@
 import express from 'express';
 import { createNotification, getNotifications } from '../db.js';
 import { ingresarAlPortal } from '../portalAcceso.js';
-import { requireAuth, requireRoles } from '../auth.js';
+import { requireAuth, requireRoles, auditMutation } from '../auth.js';
 import { staffOnly, loginLimiter } from '../http/comunes.js';
 import { pool as db } from '../pg.js';
 import { buscarRecibo, generarReciboPdf, leerTokenDescarga, verificarRecibo } from '../reciboPdf.js';
@@ -42,9 +42,11 @@ router.get('/api/v1/portal/:comercianteId/notificaciones', ...staffOnly, async (
   return res.json({ data, total: data.length });
 });
 
+// Toda escritura deja rastro: antes la notificación manual se grababa sin auditoría (11/11/2026).
 router.post('/api/v1/notificaciones',
   requireAuth,
   requireRoles(['super_admin', 'cobrador']),
+  auditMutation({ db, accion: 'CREAR_NOTIFICACION', entidad: 'notificaciones', serializeResponse: (body) => body?.data ?? body }),
   async (req, res) => {
     const notification = await createNotification(db, req.body || {});
     return res.status(201).json({ data: notification, message: 'Notificación registrada correctamente' });
