@@ -68,8 +68,8 @@ test('toda ruta GET de la API exige token, salvo las públicas declaradas', asyn
   const routes = registeredGetRoutes();
   // 27 rutas GET al dividir index.ts en routers, más /cobros/tiempos, /asistencias, /parametros, /caja/resumen, /caja/cierres, /asistencias/observaciones y las dos
   // públicas del recibo (fase 3), /tickets/series, /tickets/lotes, /tickets/cobradores, /tickets/mios y
-  // /comerciantes/plantilla-padron. Si cambia, revise que las nuevas pidan token.
-  assert.equal(routes.length, 40, `cambió el número de rutas GET: ${routes.length}`);
+  // /comerciantes/plantilla-padron y /tickets/lotes/:id/tickets. Si cambia, revise que las nuevas pidan token.
+  assert.equal(routes.length, 41, `cambió el número de rutas GET: ${routes.length}`);
 
   const open = [];
   for (const path of routes) {
@@ -137,6 +137,8 @@ test('solo el administrador asigna, reasigna y devuelve lotes de tickets', async
   }
   const lotes = await fetch(`${baseUrl}/api/v1/tickets/lotes`, { headers });
   assert.equal(lotes.status, 403, 'el cobrador no ve los lotes de los demás');
+  const detalle = await fetch(`${baseUrl}/api/v1/tickets/lotes/1/tickets`, { headers });
+  assert.equal(detalle.status, 403, 'el cobrador tampoco ve el detalle de un lote');
   const mios = await fetch(`${baseUrl}/api/v1/tickets/mios`, { headers });
   assert.equal(mios.status, 200, 'el cobrador ve sus propios tickets');
 });

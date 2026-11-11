@@ -93,9 +93,9 @@ Corregidos (prueba en `apps/server/tests/fallos-noviembre.test.js` y en las prue
 - **Comerciantes:** solo los 100 más recientes, con filtros por texto.
 - **Calculadora pública:** usaba m².
 - **Texto del PIN.**
+- **Motivo de cada ticket:** se agregó la ruta `GET /tickets/lotes/:id/tickets` (`getTicketsDelLote`) y el botón "Ver detalle" en Tickets.
 
 Quedan:
-- **Motivos de cada ticket.** El motivo de anulación o de devolución de cada ticket se guarda, pero `TicketsPage` muestra solo los conteos por lote. Para verlos hace falta una consulta de los tickets de un lote.
 - **Riesgo de morosidad:** puntúa a los primeros `MAX_COMERCIANTES_RIESGO = 300` comerciantes.
 - **Tamaño del papel al imprimir el recibo:** sale del alto medido en pantalla. Puede sobrar un poco de papel al final.
 
