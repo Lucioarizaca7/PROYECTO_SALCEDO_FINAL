@@ -42,7 +42,7 @@ export function leerTokenDescarga(token, ahora = Date.now()) {
 }
 
 const SELECT_RECIBO = `
-  SELECT co.id, cp.numero_correlativo AS numero, co.monto, co.metodo_pago, co.concepto, co.codigo_operacion, co.estado,
+  SELECT co.id, cp.numero_correlativo AS numero, co.monto, co.metodo_pago, co.concepto, co.codigo_operacion, co.estado, co.tickets,
          co.motivo_anulacion, co.periodo_aplicado, co.comerciante_id,
          to_char(co.fecha_cobro_cliente AT TIME ZONE '${config.timeZone}', 'DD/MM/YYYY HH24:MI') AS fecha,
          to_char(co.fecha_cobro_cliente AT TIME ZONE '${config.timeZone}', 'YYYY-MM-DD') AS dia,
@@ -111,6 +111,10 @@ export async function generarReciboPdf(recibo) {
     linea('Fecha', recibo.fecha);
     linea('Método', METODO[recibo.metodo_pago] || recibo.metodo_pago);
     if (recibo.codigo_operacion && recibo.metodo_pago !== 'efectivo') linea('Operación', recibo.codigo_operacion);
+    // Los tickets preimpresos que se entregaron con este cobro (el ticket convive con el recibo).
+    const tickets = (Array.isArray(recibo.tickets) ? recibo.tickets : []).filter((item) => item?.serie && item?.numero)
+      .map((item) => `${item.serie} N° ${String(item.numero).padStart(6, '0')}`);
+    if (tickets.length) linea(tickets.length === 1 ? 'Ticket' : 'Tickets', tickets.join(', '));
     linea('Cobrador', recibo.cobrador);
     doc.moveDown(0.4);
     doc.font('Helvetica-Bold').fontSize(14).text(`Total: S/ ${recibo.monto.toFixed(2)}`, { align: 'center' });

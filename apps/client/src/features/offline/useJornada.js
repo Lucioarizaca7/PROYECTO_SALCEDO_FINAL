@@ -72,14 +72,17 @@ export function useJornada({ user }) {
 
   const search = useCallback(async (query) => buscarEnPadron(await padronStore.getAll(), query), []);
 
-  // Descuenta del saldo local un cobro hecho sin señal.
-  const applyLocalPayment = useCallback(async (merchantId, monto) => {
+  // Un comerciante del padrón por su id (llegada a Pagos desde Sitios o el Mapa sin señal).
+  const porId = useCallback(async (merchantId) => padronStore.get(String(merchantId)).catch(() => null), []);
+
+  // Descuenta del saldo local un cobro hecho sin señal (del mes al que se aplicó).
+  const applyLocalPayment = useCallback(async (merchantId, monto, periodo = null) => {
     const registro = await padronStore.get(String(merchantId));
     if (!registro) return null;
-    const updated = aplicarCobroLocal(registro, monto);
+    const updated = aplicarCobroLocal(registro, monto, periodo);
     await padronStore.put(updated);
     return updated;
   }, []);
 
-  return { meta, vigente: jornadaVigente(meta), downloading, error, download, search, applyLocalPayment, reload: loadMeta };
+  return { meta, vigente: jornadaVigente(meta), downloading, error, download, search, porId, applyLocalPayment, reload: loadMeta };
 }

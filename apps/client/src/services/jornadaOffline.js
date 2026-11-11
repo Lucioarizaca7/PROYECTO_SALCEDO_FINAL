@@ -38,6 +38,11 @@ export function normalizarComerciante(item, descargadoEn = new Date().toISOStrin
     puestoFerialId: item.puesto_ferial_id ?? null,
     diasAsistidos: item.dias_asistidos ?? null,
     // Series de ticket preimpreso con que se le cobra (un ticket por puesto y día); vacía = sin ticket.
+    // Deuda de meses anteriores (sin esto, sin señal solo se veía y cobraba el mes en curso).
+    deudaVencida: Number(item.deuda_vencida || 0),
+    periodosImpagos: Array.isArray(item.periodos_impagos)
+      ? item.periodos_impagos.map((fila) => ({ periodo: fila.periodo, saldo: Number(fila.saldo || 0) }))
+      : (Array.isArray(item.meses_impagos) ? item.meses_impagos.map((periodo) => ({ periodo, saldo: null })) : []),
     seriesCobro: Array.isArray(item.series_cobro) ? item.series_cobro.map((serie) => ({ serie: serie.serie, valor: Number(serie.valor), puestos: Number(serie.puestos) || 1 })) : [],
     actualizadoEn: descargadoEn
   };
@@ -75,13 +80,35 @@ export function buscarEnPadron(registros, consulta, limite = 10) {
     .map((entry) => entry.registro);
 }
 
-/** Descuenta un cobro offline del saldo local, para no volver a cobrar lo mismo antes de sincronizar. */
-export function aplicarCobroLocal(registro, monto) {
+const dos = (valor) => Number(Number(valor || 0).toFixed(2));
+
+/** Meses atrasados con saldo (antes del periodo del padrón), del más antiguo al más reciente. */
+export function mesesAtrasados(registro) {
+  const actual = registro.periodo;
+  return (registro.periodosImpagos || [])
+    .filter((item) => (!actual || item.periodo < actual) && (item.saldo === null || item.saldo > 0))
+    .sort((a, b) => a.periodo.localeCompare(b.periodo));
+}
+
+/**
+ * Descuenta un cobro offline del saldo local, para no volver a cobrar lo mismo antes de sincronizar.
+ * periodo: el mes al que se aplicó; si es un mes atrasado, se descuenta de ese mes y no del actual.
+ */
+export function aplicarCobroLocal(registro, monto, periodo = null) {
   const value = Number(monto) || 0;
+  if (periodo && registro.periodo && periodo !== registro.periodo) {
+    return {
+      ...registro,
+      deudaVencida: dos(Math.max(Number(registro.deudaVencida || 0) - value, 0)),
+      periodosImpagos: (registro.periodosImpagos || []).map((item) => (
+        item.periodo === periodo && item.saldo !== null ? { ...item, saldo: dos(Math.max(item.saldo - value, 0)) } : item
+      ))
+    };
+  }
   return {
     ...registro,
-    saldo: Number(Math.max(Number(registro.saldo || 0) - value, 0).toFixed(2)),
-    montoPagado: Number((Number(registro.montoPagado || 0) + value).toFixed(2))
+    saldo: dos(Math.max(Number(registro.saldo || 0) - value, 0)),
+    montoPagado: dos(Number(registro.montoPagado || 0) + value)
   };
 }
 
@@ -106,8 +133,43 @@ export function aComercianteDePantalla(registro) {
   };
 }
 
-export function aSaldoDePantalla(registro, periodo) {
+/**
+ * Saldo del comerciante en el formato de la pantalla de cobro, con su deuda atrasada (deuda_acumulada) como en
+ * línea. Sin periodo pedido se toma el mes impago más antiguo (se cobra primero), igual que en línea.
+ */
+export function aSaldoDePantalla(registro, periodo = null) {
+  const atrasados = mesesAtrasados(registro);
+  const actual = registro.periodo || periodo;
+  const elegido = atrasados.find((item) => item.periodo === (periodo || atrasados[0]?.periodo));
+  const deudaAcumulada = atrasados.length ? {
+    desde: atrasados[0].periodo,
+    periodo_mas_antiguo: atrasados[0].periodo,
+    deuda_vencida: dos(registro.deudaVencida),
+    deuda_total: dos(Number(registro.deudaVencida || 0) + Number(registro.saldo || 0)),
+    periodos: [
+      ...atrasados.map((item) => ({ periodo: item.periodo, saldo: Number(item.saldo || 0), vencida: true })),
+      ...(Number(registro.saldo || 0) > 0 ? [{ periodo: actual, saldo: Number(registro.saldo), vencida: false }] : [])
+    ]
+  } : null;
+  if (elegido && elegido.saldo !== null) {
+    // Mes atrasado: el padrón trae solo su saldo; la tarifa y los tickets del mes son los del comerciante.
+    return {
+      periodo: elegido.periodo,
+      monto_total: elegido.saldo,
+      monto_pagado: 0,
+      saldo: elegido.saldo,
+      tarifa: null,
+      no_devengo: false,
+      cobro_diario: false,
+      dia: null,
+      series_cobro: registro.seriesCobro || [],
+      deuda_acumulada: deudaAcumulada,
+      offline: true,
+      actualizado_en: registro.actualizadoEn
+    };
+  }
   return {
+    deuda_acumulada: deudaAcumulada,
     periodo: registro.periodo || periodo,
     monto_total: registro.montoTotal,
     monto_pagado: registro.montoPagado,

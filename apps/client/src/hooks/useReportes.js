@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { useSisrec } from '../app/SisrecContext';
 import { periodoEnLima } from '../services/jornadaOffline';
 import { apiBase, authFetch } from '../services/session';
 
@@ -8,6 +9,8 @@ export function useReportes() {
   const [filas, setFilas] = useState([]);
   const [cargando, setCargando] = useState(true);
   const [mensaje, setMensaje] = useState('');
+  const [recarga, setRecarga] = useState(0);
+  const { user, refresh } = useSisrec();
 
   const parametros = (extra = {}) => {
     const params = new URLSearchParams(extra);
@@ -28,7 +31,7 @@ export function useReportes() {
       .catch((error) => { if (!controller.signal.aborted) setMensaje(error.message); })
       .finally(() => { if (!controller.signal.aborted) setCargando(false); });
     return () => controller.abort();
-  }, [filtro.periodo, filtro.zona_id, filtro.rubro_id]);
+  }, [filtro.periodo, filtro.zona_id, filtro.rubro_id, recarga]);
 
   // El token de acceso vive en memoria: un <a href> a la API llegaba sin él (401). Se descarga con
   // authFetch y los mismos filtros de la pantalla.
@@ -47,5 +50,27 @@ export function useReportes() {
     }
   };
 
-  return { filtro, setFiltro, filas, cargando, mensaje, exportarCsv };
+  // Anular desde el reporte: antes solo se podía desde "Cobros recientes", que muestra los 6 últimos del sistema.
+  const anular = async (cobro) => {
+    const motivo = window.prompt(`Motivo para anular ${cobro.comprobante || `el cobro #${cobro.id}`} (S/ ${Number(cobro.monto || 0).toFixed(2)}):`);
+    if (motivo === null) return;
+    try {
+      const response = await authFetch(`${apiBase}/cobros/${cobro.id}/anular`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ motivo })
+      });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(body.message || 'No se pudo anular el cobro');
+      setMensaje(body.message || 'Cobro anulado');
+      setRecarga((valor) => valor + 1);
+      await refresh?.();
+    } catch (error) {
+      setMensaje(error.message);
+    }
+  };
+
+  // El total y las operaciones cuentan solo lo cobrado de verdad: un anulado no es recaudación.
+  const confirmadas = filas.filter((item) => item.estado === 'confirmado');
+  const total = confirmadas.reduce((suma, item) => suma + Number(item.monto || 0), 0);
+
+  return { filtro, setFiltro, filas, cargando, mensaje, exportarCsv, anular, puedeAnular: user?.rol === 'super_admin', total, confirmadas };
 }

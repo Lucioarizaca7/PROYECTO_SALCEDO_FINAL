@@ -1,5 +1,7 @@
-// Sugerencia del modo express: el monto y el método que el comerciante suele usar.
-// Si los 3 últimos cobros repiten monto (o método), se sugiere ese; si no, el del último cobro.
+// Sugerencia del modo express: el monto y el método del último cobro válido del comerciante.
+// Antes un bucle recorría el historial del más nuevo al más viejo y se quedaba con el MÁS ANTIGUO (p. ej.
+// sugería S/ 6 con Yape aunque el último fue S/ 3 en efectivo). Los cobros anulados u observados no cuentan.
+import { fechaDeTexto } from '../../lib/formato.js';
 
 // Caché corta para no recalcular con cada render (1 minuto, 50 entradas como máximo).
 const suggestionCache = new Map();
@@ -33,9 +35,11 @@ export function buildExpressSuggestion(merchant, balance, history = []) {
   const cached = getSuggestionFromCache(cacheKey);
   if (cached) return cached;
 
+  const cuando = (item) => fechaDeTexto(item.fecha_cobro || item.fecha)?.getTime() || 0;
   const recent = [...(Array.isArray(history) ? history : [])]
     .filter((item) => Number(item.comerciante_id ?? item.comercianteId ?? 0) === Number(merchant?.id ?? 0) || item.comerciante === merchant?.nombre)
-    .sort((a, b) => new Date(b.fecha_cobro || b.fecha || 0) - new Date(a.fecha_cobro || a.fecha || 0));
+    .filter((item) => !item.estado || item.estado === 'confirmado')
+    .sort((a, b) => cuando(b) - cuando(a));
 
   const latest = recent[0] || null;
   const baseAmount = Number(balance?.saldo ?? 0);
@@ -50,35 +54,10 @@ export function buildExpressSuggestion(merchant, balance, history = []) {
     return result;
   }
 
-  let streakAmount = 1;
-  let candidateAmount = Number(latest.monto ?? 0);
-  for (let i = 1; i < recent.length; i += 1) {
-    const current = Number(recent[i].monto ?? 0);
-    const previous = Number(recent[i - 1].monto ?? 0);
-    if (current === previous) {
-      streakAmount += 1;
-      if (streakAmount >= 3) candidateAmount = current;
-    } else {
-      streakAmount = 1;
-      candidateAmount = current;
-    }
-  }
+  const candidateAmount = Number(latest.monto ?? 0);
+  const candidateMethod = String(latest.metodo_pago ?? latest.metodoPago ?? 'efectivo').toLowerCase();
 
-  const methodOf = (item) => String(item?.metodo_pago ?? item?.metodoPago ?? 'efectivo').toLowerCase();
-  let streakMethod = 1;
-  let candidateMethod = String(latest.metodo_pago ?? latest.metodoPago ?? 'efectivo');
-  for (let i = 1; i < recent.length; i += 1) {
-    const current = methodOf(recent[i]);
-    if (current === methodOf(recent[i - 1])) {
-      streakMethod += 1;
-      if (streakMethod >= 3) candidateMethod = current;
-    } else {
-      streakMethod = 1;
-      candidateMethod = current;
-    }
-  }
-
-  const lastDate = new Date(latest.fecha_cobro || latest.fecha || Date.now());
+  const lastDate = fechaDeTexto(latest.fecha_cobro || latest.fecha) || new Date();
   const diffDays = Math.max(0, Math.round((Date.now() - lastDate.getTime()) / 86400000));
   const methodLabel = String(candidateMethod || 'efectivo').toLowerCase();
 

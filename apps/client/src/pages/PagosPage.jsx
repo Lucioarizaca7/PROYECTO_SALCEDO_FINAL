@@ -4,7 +4,7 @@ import { FieldWorkPanel } from '../features/offline/FieldWorkPanel';
 import { QrScanner } from '../features/payments/QrScanner';
 import { printThermalReceipt, shareViaWhatsApp } from '../features/payments/recibo';
 import { usePagos } from '../hooks/usePagos';
-import { textoTarifa } from '../lib/formato';
+import { fechaHoraEnLima, textoMetodo, textoTarifa } from '../lib/formato';
 import { textoTicket } from '../services/ticketsOffline';
 import '../features/payments/pagos.css';
 
@@ -92,12 +92,16 @@ function ReceiptCard({ receipt, printStatus, setPrintStatus }) {
       {receipt.provisional && <div className="receipt-provisional">Recibo provisional: el número oficial se asigna al sincronizar.</div>}
       <div className="receipt-lines">
         <div><span>Comerciante</span><strong>{receipt.comerciante}</strong></div>
-        <div><span>Fecha</span><strong>{new Date().toLocaleString('es-PE')}</strong></div>
+        {/* La fecha del cobro, no la de cada vez que se vuelve a pintar la pantalla. */}
+        <div><span>Fecha</span><strong>{fechaHoraEnLima(receipt.fecha_cobro || receipt.fecha) || fechaHoraEnLima(new Date())}</strong></div>
         <div><span>Concepto</span><strong>{receipt.concepto}</strong></div>
-        <div><span>Método</span><strong>{receipt.metodo_pago}</strong></div>
+        {receipt.periodo_aplicado && <div><span>Mes pagado</span><strong>{receipt.periodo_aplicado}</strong></div>}
+        <div><span>Método</span><strong>{textoMetodo(receipt.metodo_pago)}</strong></div>
         <div><span>Cobrador</span><strong>{receipt.cobrador}</strong></div>
-        <div><span>Operación</span><strong>{receipt.codigo_operacion || 'No aplica'}</strong></div>
+        {/* En efectivo no hay número de operación: el servidor guarda un código interno que no se muestra. */}
+        <div><span>Operación</span><strong>{receipt.metodo_pago !== 'efectivo' && receipt.codigo_operacion ? receipt.codigo_operacion : 'No aplica'}</strong></div>
         {receipt.tickets?.length > 0 && <div><span>Tickets</span><strong>{receipt.tickets.map((ticket) => ticket.texto || textoTicket(ticket.serie, ticket.numero)).join(', ')}</strong></div>}
+        {receipt.observaciones && <div><span>Nota</span><strong>{receipt.observaciones}</strong></div>}
         <div><span>Hash</span><strong>{receipt.hash_idempotencia || 'N/A'}</strong></div>
         <div className="receipt-total"><span>Total pagado</span><strong>S/ {receipt.monto.toFixed(2)}</strong></div>
       </div>
@@ -116,9 +120,11 @@ function RecentPayments({ cobros, puedeAnular, onAnular }) {
       <div className="panel-heading"><div><div className="panel-title">Cobros recientes</div><div className="panel-subtitle">Estado actualizado al instante</div></div></div>
       {cobros.slice(0, 6).map((item, index) => (
         <div className="payment-row" key={item.comprobante || index}>
-          <div><strong>{item.comprobante || `#${item.id}`}</strong><span>{item.comerciante} · {item.metodo_pago}</span></div>
+          <div><strong>{item.comprobante || `#${item.id}`}</strong><span>{item.comerciante} · {textoMetodo(item.metodo_pago)}</span></div>
           <div><strong>{typeof item.monto === 'number' ? `S/ ${item.monto.toFixed(2)}` : item.monto}</strong><span className={`status ${item.estado === 'observado' ? 'pending' : item.estado === 'anulado' ? 'danger' : 'paid'}`}>{item.estado}</span></div>
-          {item.estado === 'anulado' && item.motivo_anulacion && <small className="payment-void-reason">Anulado: {item.motivo_anulacion}</small>}
+          {item.observaciones && <small className="payment-note">Nota del cobrador: {item.observaciones}</small>}
+          {item.estado === 'observado' && item.observacion && <small className="payment-note">En revisión: {item.observacion}</small>}
+          {item.estado === 'anulado' && item.motivo_anulacion && <small className="payment-void-reason">Anulado{item.anulado_por ? ` por ${item.anulado_por}` : ''}: {item.motivo_anulacion}</small>}
           {puedeAnular && item.estado === 'confirmado' && <button className="secondary-button payment-void" type="button" onClick={() => onAnular(item)}>Anular</button>}
         </div>
       ))}

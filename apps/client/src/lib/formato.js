@@ -18,6 +18,24 @@ export const fechaLargaEnLima = (date = new Date()) => {
   return texto.charAt(0).toUpperCase() + texto.slice(1);
 };
 
+// Fecha y hora del cobro en Salcedo ("11/11/2026, 09:42"), sea un Date, un ISO o un "AAAA-MM-DD HH:MM:SS".
+const fechaHora = new Intl.DateTimeFormat('es-PE', { timeZone: 'America/Lima', day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+export const fechaHoraEnLima = (valor) => {
+  const fecha = valor instanceof Date ? valor : fechaDeTexto(valor);
+  return fecha && !Number.isNaN(fecha.getTime()) ? fechaHora.format(fecha) : '';
+};
+
+// "2026-11-11 09:42:00" (como lo devuelve la API) no lo entiende Safari del iPhone: sale "Invalid Date".
+// Con la T en medio sí; sin zona se lee en la hora del celular, que en Salcedo es la de Lima.
+export const fechaDeTexto = (valor) => {
+  if (!valor) return null;
+  const texto = String(valor).trim();
+  return new Date(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}/.test(texto) ? texto.replace(' ', 'T') : texto);
+};
+
+const METODOS = { efectivo: 'Efectivo', yape: 'Yape', plin: 'Plin', pos: 'POS' };
+export const textoMetodo = (metodo) => METODOS[String(metodo || '').toLowerCase()] || metodo || '';
+
 export const getInitials = (nombre) => {
   const words = String(nombre || '').trim().split(/\s+/).filter(Boolean);
   if (!words.length) return 'U';

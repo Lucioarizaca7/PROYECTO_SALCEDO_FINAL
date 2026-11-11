@@ -74,7 +74,7 @@ export function PanelPage() {
               {auditRecords.slice(0, 5).map((item) => (
                 <div className="activity-item" key={item.id}>
                   <span className="activity-bullet"></span>
-                  <div><strong>{item.accion} · {item.entidad}</strong><small>{item.usuario || `Usuario ${item.usuario_id}`} · {new Date(item.fecha).toLocaleString('es-PE')}</small></div>
+                  <div><strong>{item.accion} · {item.entidad}</strong><small>{item.usuario || `Usuario ${item.usuario_id}`} · {fechaHoraEnLima(item.fecha)}</small></div>
                 </div>
               ))}
               {!auditRecords.length && <div className="empty-state">Todavia no hay actividad de auditoria para mostrar.</div>}

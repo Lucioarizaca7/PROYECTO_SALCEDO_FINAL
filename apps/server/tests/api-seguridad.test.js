@@ -255,6 +255,16 @@ test('GET /cobros: el cobrador ve solo sus cobros; el administrador ve todos, co
   assert.ok(vistosPorAdmin.some((item) => item.id === delCobrador.id) && vistosPorAdmin.some((item) => item.id === delAdmin.id));
   assert.equal((await listar(tokens.admin, '?limit=1')).length, 1);
   assert.ok((await listar(tokens.admin, '?limit=999999')).length <= MAX_COBROS_LISTADO, 'el tope no se puede pasar');
+
+  // /reportes sigue la misma regla: el cobrador ve solo sus cobros, aunque pida los de otro.
+  const reporte = async (token, query) => (await (await fetch(`${baseUrl}/api/v1/reportes${query}`, { headers: { Authorization: `Bearer ${token}` } })).json()).data;
+  const reportePropio = await reporte(tokens.cobrador, `?cobrador_id=${admin.id}`);
+  assert.ok(reportePropio.every((item) => item.cobrador === cobrador.nombre), 'el reporte del cobrador trae solo sus cobros');
+  assert.ok(!reportePropio.some((item) => item.id === delAdmin.id));
+  // El historial de un comerciante (sugerencia de monto) sí trae los cobros de todos.
+  const historial = await reporte(tokens.cobrador, `?comerciante_id=${merchant.id}`);
+  assert.ok(historial.some((item) => item.id === delAdmin.id) && historial.every((item) => Number(item.comerciante_id) === Number(merchant.id)));
+  assert.ok((await reporte(tokens.admin, `?cobrador_id=${admin.id}`)).some((item) => item.id === delAdmin.id));
 });
 
 test('el reporte CSV no deja fórmulas ejecutables (inyección CSV)', () => {

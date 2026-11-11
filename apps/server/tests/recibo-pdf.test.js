@@ -7,7 +7,7 @@ import assert from 'node:assert/strict';
 import { startServer } from '../src/index.ts';
 import { closeDatabase, insertComerciante, insertPuesto, insertTarifa, registrarCobro, anularCobro } from '../src/db.js';
 import { emitirCarnets } from '../src/portalAcceso.js';
-import { tokenVerificacion, tokenDescarga, leerTokenDescarga } from '../src/reciboPdf.js';
+import { tokenVerificacion, tokenDescarga, leerTokenDescarga, buscarRecibo, generarReciboPdf } from '../src/reciboPdf.js';
 import { pool } from '../src/pg.js';
 
 let server;
@@ -105,4 +105,14 @@ test('desde el portal el comerciante baja solo sus recibos, con un enlace que ve
   assert.equal((await api(`/portal/recibos/${cobroAjeno.id}.${vence}.${firma}/pdf`)).status, 404);
   assert.equal(leerTokenDescarga(tokenDescarga(5, Date.now()), Date.now() + 31 * 60_000), null, 'vence a los 30 minutos');
   assert.equal(leerTokenDescarga(tokenDescarga(5)), 5);
+});
+
+test('el recibo trae los tickets entregados con el cobro', async () => {
+  const [merchant] = await dosComerciantesConSaldo();
+  const cobro = await cobrar(merchant, '2031-08');
+  await pool.query(`UPDATE transacciones SET tickets = '[{"serie":"S3","numero":12}]'::jsonb WHERE id = $1`, [cobro.id]);
+  const recibo = await buscarRecibo(pool, cobro.comprobante);
+  assert.deepEqual(recibo.tickets, [{ serie: 'S3', numero: 12 }]);
+  const pdf = await generarReciboPdf(recibo);
+  assert.equal(pdf.subarray(0, 5).toString('latin1'), '%PDF-');
 });

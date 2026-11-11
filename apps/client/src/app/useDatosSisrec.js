@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { formatPEN } from '../lib/formato';
+import { fechaDeTexto, formatPEN } from '../lib/formato';
 import { periodoEnLima } from '../services/jornadaOffline';
 import { readMapSnapshot, saveMapSnapshot, syncPendingMapMutations } from '../services/mapaOffline';
 import { apiBase, authFetch } from '../services/session';
@@ -80,7 +80,7 @@ export function useDatosSisrec({ user, onSessionExpired }) {
       setDashboardStats(toDashboardStats(dashboard.stats, puestos.total ?? (puestos.data || []).length));
       setOperational(dashboard.operational || EMPTY_OPERATIONAL);
       // Filas del directorio: [id, nombre, rubro, dni_ruc, zona, estado, fecha, tipo, código, correlativo].
-      setComerciantes((merchants.data || []).map((item) => [item.id, item.nombre, item.rubro, item.dni_ruc, item.zona, item.estado, new Date(item.fecha_registro).toLocaleDateString('es-PE'), item.tipo_comerciante || item.categoria, item.codigo, item.correlativo, item.carnet_emitido_en || null]));
+      setComerciantes((merchants.data || []).map((item) => [item.id, item.nombre, item.rubro, item.dni_ruc, item.zona, item.estado, (fechaDeTexto(item.fecha_registro)?.toLocaleDateString('es-PE') || ''), item.tipo_comerciante || item.categoria, item.codigo, item.correlativo, item.carnet_emitido_en || null]));
       setTariffRecords(tarifas.data || []);
       setCobros(payments.data || []);
       setMapPuestos(puestos.data || []);

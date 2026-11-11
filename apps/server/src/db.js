@@ -690,14 +690,17 @@ export async function getReportRows(db, options = {}) {
   if (options.zona_id) { params.push(Number(options.zona_id)); conditions.push(`c.zona_id = $${params.length}`); }
   if (options.rubro_id) { params.push(Number(options.rubro_id)); conditions.push(`c.rubro_id = $${params.length}`); }
   if (options.cobrador_id) { params.push(Number(options.cobrador_id)); conditions.push(`co.cobrador_id = $${params.length}`); }
+  if (options.comerciante_id) { params.push(Number(options.comerciante_id)); conditions.push(`co.comerciante_id = $${params.length}`); }
   const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
   return rows(db, `
-    SELECT co.id, ${PAYMENT_DAY} AS fecha, c.codigo AS comerciante_codigo,
+    SELECT co.id, ${PAYMENT_DAY} AS fecha, co.comerciante_id, c.codigo AS comerciante_codigo,
       c.nombre AS comerciante, r.nombre AS rubro, z.nombre AS zona, u.nombre AS cobrador,
-      co.monto, co.metodo_pago, co.estado, cp.numero_correlativo AS comprobante
+      co.monto, co.metodo_pago, co.codigo_operacion, co.estado, cp.numero_correlativo AS comprobante,
+      co.observaciones, co.tickets, co.motivo_anulacion, an.nombre AS anulado_por, ${TS('co.anulado_en')} AS fecha_anulacion
     FROM transacciones co JOIN comerciantes c ON c.id = co.comerciante_id
       JOIN rubros r ON r.id = c.rubro_id JOIN zonas z ON z.id = c.zona_id
       LEFT JOIN usuarios u ON u.id = co.cobrador_id LEFT JOIN comprobantes cp ON cp.id = co.comprobante_id
+      LEFT JOIN usuarios an ON an.id = co.anulado_por
     ${where} ORDER BY co.fecha_cobro_cliente DESC`, params);
 }
 
@@ -715,11 +718,12 @@ export function celdaCsv(value) {
 
 export async function buildReportCsv(db, options = {}) {
   const data = await getReportRows(db, options);
-  const headers = ['fecha', 'comerciante_codigo', 'comerciante', 'rubro', 'zona', 'cobrador', 'monto', 'metodo_pago', 'estado', 'comprobante'];
+  const headers = ['fecha', 'comerciante_codigo', 'comerciante', 'rubro', 'zona', 'cobrador', 'monto', 'metodo_pago', 'estado', 'comprobante', 'tickets', 'observaciones', 'motivo_anulacion'];
 
   if (!data.length) return `${headers.join(',')}\n`;
   const lines = [headers.join(',')];
-  for (const row of data) lines.push(headers.map((header) => celdaCsv(row[header])).join(','));
+  const celda = (row, header) => header === 'tickets' ? textoTicketsCobro(row.tickets) : row[header];
+  for (const row of data) lines.push(headers.map((header) => celdaCsv(celda(row, header))).join(','));
   return lines.join('\n');
 }
 
@@ -1824,8 +1828,11 @@ export async function marcarAsistencias(_db, marcas, { usuarioId = null, audit =
   });
 }
 
-// Observaciones de cobro: las marcas con motivo u observación entre dos fechas (por omisión, del día 1
-// del mes a hoy). cobradorId limita a las que registró ese cobrador.
+// Observaciones de cobro, entre dos fechas (por omisión, del día 1 del mes a hoy):
+//  - origen 'asistencia': las marcas de asistencia con motivo u observación;
+//  - origen 'cobro': la nota que el cobrador escribe al cobrar (transacciones.observaciones). Antes no salía
+//    en ninguna pantalla del administrador aunque se guardaba (fallo reportado el 10/11/2026).
+// cobradorId limita a las que registró ese cobrador.
 export async function getObservacionesCobro(db, { desde, hasta, comercianteId, cobradorId } = {}) {
   const hoy = todayInLima();
   const fin = hasta ? String(hasta) : hoy;
@@ -1838,6 +1845,21 @@ export async function getObservacionesCobro(db, { desde, hasta, comercianteId, c
   let filtros = '';
   if (Number(comercianteId)) { params.push(Number(comercianteId)); filtros += ` AND c.id = $${params.length}`; }
   if (Number(cobradorId)) { params.push(Number(cobradorId)); filtros += ` AND a.registrado_por = $${params.length}`; }
+  const filtrosCobro = filtros.replace('a.registrado_por', 'co.cobrador_id');
+  const notas = await rows(db, `
+    SELECT co.id, to_char(${LOCAL('co.fecha_cobro_cliente')}, 'YYYY-MM-DD') AS fecha, NULL::boolean AS asistio, NULL AS motivo,
+           co.observaciones AS observacion, NULL::int AS puesto_id, NULL AS codigo_puesto,
+           c.id AS comerciante_id, c.nombre AS comerciante, c.codigo AS comerciante_codigo, z.nombre AS zona,
+           u.nombre AS registrado_por, ${TS('co.fecha_cobro_cliente')} AS registrado_en,
+           co.monto, co.estado AS estado_cobro, cp.numero_correlativo AS comprobante
+    FROM transacciones co
+    JOIN comerciantes c ON c.id = co.comerciante_id
+    LEFT JOIN zonas z ON z.id = c.zona_id
+    LEFT JOIN usuarios u ON u.id = co.cobrador_id
+    LEFT JOIN comprobantes cp ON cp.id = co.comprobante_id
+    WHERE NULLIF(BTRIM(co.observaciones), '') IS NOT NULL
+      AND (${LOCAL('co.fecha_cobro_cliente')})::date BETWEEN $1::date AND $2::date${filtrosCobro}
+    ORDER BY co.fecha_cobro_cliente DESC, co.id DESC LIMIT 500`, params);
   const data = await rows(db, `
     SELECT a.id, ${DAY('a.fecha')} AS fecha, a.asistio, a.motivo, a.observacion,
            p.id AS puesto_id, p.codigo_puesto, c.id AS comerciante_id, c.nombre AS comerciante, c.codigo AS comerciante_codigo,
@@ -1853,7 +1875,10 @@ export async function getObservacionesCobro(db, { desde, hasta, comercianteId, c
   return {
     desde: inicio,
     hasta: fin,
-    observaciones: data.map((fila) => ({ ...fila, id: Number(fila.id), puesto_id: Number(fila.puesto_id), comerciante_id: Number(fila.comerciante_id) }))
+    observaciones: [
+      ...data.map((fila) => ({ ...fila, origen: 'asistencia', id: Number(fila.id), puesto_id: Number(fila.puesto_id), comerciante_id: Number(fila.comerciante_id) })),
+      ...notas.map((fila) => ({ ...fila, origen: 'cobro', id: Number(fila.id), puesto_id: null, comerciante_id: Number(fila.comerciante_id), monto: Number(fila.monto) }))
+    ].sort((a, b) => `${b.fecha} ${b.registrado_en || ''}`.localeCompare(`${a.fecha} ${a.registrado_en || ''}`)).slice(0, 500)
   };
 }
 
@@ -2099,6 +2124,15 @@ export function fechaCobroEnLinea(valor, ahora = new Date()) {
     : ahora.toISOString();
 }
 
+// El código de operación es el número de Yape/Plin/POS. En efectivo no existe: si llega uno (un formulario que
+// arrastró el del cobro digital anterior), se ignora; si no, el cobro en efectivo chocaba con el anterior
+// (409 en línea, "duplicado" sin señal y el cobro se perdía). Fallo corregido el 10/11/2026.
+function codigoOperacionDelPago(payload, metodoPago) {
+  const digital = String(payload.codigo_operacion || payload.codigoOperacion || '').trim();
+  const idempotencia = String(payload.idempotency_key || '').trim();
+  return metodoPago === 'efectivo' ? idempotencia : (digital || idempotencia);
+}
+
 function createTransactionHash({ comercianteId, cobradorId, monto, concepto, periodo, metodoPago, salt }) {
   const seed = [comercianteId, cobradorId, monto, concepto, periodo || 'sin-periodo', metodoPago, salt || Date.now()].join('|');
   return createHash('sha256').update(seed).digest('hex');
@@ -2118,7 +2152,7 @@ export async function registrarCobro(db, payload, { audit = null, allowExcess = 
   const monto = Number(payload.monto);
   const metodoPago = String(payload.metodo_pago || '').trim();
   const concepto = String(payload.concepto || 'Liquidación de deuda').trim();
-  const codigoOperacion = String(payload.codigo_operacion || payload.idempotency_key || '').trim();
+  const codigoOperacion = codigoOperacionDelPago(payload, metodoPago);
   const observaciones = String(payload.observaciones || '').trim();
   const allowedMethods = ['efectivo', 'yape', 'plin', 'pos'];
 
@@ -2233,6 +2267,7 @@ export async function registrarCobro(db, payload, { audit = null, allowExcess = 
     codigo_operacion: uniqueCode,
     hash_transaccion: hashTransaccion,
     observaciones,
+    fecha_cobro: clientDate.toISOString(),
     periodo_aplicado: periodoAplicado,
     tickets: ticketsDeclarados.map((item) => ({ ...item, texto: textoTicket(item.serie, item.numero) })),
     estado: observacion ? 'observado' : 'confirmado',
@@ -2245,7 +2280,7 @@ export async function registrarCobro(db, payload, { audit = null, allowExcess = 
       ...audit,
       usuarioId: audit.usuarioId ?? cobradorId,
       entidad: 'cobros',
-      detalle: audit.detalle || `Cobro ${number} por S/ ${monto.toFixed(2)} al comerciante ${comercianteId}${textoTickets ? `, tickets ${textoTickets}` : ''}${observacion ? ` (observado: ${observacion})` : ''}`,
+      detalle: audit.detalle || `Cobro ${number} por S/ ${monto.toFixed(2)} al comerciante ${comercianteId}${textoTickets ? `, tickets ${textoTickets}` : ''}${observacion ? ` (observado: ${observacion})` : ''}${observaciones ? `. Nota del cobrador: ${observaciones}` : ''}`,
       recursoId: result.id,
       payloadNuevo: result
     });
@@ -2304,7 +2339,7 @@ export async function syncOfflineCobro(_db, payload, { audit = null } = {}) {
     monto: Number(payload.monto ?? 0),
     metodo_pago: String(payload.metodo_pago ?? payload.metodoPago ?? 'efectivo').trim(),
     concepto: String(payload.concepto || 'Liquidación de deuda').trim(),
-    codigo_operacion: String(payload.codigo_operacion || payload.idempotency_key || payload.codigoOperacion || '').trim(),
+    codigo_operacion: codigoOperacionDelPago(payload, String(payload.metodo_pago ?? payload.metodoPago ?? 'efectivo').trim()),
     hash_transaccion: String(payload.hash_transaccion || payload.hashTransaccion || '').trim(),
     fecha_cobro: payload.fecha_cobro || payload.fechaCobro || new Date().toISOString(),
     periodo: payload.periodo || currentPeriod(),
@@ -2425,7 +2460,7 @@ export async function getCobrosObservados(db, { estado = 'pendiente' } = {}) {
            ob.resolucion, ${TS('ob.creado_en')} AS fecha_observacion, ${TS('ob.revisado_en')} AS fecha_revision,
            rv.nombre AS revisado_por,
            co.comerciante_id, c.nombre AS comerciante, c.dni_ruc, co.metodo_pago, co.codigo_operacion,
-           co.estado AS estado_cobro, ${TS('co.fecha_cobro_cliente')} AS fecha_cobro,
+           co.observaciones, co.tickets, co.estado AS estado_cobro, ${TS('co.fecha_cobro_cliente')} AS fecha_cobro,
            cp.numero_correlativo AS comprobante, u.nombre AS cobrador
     FROM cobros_observados ob
     JOIN transacciones co ON co.id = ob.transaccion_id
@@ -2473,9 +2508,12 @@ export async function resolveCobroObservado(_db, id, { decision, resolucion, usu
 // Cobros offline que el servidor rechazó por datos inválidos: el dinero se cobró pero no entró al sistema.
 export async function getSyncErrors(db) {
   return rows(db, `
-    SELECT id, device_id, hash_transaccion, payload, error, intentos,
-           ${TS('recibido_en')} AS recibido, ${TS('procesado_en')} AS procesado
-    FROM colas_sincronizacion WHERE estado = 'error' ORDER BY procesado_en DESC NULLS LAST LIMIT 200`);
+    SELECT q.id, q.device_id, q.hash_transaccion, q.payload, q.error, q.intentos, c.nombre AS comerciante,
+           ${TS('q.recibido_en')} AS recibido, ${TS('q.procesado_en')} AS procesado
+    FROM colas_sincronizacion q
+    -- El payload trae solo el id del comerciante: se muestra su nombre (antes la tabla decía "#123").
+    LEFT JOIN comerciantes c ON c.id = CASE WHEN q.payload->>'comerciante_id' ~ '^[0-9]+$' THEN (q.payload->>'comerciante_id')::bigint END
+    WHERE q.estado = 'error' ORDER BY q.procesado_en DESC NULLS LAST LIMIT 200`);
 }
 
 // ---------------------------------------------------------------------------
@@ -2491,6 +2529,9 @@ const MAX_TICKETS_COBRO = 60;
 export const MAX_LOTE_ANULACIONES = 100;
 
 export const textoTicket = (serie, numero) => `${serie} N° ${String(numero).padStart(6, '0')}`;
+/** Los tickets que guarda transacciones.tickets (JSONB [{serie, numero}]) en una línea: "S3 N° 000012, S2 N° 000004". */
+export const textoTicketsCobro = (tickets) => (Array.isArray(tickets) ? tickets : [])
+  .filter((item) => item && item.serie && item.numero).map((item) => textoTicket(item.serie, item.numero)).join(', ');
 
 function parseNumeroTicket(value) {
   const numero = Number(value);
@@ -2984,6 +3025,9 @@ export async function getJornadaPackage(db, { periodo = currentPeriod() } = {}) 
       dia: deuda.dia ?? null,
       deuda_vencida: acumulada?.deuda_vencida ?? 0,
       meses_impagos: acumulada?.meses_impagos ?? [],
+      // Saldo de cada mes impago: sin señal el cobrador ve la deuda atrasada y cobra primero el mes más antiguo.
+      periodos_impagos: (acumulada?.periodos || []).filter((item) => Number(item.saldo) > 0)
+        .map((item) => ({ periodo: item.periodo, saldo: Number(item.saldo) })),
       puesto_ferial_id: merchant.puesto_ferial_id && (merchant.tipo_comerciante === 'ferial' || deuda.tarifa?.unidad_medida === 'semanal')
         ? Number(merchant.puesto_ferial_id) : null,
       dias_asistidos: deuda.dias_asistidos ?? null,

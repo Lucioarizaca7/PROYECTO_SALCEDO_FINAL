@@ -54,3 +54,16 @@ test('tres cobros iguales seguidos fijan el monto y el método sugeridos', () =>
   assert.equal(suggestion.lastPayment.fecha_cobro, day(3));
   assert.match(suggestion.lastLabel, /S\/ 20\.00 con YAPE/);
 });
+
+test('la sugerencia express toma el último cobro válido, no el más antiguo', () => {
+  const merchant = { id: 903, nombre: 'Cliente Cambiante' };
+  const history = [
+    { comerciante_id: 903, monto: 6, metodo_pago: 'yape', estado: 'confirmado', fecha: '2026-11-02 10:00:00' },
+    { comerciante_id: 903, monto: 3, metodo_pago: 'efectivo', estado: 'confirmado', fecha: '2026-11-09 09:30:00' },
+    { comerciante_id: 903, monto: 9, metodo_pago: 'plin', estado: 'anulado', fecha: '2026-11-10 08:00:00' }
+  ];
+  const suggestion = buildExpressSuggestion(merchant, { saldo: 30 }, history);
+  assert.equal(suggestion.suggestedAmount, 3);
+  assert.equal(suggestion.preferredMethod, 'efectivo');
+  assert.match(suggestion.lastLabel, /S\/ 3\.00 con EFECTIVO/);
+});

@@ -107,22 +107,45 @@ export function usePagos() {
       if (!balanceResponse.ok) return setMessage(balanceData.message || 'No se pudo calcular el saldo.');
     }
 
-    const historyResponse = await authFetch(`${apiBase}/reportes?periodo=${form.periodo}`);
-    const historyData = await historyResponse.json();
-    const history = (historyData.data || []).filter(sameMerchant(found));
+    // Historial de ESTE comerciante (por id, no por nombre: dos homónimos se mezclaban), de todos los meses.
+    const historyResponse = await authFetch(`${apiBase}/reportes?comerciante_id=${found.id}`);
+    const historyData = await historyResponse.json().catch(() => ({}));
+    const history = historyResponse.ok ? (historyData.data || []) : [];
     const next = buildExpressSuggestion(found, balanceData.data, history.length ? history : cobros.filter(sameMerchant(found)));
 
     setMerchant(found);
     setBalance(balanceData.data);
     setSuggestion(next);
-    setForm((current) => ({ ...current, comercianteId: String(found.id), periodo, monto: String(Math.min(next.suggestedAmount || balanceData.data.saldo, balanceData.data.saldo) || ''), metodo_pago: next.preferredMethod || current.metodo_pago }));
+    // El código de operación y la nota son de cada cobro: no se heredan del comerciante anterior.
+    setForm((current) => ({ ...current, comercianteId: String(found.id), periodo, monto: String(Math.min(next.suggestedAmount || balanceData.data.saldo, balanceData.data.saldo) || ''), metodo_pago: next.preferredMethod || current.metodo_pago, codigo_operacion: '', observaciones: '' }));
   };
 
   // El cobrador elige a qué mes impago aplicar el cobro.
   const elegirPeriodo = async (periodo) => {
-    if (!merchant || !navigator.onLine) return;
+    if (!merchant) return;
     setMessage('');
+    if (merchant.offline || !navigator.onLine) {
+      // Sin señal: el saldo de ese mes sale del padrón del celular.
+      const registro = await jornada.porId(merchant.id);
+      if (!registro) return;
+      const saldoMes = aSaldoDePantalla(registro, periodo);
+      setBalance(saldoMes);
+      setForm((current) => ({ ...current, periodo: saldoMes.periodo, monto: saldoMes.saldo > 0 ? String(saldoMes.saldo) : '' }));
+      return;
+    }
     await loadMerchant(merchant, periodo).catch((error) => setMessage(error.message));
+  };
+
+  // Comerciante del padrón del celular en la pantalla (búsqueda o llegada desde Sitios/Mapa sin señal).
+  const mostrarDelPadron = (localMerchant) => {
+    const offlineMerchant = aComercianteDePantalla(localMerchant);
+    // Sin periodo: se aplica primero el mes impago más antiguo, igual que en línea.
+    const offlineBalance = aSaldoDePantalla(localMerchant);
+    setMerchant(offlineMerchant);
+    setBalance(offlineBalance);
+    setSuggestion(buildExpressSuggestion(offlineMerchant, offlineBalance, []));
+    setForm((current) => ({ ...current, comercianteId: String(offlineMerchant.id), periodo: offlineBalance.periodo || current.periodo, monto: offlineBalance.saldo > 0 ? String(offlineBalance.saldo) : '', codigo_operacion: '', observaciones: '' }));
+    return offlineBalance;
   };
 
   const findMerchant = async (queryOverride) => {
@@ -139,12 +162,7 @@ export function usePagos() {
           ? `${reason} no se encontró el comerciante en el padrón guardado en el celular.`
           : `${reason} no hay padrón descargado. Descárgalo al iniciar la jornada, con señal.`);
       }
-      const offlineMerchant = aComercianteDePantalla(localMerchant);
-      const offlineBalance = aSaldoDePantalla(localMerchant, form.periodo);
-      setMerchant(offlineMerchant);
-      setBalance(offlineBalance);
-      setSuggestion(buildExpressSuggestion(offlineMerchant, offlineBalance, []));
-      setForm((current) => ({ ...current, comercianteId: String(offlineMerchant.id), periodo: offlineBalance.periodo || current.periodo, monto: offlineBalance.saldo > 0 ? String(offlineBalance.saldo) : '' }));
+      mostrarDelPadron(localMerchant);
       setMessage(`${reason} saldo según el padrón guardado el ${new Date(localMerchant.actualizadoEn).toLocaleString('es-PE', { dateStyle: 'short', timeStyle: 'short' })}`);
     };
     if (!navigator.onLine) return searchOffline('Sin señal:');
@@ -193,8 +211,15 @@ export function usePagos() {
     navigate(location.pathname, { replace: true, state: null });
     setMerchant(cobrarPuesto);
     setBalance(null);
-    setForm((current) => ({ ...current, search: cobrarPuesto.nombre || '', comercianteId: String(cobrarPuesto.id), monto: String(cobrarPuesto.saldo || '') }));
-    if (!navigator.onLine) return;
+    setForm((current) => ({ ...current, search: cobrarPuesto.nombre || '', comercianteId: String(cobrarPuesto.id), monto: String(cobrarPuesto.saldo || ''), codigo_operacion: '', observaciones: '' }));
+    if (!navigator.onLine) {
+      // Sin señal el saldo sale del padrón del celular; antes quedaba vacío y no se podía confirmar el cobro.
+      jornada.porId(cobrarPuesto.id).then((registro) => {
+        if (registro) mostrarDelPadron(registro);
+        else setMessage('Sin señal: este comerciante no está en el padrón guardado en el celular. Descárgalo con señal.');
+      });
+      return;
+    }
     (async () => {
       const response = await authFetch(`${apiBase}/comerciantes/${cobrarPuesto.id}`);
       const data = await response.json();
@@ -233,6 +258,9 @@ export function usePagos() {
     const fechaCobro = new Date().toISOString();
     const payload = {
       ...form,
+      // El número de operación existe solo en Yape, Plin o POS. En efectivo no se envía aunque quede escrito.
+      codigo_operacion: form.metodo_pago === 'efectivo' ? undefined : String(form.codigo_operacion || '').trim(),
+      observaciones: String(form.observaciones || '').trim() || undefined,
       comerciante_id: form.comercianteId,
       cobrador_id: user?.id || 2,
       metodo_pago: form.metodo_pago,
@@ -247,11 +275,12 @@ export function usePagos() {
     const saveOfflinePayment = async (reason) => {
       const item = await offlineQueue.enqueue({ ...payload, comerciante: merchant?.nombre });
       if (ticketsEntregados.length) await tickets.consumirTickets(ticketsEntregados);
-      const local = await jornada.applyLocalPayment(payload.comerciante_id, payload.monto).catch(() => null);
-      setBalance((current) => current ? {
+      const local = await jornada.applyLocalPayment(payload.comerciante_id, payload.monto, payload.periodo).catch(() => null);
+      // Con el padrón actualizado se vuelve a mostrar el saldo (del mes cobrado y la deuda atrasada que queda).
+      setBalance((current) => local ? aSaldoDePantalla(local, payload.periodo) : current ? {
         ...current,
-        saldo: local ? local.saldo : Math.max(Number(current.saldo || 0) - Number(payload.monto || 0), 0),
-        monto_pagado: local ? local.montoPagado : Number(current.monto_pagado || 0) + Number(payload.monto || 0)
+        saldo: Math.max(Number(current.saldo || 0) - Number(payload.monto || 0), 0),
+        monto_pagado: Number(current.monto_pagado || 0) + Number(payload.monto || 0)
       } : current);
       setReceipt({
         comprobante: `PROV-${item.hashTransaccion.slice(0, 8).toUpperCase()}`,
@@ -264,9 +293,11 @@ export function usePagos() {
         cobrador: user?.nombre || 'Cobrador',
         hash_idempotencia: item.hashTransaccion.slice(0, 16).toUpperCase(),
         fecha: item.fechaCobro,
+        observaciones: payload.observaciones,
+        periodo_aplicado: payload.periodo,
         tickets: ticketsEntregados.map((ticket) => ({ ...ticket, texto: textoTicket(ticket.serie, ticket.numero) }))
       });
-      setForm((current) => ({ ...current, monto: '' }));
+      setForm((current) => ({ ...current, monto: '', codigo_operacion: '', observaciones: '' }));
       empezarAtencion();
       setMessage(`${reason} el cobro quedó guardado en el celular y se enviará al volver la señal. ${ticketsEntregados.length ? `Entrega ${ticketsEntregados.map((ticket) => textoTicket(ticket.serie, ticket.numero)).join(', ')}.` : 'Entrega el recibo provisional.'}`);
     };
@@ -330,7 +361,7 @@ export function usePagos() {
         hash_idempotencia: hashIdempotencia
       });
       setBalance((current) => current ? { ...current, saldo: data.data.saldo_restante } : current);
-      setForm((current) => ({ ...current, monto: '' }));
+      setForm((current) => ({ ...current, monto: '', codigo_operacion: '', observaciones: '' }));
       empezarAtencion();
       await refresh();
     } catch (paymentError) {
