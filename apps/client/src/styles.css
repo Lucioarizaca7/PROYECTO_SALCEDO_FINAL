@@ -2004,6 +2004,17 @@ tbody td {
   padding-bottom: 6px;
 }
 
+/* Un nombre largo, la fecha o un código de operación no empujan el recibo fuera de la pantalla del celular. */
+.receipt-lines span {
+  flex-shrink: 0;
+}
+
+.receipt-lines strong {
+  min-width: 0;
+  text-align: right;
+  overflow-wrap: anywhere;
+}
+
 .receipt-total {
   border-bottom: none !important;
   margin-top: 4px;
@@ -2017,34 +2028,79 @@ tbody td {
 
 .receipt-actions {
   justify-content: flex-start;
+  flex-wrap: wrap;
   margin-top: 14px;
 }
 
+/* Impresión.
+   - Recibo: printThermalReceipt copia el recibo a #print-recibo (hijo directo de body) y marca body.print-recibo;
+     se oculta todo lo demás con display:none (con visibility:hidden la página oculta seguía ocupando espacio y
+     salían hojas en blanco). Papel de la ticketera: 80 mm de ancho.
+   - QR y carnet del comerciante: solo su diálogo.
+   - Cualquier otra página (p. ej. Reportes): sin menú ni barras. Antes la regla del recibo ocultaba todo y
+     "Imprimir / PDF" de Reportes salía en blanco. */
+@page recibo {
+  size: 80mm auto;
+  margin: 3mm;
+}
+
 @media print {
-  body * {
+  .sidebar,
+  .sidebar-backdrop,
+  .topbar,
+  .mobile-bottom-nav,
+  .offline-banner {
+    display: none !important;
+  }
+
+  body.print-recibo > *:not(#print-recibo) {
+    display: none !important;
+  }
+
+  #print-recibo {
+    display: block;
+    page: recibo;
+    width: 100%;
+  }
+
+  #print-recibo .receipt-card {
+    width: auto;
+    border: 0;
+    border-radius: 0;
+    padding: 0;
+    background: white;
+    box-shadow: none;
+    color: black;
+    font-size: 11px;
+  }
+
+  #print-recibo .receipt-lines strong,
+  #print-recibo .receipt-number {
+    font-size: 11px;
+  }
+
+  #print-recibo .receipt-total strong {
+    font-size: 15px;
+  }
+
+  #print-recibo .receipt-actions,
+  #print-recibo .receipt-provisional + .receipt-provisional {
+    display: none !important;
+  }
+
+  body:has(.merchant-qr-backdrop) * {
     visibility: hidden;
   }
 
-  #receiptCard,
-  #receiptCard *,
-  .merchant-qr-backdrop,
-  .merchant-qr-backdrop * {
+  body:has(.merchant-qr-backdrop) .merchant-qr-backdrop,
+  body:has(.merchant-qr-backdrop) .merchant-qr-backdrop * {
     visibility: visible;
   }
 
-  #receiptCard,
   .merchant-qr-backdrop {
     position: absolute;
     left: 0;
     top: 0;
-  }
-
-  #receiptCard {
-    width: 80mm;
-    box-shadow: none;
-  }
-
-  .merchant-qr-backdrop {
     display: block;
     width: 100%;
     background: white;
@@ -2062,10 +2118,10 @@ tbody td {
   .merchant-qr-note {
     display: none;
   }
+}
 
-  .receipt-actions {
-    display: none;
-  }
+#print-recibo {
+  display: none;
 }
 
 .table-actions {
@@ -2691,10 +2747,15 @@ tbody td {
     grid-template-columns: 1fr;
   }
 
+  /* minmax(0, 1fr): con 1fr la columna crecía al ancho del recibo y el borde derecho quedaba cortado. */
   .payment-workspace,
   .payment-search,
   .payment-fields {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .receipt-actions > button {
+    flex: 1 1 100%;
   }
 
   .qr-open-button,

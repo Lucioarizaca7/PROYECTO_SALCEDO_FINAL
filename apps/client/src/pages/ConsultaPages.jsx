@@ -2,14 +2,16 @@ import { useEffect, useState } from 'react';
 import { useSisrec } from '../app/SisrecContext';
 import { textoMotivo } from '../services/asistenciaOffline';
 import { useReportes } from '../hooks/useReportes';
+import { textoMetodo } from '../lib/formato';
 import { hoyEnLima } from '../services/jornadaOffline';
+import { textoTicket } from '../services/ticketsOffline';
 import { apiBase, authFetch } from '../services/session';
 
 // Páginas de solo lectura: muestran datos que ya cargó useDatosSisrec (y, en Analítica, el tiempo por cobro).
 
 export function ReportesPage() {
   const { catalogos } = useSisrec();
-  const { filtro, setFiltro, filas, cargando, mensaje, exportarCsv } = useReportes();
+  const { filtro, setFiltro, filas, cargando, mensaje, exportarCsv, anular, puedeAnular, total, confirmadas } = useReportes();
   const cambiar = (campo) => (event) => setFiltro((actual) => ({ ...actual, [campo]: event.target.value }));
   return (
     <section className="page">
@@ -30,16 +32,30 @@ export function ReportesPage() {
       </div>
       {mensaje && <div className="form-message">{mensaje}</div>}
       <div className="report-kpis">
-        <div className="stat-card"><span>Total cobrado</span><strong>S/ {filas.reduce((total, item) => total + Number(item.monto || 0), 0).toFixed(2)}</strong></div>
-        <div className="stat-card"><span>Operaciones</span><strong>{filas.length}</strong></div>
-        <div className="stat-card"><span>Zonas cubiertas</span><strong>{new Set(filas.map((item) => item.zona)).size}</strong></div>
+        <div className="stat-card"><span>Total cobrado</span><strong>S/ {total.toFixed(2)}</strong></div>
+        <div className="stat-card"><span>Operaciones</span><strong>{confirmadas.length}</strong>{filas.length > confirmadas.length && <small>{filas.length - confirmadas.length} anuladas u observadas, fuera del total</small>}</div>
+        <div className="stat-card"><span>Zonas cubiertas</span><strong>{new Set(confirmadas.map((item) => item.zona)).size}</strong></div>
       </div>
       <div className="table-card">
         <table>
-          <thead><tr><th>Fecha</th><th>Comerciante</th><th>Rubro</th><th>Zona</th><th>Cobrador</th><th>Monto</th><th>Método</th><th>Comprobante</th></tr></thead>
+          <thead><tr><th>Fecha</th><th>Comerciante</th><th>Rubro</th><th>Zona</th><th>Cobrador</th><th>Monto</th><th>Método</th><th>Comprobante</th><th>Tickets</th><th>Estado</th><th>Nota del cobrador</th>{puedeAnular && <th aria-label="Acciones" />}</tr></thead>
           <tbody>
-            {filas.map((item) => <tr key={item.id}><td>{item.fecha}</td><td>{item.comerciante}</td><td>{item.rubro}</td><td>{item.zona}</td><td>{item.cobrador}</td><td>S/ {Number(item.monto).toFixed(2)}</td><td>{item.metodo_pago}</td><td>{item.comprobante}</td></tr>)}
-            {!filas.length && <tr><td colSpan={8} className="empty-state">{cargando ? 'Cargando…' : 'No hay cobros con estos filtros.'}</td></tr>}
+            {filas.map((item) => (
+              <tr key={item.id} className={item.estado === 'anulado' ? 'fila-anulada' : undefined}>
+                <td>{item.fecha}</td><td>{item.comerciante}</td><td>{item.rubro}</td><td>{item.zona}</td><td>{item.cobrador}</td>
+                <td>S/ {Number(item.monto).toFixed(2)}</td>
+                <td>{textoMetodo(item.metodo_pago)}{item.metodo_pago !== 'efectivo' && item.codigo_operacion ? <small className="celda-detalle">Op. {item.codigo_operacion}</small> : null}</td>
+                <td>{item.comprobante}</td>
+                <td>{(item.tickets || []).map((ticket) => textoTicket(ticket.serie, ticket.numero)).join(', ') || '—'}</td>
+                <td>
+                  <span className={`status ${item.estado === 'anulado' ? 'danger' : item.estado === 'confirmado' ? 'paid' : 'pending'}`}>{item.estado}</span>
+                  {item.estado === 'anulado' && <small className="celda-detalle">{item.anulado_por ? `${item.anulado_por}: ` : ''}{item.motivo_anulacion}</small>}
+                </td>
+                <td>{item.observaciones || '—'}</td>
+                {puedeAnular && <td>{item.estado === 'confirmado' && <button className="secondary-button compact" type="button" onClick={() => anular(item)}>Anular</button>}</td>}
+              </tr>
+            ))}
+            {!filas.length && <tr><td colSpan={puedeAnular ? 12 : 11} className="empty-state">{cargando ? 'Cargando…' : 'No hay cobros con estos filtros.'}</td></tr>}
           </tbody>
         </table>
       </div>
@@ -48,8 +64,8 @@ export function ReportesPage() {
   );
 }
 
-// Lo que el cobrador anotó al marcar el día: "no salió" (no se cobra) o "no vendió" / "se negó a pagar"
-// (estuvo: el día se debe igual).
+// Lo que anotó el cobrador: al marcar el día ("no salió": no se cobra; "no vendió" / "se negó a pagar": estuvo,
+// el día se debe igual) y la nota que escribe al cobrar (origen 'cobro', con su comprobante).
 function ObservacionesCobro() {
   const hoy = hoyEnLima();
   const [filtro, setFiltro] = useState({ desde: `${hoy.slice(0, 7)}-01`, hasta: hoy });
@@ -81,13 +97,20 @@ function ObservacionesCobro() {
       </div>
       {error && <div className="form-error">{error}</div>}
       <table>
-        <thead><tr><th>Fecha</th><th>Comerciante</th><th>Puesto</th><th>Zona</th><th>Motivo</th><th>¿Se cobra el día?</th><th>Detalle</th><th>Cobrador</th></tr></thead>
-        <tbody>{data.observaciones.map((item) => (
-          <tr key={item.id}>
-            <td>{item.fecha}</td><td>{item.comerciante}</td><td>{item.codigo_puesto || '—'}</td><td>{item.zona || '—'}</td>
+        <thead><tr><th>Fecha</th><th>Origen</th><th>Comerciante</th><th>Puesto / comprobante</th><th>Zona</th><th>Motivo</th><th>¿Se cobra el día?</th><th>Detalle</th><th>Cobrador</th></tr></thead>
+        <tbody>{data.observaciones.map((item) => item.origen === 'cobro' ? (
+          <tr key={`cobro-${item.id}`}>
+            <td>{item.fecha}</td><td><span className="status paid">Cobro</span></td><td>{item.comerciante}</td>
+            <td>{item.comprobante || '—'}{item.monto ? ` · S/ ${Number(item.monto).toFixed(2)}` : ''}</td><td>{item.zona || '—'}</td>
+            <td>Nota al cobrar</td><td>{item.estado_cobro === 'anulado' ? 'Cobro anulado' : '—'}</td><td>{item.observacion}</td><td>{item.registrado_por || '—'}</td>
+          </tr>
+        ) : (
+          <tr key={`asistencia-${item.id}`}>
+            <td>{item.fecha}</td><td><span className="status pending">Asistencia</span></td><td>{item.comerciante}</td><td>{item.codigo_puesto || '—'}</td><td>{item.zona || '—'}</td>
             <td>{textoMotivo(item.motivo) || '—'}</td><td>{item.asistio ? 'Sí' : 'No'}</td><td>{item.observacion || '—'}</td><td>{item.registrado_por || '—'}</td>
           </tr>
-        ))}</tbody>
+        ))}
+        {!data.observaciones.length && <tr><td colSpan={9} className="empty-state">Sin observaciones en el rango.</td></tr>}</tbody>
       </table>
     </div>
   );

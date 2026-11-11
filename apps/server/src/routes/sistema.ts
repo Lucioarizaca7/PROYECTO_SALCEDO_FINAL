@@ -108,11 +108,16 @@ router.get('/api/v1/catalogos', requireAuth, async (_req, res) => {
 });
 
 router.get('/api/v1/reportes', ...staffOnly, async (req, res) => {
+  const esCobrador = req.user?.rol === 'cobrador';
+  const comercianteId = Number(req.query.comerciante_id) || undefined;
   const options = {
     periodo: req.query.periodo,
     zona_id: req.query.zona_id,
     rubro_id: req.query.rubro_id,
-    cobrador_id: req.query.cobrador_id
+    comerciante_id: comercianteId,
+    // Como en GET /cobros, el cobrador ve solo sus cobros. Excepción: el historial de UN comerciante
+    // (comerciante_id), que la pantalla de cobro usa para sugerir el monto y el método habituales.
+    cobrador_id: esCobrador && !comercianteId ? req.user.id : req.query.cobrador_id
   };
   const data = await getReportRows(db, options);
   const formato = String(req.query.formato || 'json').toLowerCase();

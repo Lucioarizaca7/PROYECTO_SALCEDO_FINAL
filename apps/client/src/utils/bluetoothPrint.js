@@ -206,8 +206,12 @@ class BluetoothPrinter {
    * Build optimized ESC/POS receipt with minimal commands
    */
   buildOptimizedEscPosReceipt(receipt) {
-    const fecha = new Date(receipt.fecha || Date.now())
-      .toLocaleString('es-PE', { dateStyle: 'short', timeStyle: 'short' });
+    // Fecha del cobro en hora de Lima (no la hora en que se imprime).
+    const fecha = new Date(receipt.fecha_cobro || receipt.fecha || Date.now())
+      .toLocaleString('es-PE', { dateStyle: 'short', timeStyle: 'short', timeZone: 'America/Lima' });
+    const tickets = (receipt.tickets || [])
+      .map((item) => item.texto || `${item.serie} N° ${String(item.numero).padStart(6, '0')}`);
+    const digital = receipt.metodo_pago && receipt.metodo_pago !== 'efectivo' && receipt.codigo_operacion;
 
     // Build minimal receipt content
     const lines = [
@@ -219,9 +223,13 @@ class BluetoothPrinter {
       receipt.provisional ? 'RECIBO PROVISIONAL\n' : 'RECIBO DE PAGO\n',
       `Nro: ${receipt.comprobante || 'N/A'}\n`,
       `Fecha: ${fecha}\n`,
-      `Comerciante: ${(receipt.comerciante || '-').slice(0, 20)}\n`, // Limit length
-      `Concepto: ${(receipt.concepto || 'Liquidación').slice(0, 20)}\n`,
+      `Comerciante: ${(receipt.comerciante || '-').slice(0, 32)}\n`, // 58 mm: unas 32 letras por línea
+      `Concepto: ${(receipt.concepto || 'Liquidación').slice(0, 32)}\n`,
+      ...(receipt.periodo_aplicado ? [`Mes pagado: ${receipt.periodo_aplicado}\n`] : []),
       `Método: ${receipt.metodo_pago || 'efectivo'}\n`,
+      // El número de Yape/Plin/POS y los tickets entregados: el comerciante los necesita para reclamar.
+      ...(digital ? [`Operación: ${receipt.codigo_operacion}\n`] : []),
+      ...(tickets.length ? [`Tickets: ${tickets.join(', ')}\n`] : []),
       `Monto: S/ ${Number(receipt.monto || 0).toFixed(2)}\n`,
       `Hash: ${receipt.hash_idempotencia || 'N/A'}\n`,
       '----------------\n',

@@ -734,7 +734,7 @@ tbody td {
 
 /* ---------- Cobro en el puesto ---------- */
 /* Los tres pasos van en un solo formulario: cada "01 · …" se ve como título de tarjeta, separado por un divisor */
-.payment-form { padding: 22px; }
+.payment-form { padding: 22px; min-width: 0; }
 
 .payment-form .step-label {
   margin: 0 0 12px;
@@ -1308,3 +1308,9 @@ tbody td {
 .cambios-rechazados ul { display: grid; gap: 6px; margin: 8px 0 0; padding: 0; list-style: none; }
 .cambios-rechazados li { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px 12px; }
 .cambios-rechazados-acciones { display: inline-flex; gap: 12px; }
+
+/* Reportes: un cobro anulado se ve tachado y fuera del total; el detalle (motivo, operación) va debajo. */
+.fila-anulada td { color: var(--tinta-2); }
+.fila-anulada td:nth-child(6) { text-decoration: line-through; }
+.celda-detalle { display: block; font-size: 12px; color: var(--tinta-2); overflow-wrap: anywhere; }
+.stat-card small { display: block; font-size: 12px; color: var(--tinta-2); }
