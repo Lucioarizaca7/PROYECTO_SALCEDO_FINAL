@@ -6,7 +6,7 @@ import { apiBase, authFetch } from '../services/session';
 
 const EMPTY_OPERATIONAL = { porZona: [], porRubro: [], porCobrador: [] };
 const EMPTY_FORECAST = { totalProyectado: 0, promedioDiario: 0, porZona: [], porRubro: [] };
-const EMPTY_RISK = { summary: { total: 0, bajo: 0, medio: 0, alto: 0, critico: 0 }, records: [] };
+const EMPTY_RISK = { calculado_el: null, actualizando: false, summary: { total: 0, bajo: 0, medio: 0, alto: 0, critico: 0 }, records: [] };
 
 const toDashboardStats = (stats = {}, sitios) => ({
   recaudacion: formatPEN(stats.recaudacion ?? stats.totalRecaudado ?? 0),

@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { initializeDatabase, getDbStats, getOperationalDashboard, buildReportCsv, getComerciantePreferencias, updateComerciantePreferencias, insertZona, getZonas, insertCalle, getCalles, updateCalle, insertComerciante, getRiskDashboard, todayInLima, indicadoresPanel } from '../src/db.js';
+import { initializeDatabase, getDbStats, getOperationalDashboard, buildReportCsv, getComerciantePreferencias, updateComerciantePreferencias, insertZona, getZonas, insertCalle, getCalles, updateCalle, insertComerciante, getRiskDashboard, esperarRecalculoRiesgo, todayInLima, indicadoresPanel } from '../src/db.js';
 
 test('initializeDatabase crea las tablas principales del modelo', async () => {
   const db = await initializeDatabase();
@@ -105,7 +105,14 @@ test('el riesgo de morosidad se recalcula cada día y no muestra a los dados de 
   [vigente.id, deBaja.id]);
   await db.query("UPDATE modelos_ia_metricas SET generado_en = now() - interval '3 days' WHERE modelo = 'riesgo_morosidad'");
 
+  // El puntaje viejo se muestra mientras se recalcula por detrás (decisión del 11/11/2026), sin los de baja.
+  const mientras = await getRiskDashboard(db, { limit: 20 });
+  assert.equal(mientras.actualizando, true);
+  assert.ok(mientras.records.every((item) => Number(item.comerciante_id) !== Number(deBaja.id)));
+  await esperarRecalculoRiesgo();
+
   const riesgo = await getRiskDashboard(db, { limit: 20 });
+  assert.equal(riesgo.actualizando, false);
   assert.ok(riesgo.records.length > 0);
   assert.ok(riesgo.records.every((item) => item.motivo_principal !== 'puntaje viejo'));
   assert.ok(riesgo.records.every((item) => Number(item.comerciante_id) !== Number(deBaja.id)));

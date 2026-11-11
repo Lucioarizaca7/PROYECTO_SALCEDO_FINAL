@@ -76,7 +76,7 @@ Pendientes menores:
 
 - **Calles sin estado.** La tabla `calles` no tiene columna `estado`; la pantalla ofrecía Activo/Inactivo y no se guardaba (todas salían "Inactivo"). Se quitó el selector. Si hace falta dar de baja calles, va una migración nueva con `estado` y su CHECK.
 - **Barra superior.** Se quitaron la caja "Buscar registro" y el botón de notificaciones porque no tenían ninguna acción. Una búsqueda global sería una función nueva.
-- **Riesgo de morosidad N+1.** `getRiskDashboard` recalcula una vez al día con un `calcularLiquidacion` por comerciante (hasta 300); con un padrón grande conviene la liquidación en lote (paso 6).
+- **Riesgo de morosidad N+1.** `recalcularRiesgoMorosidad` corre por detrás una vez al día: una `calcularDeudaAcumulada` por comerciante, de a 8 en paralelo (los pagos ya salen de una sola consulta). Con decenas de miles de comerciantes conviene la liquidación en lote (paso 6).
 - **Tarifas superpuestas.** El tarifario local tiene varias tarifas activas iguales para `comida` desde 2026-01-01; `findApplicableTariff` toma una. Falta decidir si la base debe impedir dos tarifas vigentes para el mismo rubro, zona y tipo de vía.
 
 ## Revisión de fallos del 10/11/2026
@@ -95,8 +95,9 @@ Corregidos (prueba en `apps/server/tests/fallos-noviembre.test.js` y en las prue
 - **Texto del PIN.**
 - **Motivo de cada ticket:** se agregó la ruta `GET /tickets/lotes/:id/tickets` (`getTicketsDelLote`) y el botón "Ver detalle" en Tickets.
 
+- **Riesgo de morosidad** (11/11/2026, prueba en `tests/riesgo-morosidad.test.js`): puntuaba solo a los primeros 300 y sin la deuda de quien paga por día. Ahora puntúa a todo el padrón, con la deuda acumulada, por detrás. Con 3051 comerciantes tarda ~2,8 s en local, y el panel responde en ~15 ms con el puntaje anterior.
+
 Quedan:
-- **Riesgo de morosidad:** puntúa a los primeros `MAX_COMERCIANTES_RIESGO = 300` comerciantes.
 - **Tamaño del papel al imprimir el recibo:** sale del alto medido en pantalla. Puede sobrar un poco de papel al final.
 
 ## Rediseño visual del Penpot (2026-10-28)

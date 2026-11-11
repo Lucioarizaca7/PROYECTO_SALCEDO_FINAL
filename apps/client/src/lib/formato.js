@@ -33,6 +33,14 @@ export const fechaDeTexto = (valor) => {
   return new Date(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}/.test(texto) ? texto.replace(' ', 'T') : texto);
 };
 
+// Línea bajo el riesgo de morosidad: de cuándo es el puntaje y si se está recalculando por detrás
+// (la primera carga del día muestra el del día anterior mientras tanto).
+export const textoPuntajeRiesgo = ({ calculado_el: calculadoEl, actualizando } = {}) => {
+  const fecha = fechaHoraEnLima(calculadoEl);
+  if (!fecha) return actualizando ? 'Calculando el puntaje…' : '';
+  return `Puntaje del ${fecha}${actualizando ? ' · actualizando…' : ''}`;
+};
+
 const METODOS = { efectivo: 'Efectivo', yape: 'Yape', plin: 'Plin', pos: 'POS' };
 export const textoMetodo = (metodo) => METODOS[String(metodo || '').toLowerCase()] || metodo || '';
 
