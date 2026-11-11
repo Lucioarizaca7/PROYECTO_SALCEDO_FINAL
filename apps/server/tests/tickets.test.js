@@ -8,7 +8,7 @@ import assert from 'node:assert/strict';
 
 import {
   initializeDatabase, createUser, insertComerciante, insertPuesto, insertZona, marcarAsistencias, registrarCobro,
-  syncOfflineBatch, anularCobro, asignarLote, reasignarTickets, devolverTickets, anularTickets, ticketsDelCobrador,
+  syncOfflineBatch, anularCobro, asignarLote, reasignarTickets, devolverTickets, anularTickets, ticketsDelCobrador, getTicketsDelLote,
   getLotes, resumenTickets, cerrarCaja, getAuditTrail, getJornadaPackage, todayInLima, currentPeriod
 } from '../src/db.js';
 
@@ -82,6 +82,19 @@ test('asignar, cruzar, reasignar y devolver lotes', async () => {
   assert.equal(deAna.disponibles[0], 1021);
   assert.equal(deAna.pocos, true, '20 tickets está en el umbral de aviso');
   assert.equal((await getLotes(db, { cobradorId: beto.id })).length, 2);
+
+  // El detalle del lote muestra cada ticket que ya no está disponible, con su motivo.
+  const detalle = await getTicketsDelLote(db, lote.id);
+  assert.equal(detalle.lote.id, lote.id);
+  const usado = detalle.tickets.find((item) => item.numero === 1001);
+  assert.equal(usado.estado, 'usado');
+  assert.ok(usado.comprobante, 'el usado lleva el comprobante de su cobro');
+  const devueltoDetalle = detalle.tickets.find((item) => item.numero === 1045);
+  assert.equal(devueltoDetalle.estado, 'devuelto');
+  assert.equal(devueltoDetalle.motivo, 'Fin de la feria');
+  assert.equal(devueltoDetalle.texto, 'S3 N° 001045');
+  assert.ok(!detalle.tickets.some((item) => item.estado === 'disponible'), 'los disponibles no se listan');
+  await assert.rejects(getTicketsDelLote(db, 999999999), /no encontrado/);
 
   const auditoria = await getAuditTrail(db, { entidad: 'ticket_lotes' });
   for (const texto of [`Lote ${lote.id}:`, `del lote ${lote.id} reasignados`, `del lote ${lote.id} devueltos`]) {

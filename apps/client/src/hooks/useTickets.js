@@ -80,5 +80,18 @@ export function useTickets() {
     if (motivo !== null) await ejecutar(() => enviar(`${apiBase}/tickets/lotes/${lote.id}/devolver`, { ...rango, motivo }));
   };
 
-  return { puedeEditar, lotes, cobradores, series, nuevo, setNuevo, message, asignar, reasignar, devolver };
+  // Detalle de un lote: cada ticket usado, anulado o devuelto con su motivo (lo ven el administrador y el auditor).
+  const [detalle, setDetalle] = useState(null);
+  const verDetalle = async (lote) => {
+    if (detalle?.lote?.id === lote.id) { setDetalle(null); return; }
+    setMessage('');
+    try {
+      const body = await pedir(`${apiBase}/tickets/lotes/${lote.id}/tickets`);
+      setDetalle(body.data);
+    } catch (error) {
+      setMessage(error instanceof TypeError ? 'Sin conexión: el detalle del lote necesita señal.' : error.message);
+    }
+  };
+
+  return { puedeEditar, lotes, cobradores, series, nuevo, setNuevo, message, asignar, reasignar, devolver, detalle, verDetalle, cerrarDetalle: () => setDetalle(null) };
 }

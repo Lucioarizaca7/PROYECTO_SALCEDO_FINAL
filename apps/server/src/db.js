@@ -2703,6 +2703,29 @@ export async function getLotes(db, { cobradorId = null, estado = null } = {}) {
     ORDER BY l.estado, l.serie, l.numero_desde`, params)).map(normalizarLote);
 }
 
+// Detalle de un lote: cada ticket que ya no está disponible (usado, anulado o devuelto), con su motivo,
+// cuándo, quién lo registró y el comprobante del cobro. getLotes da solo los conteos; sin esto el motivo de
+// una anulación o una devolución se guardaba y no se veía en ninguna pantalla.
+export async function getTicketsDelLote(db, loteId) {
+  const lote = await getLote(db, loteId);
+  if (!lote) throw new NotFoundError('Lote de tickets no encontrado');
+  const tickets = await rows(db, `
+    SELECT t.serie, t.numero, t.estado, t.motivo,
+           ${TS('COALESCE(t.baja_en, t.usado_en)')} AS fecha, u.nombre AS registrado_por,
+           cp.numero_correlativo AS comprobante, c.nombre AS comerciante
+    FROM tickets t
+    LEFT JOIN usuarios u ON u.id = t.registrado_por
+    LEFT JOIN transacciones co ON co.id = t.transaccion_id
+    LEFT JOIN comprobantes cp ON cp.id = co.comprobante_id
+    LEFT JOIN comerciantes c ON c.id = co.comerciante_id
+    WHERE t.lote_id = $1 AND t.estado <> 'disponible'
+    ORDER BY t.numero`, [Number(loteId)]);
+  return {
+    lote,
+    tickets: tickets.map((item) => ({ ...item, numero: Number(item.numero), texto: textoTicket(item.serie, item.numero) }))
+  };
+}
+
 async function cobradorParaLote(db, value) {
   const cobrador = await first(db, `
     SELECT u.id, u.nombre FROM usuarios u JOIN roles r ON r.id = u.rol_id WHERE u.id = $1 AND r.codigo = 'cobrador'`, [Number(value) || 0]);

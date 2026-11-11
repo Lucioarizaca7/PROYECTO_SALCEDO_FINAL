@@ -159,6 +159,7 @@ Depende de `tipo_comerciante`:
 - **Lotes:**
   - los asigna solo `super_admin`, con `asignarLote`, `reasignarTickets` (solo los disponibles) y `devolverTickets`;
   - el auditor solo consulta;
+  - **detalle de un lote:** `GET /tickets/lotes/:id/tickets` (`getTicketsDelLote`, super_admin y auditor) devuelve cada ticket usado, anulado o devuelto con su motivo, fecha, quién lo registró y el comprobante del cobro;
   - `UNIQUE (serie, numero)` impide que se crucen los rangos;
   - un lote reasignado mueve sus tickets a un lote nuevo, con `lote_origen_id`.
 - **`registrarCobro` con `tickets: [{ serie, numero }]`:**
