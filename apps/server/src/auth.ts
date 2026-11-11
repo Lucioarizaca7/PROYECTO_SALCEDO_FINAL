@@ -31,7 +31,7 @@ function signAccessToken(user: SessionUser, sessionId?: number) {
   return jwt.sign(
     { id: Number(user.id), email: user.email, rol: user.rol, ...(sessionId ? { sid: Number(sessionId) } : {}) },
     jwtSecret,
-    { expiresIn: config.jwtExpiresIn as jwt.SignOptions['expiresIn'] }
+    { algorithm: 'HS256', expiresIn: config.jwtExpiresIn as jwt.SignOptions['expiresIn'] }
   );
 }
 
@@ -115,7 +115,8 @@ export function requireAuth(req: Request, res: Response, next: NextFunction) {
   const token = authHeader.replace('Bearer ', '').trim();
 
   try {
-    const decoded = jwt.verify(token, jwtSecret);
+    // Solo HS256, el algoritmo con que se firman: un token con otro algoritmo se rechaza.
+    const decoded = jwt.verify(token, jwtSecret, { algorithms: ['HS256'] });
     // jwt.verify puede devolver un string o un objeto según el token
     if (typeof decoded === 'object' && decoded !== null) {
       if (decoded.sid && revokedSessions.has(Number(decoded.sid))) {

@@ -58,12 +58,12 @@ Decidido: con dos puestos marcados el mismo día paga por cada puesto (S/ 3 por 
 Pendientes menores:
 - El PDF de `/comprobantes/:id/pdf` siempre imprime "sha256:local", porque `getCobros` no trae `hash_transaccion`, y carga todos los cobros para buscar uno.
 - El hash de auditoría incluye `Date.now()`, que no se guarda: la cadena verifica los enlaces pero no el contenido.
-- `POST /comerciantes/:id/preferencias` reemplaza todas las claves.
+- (Resuelto el 11/11/2026: `POST /comerciantes/:id/preferencias` ya no borra las demás claves.)
 - Auditoría de seguridad del 2026-10-22 (skill appsec-elite-auditor). Quedan pendientes:
   - la CSP de la app web solo fija `frame-ancestors`, `base-uri`, `object-src` y `form-action`. Falta limitar scripts y estilos, y antes hay que probarlo con el mapa (mapbox-gl usa workers `blob:`) y con Google Fonts;
-  - `jwt.verify` no fija `algorithms: ['HS256']`;
+  - (Resuelto el 11/11/2026: `jwt.sign` y `jwt.verify` fijan HS256.)
   - el HMAC de los recibos usa el mismo secreto que el JWT;
-  - `concepto` y `observaciones` del cobro, y el nombre al editar un comerciante, no tienen largo máximo;
+  - (Resuelto el 11/11/2026 para el cobro: `concepto` hasta 200 y `observaciones` hasta 500 caracteres, se recortan sin perder el cobro; motivo de anulación hasta 300.) El nombre al editar un comerciante sigue sin largo máximo;
   - el log de accesos de Caddy guarda la URL completa (DNI en `?search=`, enlaces firmados de recibos).
 - Las tarifas por rubro que estén en la base real siguen activas: en una zona sin tipo de vía se siguen usando.
 - **Cambio de zona de un puesto:** (Resuelto el 02/11/2026, migración 0019, ver `reglas-negocio.md`.) Queda: cambiar la **zona del comerciante** (tarifa mensual) o el **tipo de vía de una zona** todavía recalcula los meses pasados.
@@ -96,6 +96,18 @@ Corregidos (prueba en `apps/server/tests/fallos-noviembre.test.js` y en las prue
 - **Motivo de cada ticket:** se agregó la ruta `GET /tickets/lotes/:id/tickets` (`getTicketsDelLote`) y el botón "Ver detalle" en Tickets.
 
 - **Riesgo de morosidad** (11/11/2026, prueba en `tests/riesgo-morosidad.test.js`): puntuaba solo a los primeros 300 y sin la deuda de quien paga por día. Ahora puntúa a todo el padrón, con la deuda acumulada, por detrás. Con 3051 comerciantes tarda ~2,8 s en local, y el panel responde en ~15 ms con el puntaje anterior.
+
+## Revisión de fallos del 11/11/2026 (después de unir `main`)
+
+Corregidos, con prueba en `tests/asistencia-lote.test.js`, `tests/auditoria-filtros.test.js`, `padron-import.test.js`, `api-seguridad.test.js` y `apps/client/tests/asistenciaOffline.test.js`:
+- **Asistencia sin señal de un día anterior:** se borraba al cambiar el día.
+- **Un lote de asistencia con una marca inválida** se rechazaba entero.
+- **Asistencia en cualquier fecha pasada** y de comerciantes dados de baja.
+- **Auditoría:** solo los últimos 200 registros, sin fechas ni páginas; la verificación de la cadena no tenía pantalla.
+- **Rubro aproximado** al importar el padrón.
+- **JWT sin algoritmo fijo**, **textos del cobro sin tope** y **preferencias que se borraban** en cada cobro.
+
+Fuera de `main` quedan dos ramas viejas sin unir: `limpieza/archivos-sobrantes` (borra archivos sobrantes) y `fix/arranque-local` (del 19/10, puerto 4000 que ya no se usa).
 
 Quedan:
 - **Tamaño del papel al imprimir el recibo:** sale del alto medido en pantalla. Puede sobrar un poco de papel al final.
@@ -131,7 +143,7 @@ Lo que **no** se trajo, para decidirlo aparte:
 | 45061dd, cd32230 | Varias tarifas por zona y `puestos_historial`: aquí el titular de cada día lo resuelve 0015 y la zona de cada día, 0019 |
 | a35684d | Carnet desde Pagos: el usuario no lo quiere; el arreglo de búsqueda ya estaba aquí |
 
-**Hallazgo al probar los libros (resuelto el 28/10/2026, migración 0018):** una zona que no existía en el Excel caía en la primera zona sin avisar, y la búsqueda aproximada mandaba "Barrio Alto Salcedo" a la zona "SALCEDO". Ahora la zona se busca exacta y el puesto queda marcado "zona por regularizar" (ver `reglas-negocio.md`). Queda pendiente: los **rubros** siguen con búsqueda aproximada (`resolveCatalogId`) y podrían caer en otro rubro parecido. (Resuelto el 28/10/2026: la ruta `PUT /puestos-mapa/:id` dejaba cambiar la zona también al cobrador; ahora solo `super_admin`, ver `seguridad.md`.)
+**Hallazgo al probar los libros (resuelto el 28/10/2026, migración 0018):** una zona que no existía en el Excel caía en la primera zona sin avisar, y la búsqueda aproximada mandaba "Barrio Alto Salcedo" a la zona "SALCEDO". Ahora la zona se busca exacta y el puesto queda marcado "zona por regularizar" (ver `reglas-negocio.md`). (Resuelto el 11/11/2026: los rubros también se buscan exactos; ver `reglas-negocio.md`.) (Resuelto el 28/10/2026: la ruta `PUT /puestos-mapa/:id` dejaba cambiar la zona también al cobrador; ahora solo `super_admin`, ver `seguridad.md`.)
 
 ## Orden de refactorización sugerido (de menor a mayor riesgo)
 

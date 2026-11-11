@@ -1344,3 +1344,4 @@ tbody td {
 .veredicto-detalle ul { margin: 0; padding-left: 18px; color: var(--tinta); font-size: 14px; }
 .veredicto-detalle li + li { margin-top: 4px; }
 .veredicto-nota { margin: 14px 0 0; color: var(--tinta-2); font-size: 12px; }
+.form-message.error { background: var(--rojo-bg); color: var(--rojo-tinta); }

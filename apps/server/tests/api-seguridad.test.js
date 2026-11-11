@@ -7,7 +7,9 @@ import test, { after, before } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { app, startServer } from '../src/index.ts';
+import jwt from 'jsonwebtoken';
 import { loginUser } from '../src/auth.ts';
+import { config } from '../src/config.ts';
 import { MAX_COBROS_LISTADO, calcularLiquidacion, celdaCsv, closeDatabase, currentPeriod, findUserByEmail, getAuditTrail, getComerciantes, getReportRows, getZonas, insertPuesto, registrarCobro } from '../src/db.js';
 import { pool } from '../src/pg.js';
 
@@ -314,4 +316,21 @@ test('un cobro de las 19:30 del 31 de octubre en Salcedo cuenta para octubre', a
   assert.ok(octubre.some((row) => row.id === cobro.id), 'debe aparecer en el reporte de octubre');
   assert.ok(!noviembre.some((row) => row.id === cobro.id), 'no debe aparecer en el reporte de noviembre');
   assert.equal(octubre.find((row) => row.id === cobro.id).fecha, '2026-10-31 19:30:00');
+});
+
+test('un token firmado con otro algoritmo se rechaza aunque use el mismo secreto', async () => {
+  const datos = { id: 1, email: 'admin@salcedo.gob.pe', rol: 'super_admin' };
+  const pedir = (token) => fetch(`${baseUrl}/api/v1/dashboard`, { headers: { Authorization: `Bearer ${token}` } });
+  assert.equal((await pedir(jwt.sign(datos, config.jwtSecret, { algorithm: 'HS256', expiresIn: '5m' }))).status, 200);
+  assert.equal((await pedir(jwt.sign(datos, config.jwtSecret, { algorithm: 'HS512', expiresIn: '5m' }))).status, 401);
+});
+
+test('la auditoría pagina en el servidor y el cobrador no puede consultarla', async () => {
+  const pedir = (rol, query) => fetch(`${baseUrl}/api/v1/auditoria?${query}`, { headers: { Authorization: `Bearer ${tokens[rol]}` } });
+  const respuesta = await pedir('auditor', 'page=1&limit=2');
+  assert.equal(respuesta.status, 200);
+  const body = await respuesta.json();
+  assert.ok(body.data.length <= 2);
+  assert.ok(body.total >= body.data.length, 'el total cuenta todo lo filtrado, no solo la página');
+  assert.equal((await pedir('cobrador', 'page=1')).status, 403);
 });

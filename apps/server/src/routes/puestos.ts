@@ -122,8 +122,17 @@ router.get('/api/v1/asistencias/observaciones', requireAuth, requireRoles(['supe
 
 // Una marca ({ puesto_id, fecha?, asistio, motivo?, observacion? }) o varias ({ marcas: [...] }, p. ej. las guardadas sin señal).
 // Reenviar la misma marca no duplica nada.
+// Un lote ({ marcas }) responde marca por marca: las inválidas vuelven en `rechazadas` sin frenar a las demás.
 router.post('/api/v1/asistencias', requireAuth, requireRoles(['super_admin', 'cobrador']), async (req, res) => {
-  const marcas = Array.isArray(req.body?.marcas) ? req.body.marcas : [req.body || {}];
-  const data = await marcarAsistencias(db, marcas, { usuarioId: req.user.id, audit: auditContext(req, 'MARCAR_ASISTENCIA_FERIAL') });
-  res.status(201).json({ data, message: `${data.length} marca(s) de asistencia guardadas` });
+  const opciones = { usuarioId: req.user.id, rol: req.user.rol, audit: auditContext(req, 'MARCAR_ASISTENCIA_FERIAL') };
+  if (!Array.isArray(req.body?.marcas)) {
+    const data = await marcarAsistencias(db, [req.body || {}], opciones);
+    return res.status(201).json({ data, message: `${data.length} marca(s) de asistencia guardadas` });
+  }
+  const { guardadas, rechazadas } = await marcarAsistencias(db, req.body.marcas, { ...opciones, parcial: true });
+  return res.status(201).json({
+    data: guardadas,
+    rechazadas,
+    message: `${guardadas.length} marca(s) de asistencia guardadas${rechazadas.length ? `, ${rechazadas.length} rechazada(s): ${rechazadas[0].error}` : ''}`
+  });
 });

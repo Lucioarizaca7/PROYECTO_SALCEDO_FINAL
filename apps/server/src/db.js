@@ -341,9 +341,12 @@ async function appendAudit(client, {
   }
 }
 
-export async function getAuditTrail(db, options = {}) {
+// Filtros de la auditoría: comerciante, entidad, usuario, rango de días de Lima y texto libre.
+function filtrosAuditoria(options = {}) {
   const comercianteId = Number(options.comerciante_id || 0);
   const entidad = String(options.entidad || '').trim();
+  const usuarioId = Number(options.usuario_id || 0);
+  const buscar = String(options.buscar || '').trim().slice(0, 100);
   const conditions = [];
   const params = [];
   if (comercianteId) {
@@ -361,14 +364,48 @@ export async function getAuditTrail(db, options = {}) {
     params.push(entidad);
     conditions.push(`a.entidad = $${params.length}`);
   }
-  const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
+  if (usuarioId) {
+    params.push(usuarioId);
+    conditions.push(`a.usuario_id = $${params.length}`);
+  }
+  if (FECHA_RE.test(String(options.desde || ''))) {
+    params.push(options.desde);
+    conditions.push(`${LOCAL('a.fecha')}::date >= $${params.length}::date`);
+  }
+  if (FECHA_RE.test(String(options.hasta || ''))) {
+    params.push(options.hasta);
+    conditions.push(`${LOCAL('a.fecha')}::date <= $${params.length}::date`);
+  }
+  if (buscar) {
+    // strpos y no ILIKE: así un % o un _ que escriba el auditor se busca tal cual.
+    params.push(buscar.toLowerCase());
+    const n = `$${params.length}`;
+    conditions.push(`(strpos(lower(coalesce(a.detalle, '')), ${n}) > 0 OR strpos(lower(a.accion), ${n}) > 0 OR strpos(lower(a.entidad), ${n}) > 0)`);
+  }
+  return { where: conditions.length ? `WHERE ${conditions.join(' AND ')}` : '', params };
+}
+
+// Tope por página de la auditoría. Antes la pantalla mostraba siempre los últimos 200 registros, sin fechas
+// ni páginas: en un día de feria el auditor no llegaba más allá de unas horas (revisión del 11/11/2026).
+const MAX_AUDITORIA_POR_PAGINA = 200;
+
+export async function getAuditTrail(db, options = {}) {
+  const { where, params } = filtrosAuditoria(options);
+  const limit = Math.min(Math.max(Number(options.limit) || MAX_AUDITORIA_POR_PAGINA, 1), MAX_AUDITORIA_POR_PAGINA);
+  const page = Math.max(Number(options.page) || 1, 1);
+  params.push(limit, (page - 1) * limit);
   return rows(db, `
     SELECT a.id, a.usuario_id, u.nombre AS usuario, a.entidad, a.accion, a.detalle,
            a.metodo_http, host(a.ip_origen) AS ip_origen, a.ruta AS ruta_endpoint,
            a.rol AS usuario_rol, a.rol AS rol_usuario, ${TS('a.fecha')} AS fecha
     FROM auditoria_logs a LEFT JOIN usuarios u ON u.id = a.usuario_id
-    ${where} ORDER BY a.id DESC LIMIT 200
+    ${where} ORDER BY a.id DESC LIMIT $${params.length - 1} OFFSET $${params.length}
   `, params);
+}
+
+export async function contarAuditoria(db, options = {}) {
+  const { where, params } = filtrosAuditoria(options);
+  return Number((await first(db, `SELECT COUNT(*)::int AS total FROM auditoria_logs a ${where}`, params)).total);
 }
 
 export async function verifyAuditChain(db) {
@@ -997,17 +1034,27 @@ export async function getComerciantePreferencias(db, comercianteId) {
   return rows(db, 'SELECT id, clave, valor FROM comerciante_preferencias WHERE comerciante_id = $1 ORDER BY id', [Number(comercianteId)]);
 }
 
+// Preferencias: se actualizan solo las claves enviadas. Antes se borraban todas y cada cobro (que guarda la
+// sugerencia express) se llevaba las demás, como notificaciones_activadas.
+const MAX_PREFERENCIAS = 30;
+const MAX_VALOR_PREFERENCIA = 200;
+
 export async function updateComerciantePreferencias(db, comercianteId, payload) {
   // Sin esta comprobación un cuerpo vacío respondía "actualizadas" para un comerciante que no existe.
   if (!(await first(db, 'SELECT 1 FROM comerciantes WHERE id = $1', [Number(comercianteId) || 0]))) {
     throw new NotFoundError('Comerciante no encontrado');
   }
+  const entradas = Object.entries(payload && typeof payload === 'object' ? payload : {});
+  if (entradas.length > MAX_PREFERENCIAS) throw new ValidationError(`Envíe hasta ${MAX_PREFERENCIAS} preferencias`);
+  for (const [clave] of entradas) {
+    if (!/^[a-z0-9_]{1,50}$/.test(clave)) throw new ValidationError(`La preferencia "${String(clave).slice(0, 50)}" no es válida`);
+  }
   await withTransaction(async (client) => {
-    await client.query('DELETE FROM comerciante_preferencias WHERE comerciante_id = $1', [Number(comercianteId)]);
-    for (const [clave, valor] of Object.entries(payload || {})) {
+    for (const [clave, valor] of entradas) {
       await client.query(
-        'INSERT INTO comerciante_preferencias (comerciante_id, clave, valor) VALUES ($1, $2, $3)',
-        [Number(comercianteId), String(clave), String(valor)]
+        `INSERT INTO comerciante_preferencias (comerciante_id, clave, valor) VALUES ($1, $2, $3)
+         ON CONFLICT (comerciante_id, clave) DO UPDATE SET valor = EXCLUDED.valor`,
+        [Number(comercianteId), clave, String(valor ?? '').slice(0, MAX_VALOR_PREFERENCIA)]
       );
     }
   });
@@ -1963,51 +2010,72 @@ function parseMarcaAsistencia(marca) {
 
 // Marca asistencia (asistio: true) o falta de uno o varios puestos que cobran por día cobrado, con un
 // motivo y una observación opcionales. Repetir la misma marca no duplica nada (upsert por puesto y fecha),
-// así una marca hecha sin señal se puede reenviar sin riesgo. No se aceptan fechas futuras ni puestos de
-// quien no cobra por día.
-export async function marcarAsistencias(_db, marcas, { usuarioId = null, audit = null } = {}) {
+// así una marca hecha sin señal se puede reenviar sin riesgo. No se aceptan:
+// - fechas futuras ni puestos de quien no cobra por día;
+// - para el cobrador, días de más de DIAS_COBRO_SIN_SENAL atrás: la misma ventana que el cobro sin señal
+//   (decisión del 22/10/2026). Antes podía marcar un día de hace un año y crear deuda sin revisión. Las
+//   fechas más antiguas las registra el super_admin, y quedan en la auditoría;
+// - comerciantes dados de baja ni puestos inactivos (decisión del usuario, 11/11/2026): una marca que llega
+//   tarde desde un celular sin señal les generaba deuda.
+// `parcial`: un lote (lo guardado sin señal) responde marca por marca, { guardadas, rechazadas }. Antes una
+// sola marca inválida rechazaba todo el lote y el celular lo reintentaba sin fin.
+export async function marcarAsistencias(_db, marcas, { usuarioId = null, audit = null, rol = 'super_admin', parcial = false } = {}) {
   const lista = Array.isArray(marcas) ? marcas : [marcas];
   if (!lista.length || lista.length > 500) throw new ValidationError('Envíe entre 1 y 500 marcas de asistencia');
   const hoy = todayInLima();
+  const desde = rol === 'super_admin' ? null : todayInLima(new Date(Date.now() - DIAS_COBRO_SIN_SENAL * DIA_MS));
   return withTransaction(async (client) => {
     const guardadas = [];
+    const rechazadas = [];
     for (const marca of lista) {
       const puestoId = Number(marca?.puesto_id ?? marca?.puestoId);
       const fecha = String(marca?.fecha || hoy);
-      if (!puestoId) throw new ValidationError('Indique el puesto de la asistencia');
-      if (!/^\d{4}-\d{2}-\d{2}$/.test(fecha) || Number.isNaN(Date.parse(fecha))) throw new ValidationError('La fecha de asistencia debe usar formato AAAA-MM-DD');
-      if (fecha > hoy) throw new ValidationError('No se puede marcar asistencia de un día que todavía no llega');
-      const { asistio, motivo, observacion } = parseMarcaAsistencia(marca);
+      try {
+        if (!puestoId) throw new ValidationError('Indique el puesto de la asistencia');
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(fecha) || Number.isNaN(Date.parse(fecha))) throw new ValidationError('La fecha de asistencia debe usar formato AAAA-MM-DD');
+        if (fecha > hoy) throw new ValidationError('No se puede marcar asistencia de un día que todavía no llega');
+        if (desde && fecha < desde) {
+          throw new ValidationError(`La asistencia del ${fecha} tiene más de ${DIAS_COBRO_SIN_SENAL} días: la registra el administrador`);
+        }
+        const { asistio, motivo, observacion } = parseMarcaAsistencia(marca);
 
-      const puesto = await first(client, `
-        SELECT p.id, c.id AS comerciante_id, c.tipo_comerciante, c.rubro_id, c.zona_id FROM puestos p JOIN comerciantes c ON c.id = p.comerciante_id WHERE p.id = $1`, [puestoId]);
-      if (!puesto) throw new NotFoundError(`El puesto ${puestoId} no existe o no tiene titular`);
-      if (!(await cobraPorAsistencia(client, puesto, fecha.slice(0, 7)))) {
-        throw new ValidationError(`El puesto ${puestoId} no es de un comerciante ferial ni tiene tarifa por día cobrado`);
+        const puesto = await first(client, `
+          SELECT p.id, p.estado AS estado_puesto, c.id AS comerciante_id, c.nombre, c.estado, c.tipo_comerciante, c.rubro_id, c.zona_id
+          FROM puestos p JOIN comerciantes c ON c.id = p.comerciante_id WHERE p.id = $1`, [puestoId]);
+        if (!puesto) throw new NotFoundError(`El puesto ${puestoId} no existe o no tiene titular`);
+        if (puesto.estado === 'inactivo') throw new ValidationError(`${puesto.nombre} está dado de baja: no se registra su asistencia`);
+        if (puesto.estado_puesto === 'inactivo') throw new ValidationError(`El puesto ${puestoId} está dado de baja: no se registra asistencia`);
+        if (!(await cobraPorAsistencia(client, puesto, fecha.slice(0, 7)))) {
+          throw new ValidationError(`El puesto ${puestoId} no es de un comerciante ferial ni tiene tarifa por día cobrado`);
+        }
+
+        // Corregir una marca no cambia de quién es: el titular queda el de la primera marca de ese día.
+        const fila = await first(client, `
+          INSERT INTO asistencias_feriales (puesto_id, fecha, sesion, marca, fuente, registrado_por, motivo, observacion, comerciante_id)
+          VALUES ($1, $2, '', $3, 'app', $4, $5, $6, $7)
+          ON CONFLICT (puesto_id, fecha, sesion) DO UPDATE
+            SET marca = EXCLUDED.marca, fuente = EXCLUDED.fuente, registrado_por = EXCLUDED.registrado_por, registrado_en = now(),
+                motivo = EXCLUDED.motivo, observacion = EXCLUDED.observacion
+          RETURNING id, puesto_id, comerciante_id, ${DAY('fecha')} AS fecha, marca, asistio, motivo, observacion`,
+        [puestoId, fecha, asistio ? 'P' : 'F', usuarioId ? Number(usuarioId) : null, motivo, observacion, Number(puesto.comerciante_id)]);
+        guardadas.push({ ...fila, id: Number(fila.id), puesto_id: Number(fila.puesto_id), comerciante_id: Number(fila.comerciante_id) });
+      } catch (error) {
+        // Solo los errores del dato se reportan por marca; uno de la base corta la transacción.
+        if (!parcial || !(error instanceof ValidationError || error instanceof NotFoundError)) throw error;
+        rechazadas.push({ puesto_id: puestoId || null, fecha, error: error.message });
       }
-
-      // Corregir una marca no cambia de quién es: el titular queda el de la primera marca de ese día.
-      const fila = await first(client, `
-        INSERT INTO asistencias_feriales (puesto_id, fecha, sesion, marca, fuente, registrado_por, motivo, observacion, comerciante_id)
-        VALUES ($1, $2, '', $3, 'app', $4, $5, $6, $7)
-        ON CONFLICT (puesto_id, fecha, sesion) DO UPDATE
-          SET marca = EXCLUDED.marca, fuente = EXCLUDED.fuente, registrado_por = EXCLUDED.registrado_por, registrado_en = now(),
-              motivo = EXCLUDED.motivo, observacion = EXCLUDED.observacion
-        RETURNING id, puesto_id, comerciante_id, ${DAY('fecha')} AS fecha, marca, asistio, motivo, observacion`,
-      [puestoId, fecha, asistio ? 'P' : 'F', usuarioId ? Number(usuarioId) : null, motivo, observacion, Number(puesto.comerciante_id)]);
-      guardadas.push({ ...fila, id: Number(fila.id), puesto_id: Number(fila.puesto_id), comerciante_id: Number(fila.comerciante_id) });
     }
-    if (audit) {
+    if (audit && guardadas.length) {
       await appendAudit(client, {
         ...audit,
         usuarioId: audit.usuarioId ?? usuarioId,
         entidad: 'asistencias_feriales',
-        detalle: `${guardadas.length} marca(s) de asistencia: ${guardadas.filter((g) => g.asistio).length} asistió, ${guardadas.filter((g) => !g.asistio).length} faltó, ${guardadas.filter((g) => g.motivo || g.observacion).length} con observación`,
+        detalle: `${guardadas.length} marca(s) de asistencia: ${guardadas.filter((g) => g.asistio).length} asistió, ${guardadas.filter((g) => !g.asistio).length} faltó, ${guardadas.filter((g) => g.motivo || g.observacion).length} con observación${rechazadas.length ? `; ${rechazadas.length} rechazada(s)` : ''}`,
         recursoId: guardadas[0]?.id ?? null,
         payloadNuevo: guardadas
       });
     }
-    return guardadas;
+    return parcial ? { guardadas, rechazadas } : guardadas;
   });
 }
 
@@ -2181,6 +2249,7 @@ export async function anularCobro(db, id, { motivo, usuarioId, audit = null }) {
   }
   const razon = String(motivo || '').trim();
   if (razon.length < 5) throw new ValidationError('Indique el motivo de la anulación (al menos 5 caracteres)');
+  if (razon.length > MAX_MOTIVO_ANULACION) throw new ValidationError(`El motivo de la anulación no puede pasar de ${MAX_MOTIVO_ANULACION} caracteres`);
 
   const previous = await first(db, 'SELECT * FROM transacciones WHERE id = $1 FOR UPDATE', [Number(id)]);
   if (!previous) throw new NotFoundError('Cobro no encontrado');
@@ -2325,6 +2394,10 @@ function createTransactionHash({ comercianteId, cobradorId, monto, concepto, per
 // Si db ya es una conexión dentro de una transacción (PoolClient) se reutiliza.
 // allowExcess (cobros offline): el dinero ya se recibió en campo, así que un cobro que excede el saldo
 // o cae en un periodo sin devengo no se rechaza: se registra y queda "observado" para revisión manual.
+const MAX_CONCEPTO_COBRO = 200;
+const MAX_NOTA_COBRO = 500;
+const MAX_MOTIVO_ANULACION = 300;
+
 export async function registrarCobro(db, payload, { audit = null, allowExcess = false } = {}) {
   if (typeof db?.release !== 'function') {
     return withTransaction((client) => registrarCobro(client, payload, { audit, allowExcess }));
@@ -2334,9 +2407,11 @@ export async function registrarCobro(db, payload, { audit = null, allowExcess = 
   const cobradorId = Number(payload.cobrador_id);
   const monto = Number(payload.monto);
   const metodoPago = String(payload.metodo_pago || '').trim();
-  const concepto = String(payload.concepto || 'Liquidación de deuda').trim();
+  // Textos libres con tope (antes sin largo máximo, auditoría del 22/10/2026). Se recortan en vez de rechazar:
+  // un cobro sin señal ya tiene el dinero recibido y no se pierde por una nota larga.
+  const concepto = cleanText(payload.concepto, MAX_CONCEPTO_COBRO) || 'Liquidación de deuda';
   const codigoOperacion = codigoOperacionDelPago(payload, metodoPago);
-  const observaciones = String(payload.observaciones || '').trim();
+  const observaciones = cleanText(payload.observaciones, MAX_NOTA_COBRO) || '';
   const allowedMethods = ['efectivo', 'yape', 'plin', 'pos'];
 
   if (!comercianteId || !cobradorId || !Number.isFinite(monto) || monto <= 0 || !allowedMethods.includes(metodoPago)) {

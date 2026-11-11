@@ -110,3 +110,14 @@ test('los cobros rechazados al sincronizar muestran el nombre del comerciante', 
   const fila = (await getSyncErrors(pool)).find((item) => Number(item.payload?.comerciante_id) === merchant.id);
   assert.equal(fila.comerciante, merchant.nombre);
 });
+
+test('la nota y el concepto del cobro tienen tope: se recortan sin perder el cobro', async () => {
+  const merchant = await nuevoComerciante();
+  const cobro = await registrarCobro(pool, {
+    comerciante_id: merchant.id, cobrador_id: 1, monto: 5, metodo_pago: 'efectivo',
+    observaciones: 'x'.repeat(5000), concepto: 'c'.repeat(5000)
+  });
+  const { rows: [fila] } = await pool.query('SELECT concepto, observaciones FROM transacciones WHERE id = $1', [cobro.id]);
+  assert.equal(fila.observaciones.length, 500);
+  assert.equal(fila.concepto.length, 200);
+});

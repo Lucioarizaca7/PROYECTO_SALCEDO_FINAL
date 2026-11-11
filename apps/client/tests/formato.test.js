@@ -4,7 +4,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { textoPuntajeRiesgo, textoTarifa } from '../src/lib/formato.js';
+import { textoPuntajeRiesgo, textoTarifa, textoVerificacion } from '../src/lib/formato.js';
 
 test('sin cobro por día muestra el monto de la tarifa', () => {
   assert.equal(textoTarifa({ tarifa: { monto_fijo: 90 } }), 'S/ 90');
@@ -31,4 +31,12 @@ test('el riesgo de morosidad dice de cuándo es el puntaje y si se está recalcu
   assert.equal(textoPuntajeRiesgo({ calculado_el: null, actualizando: true }), 'Calculando el puntaje…');
   assert.equal(textoPuntajeRiesgo({}), '');
   assert.equal(textoPuntajeRiesgo(), '');
+});
+
+test('la verificación de la auditoría dice si la cadena está íntegra o dónde se rompe', () => {
+  assert.equal(textoVerificacion({ valid: true, total: 120 }), 'Cadena íntegra: 120 registro(s) enlazados sin cambios.');
+  assert.match(textoVerificacion({ valid: false, broken_at: 57 }), /se rompe en el registro 57/);
+  assert.equal(textoVerificacion({ cargando: true }), 'Verificando…');
+  assert.equal(textoVerificacion({ error: 'Sin conexión' }), 'Sin conexión');
+  assert.equal(textoVerificacion(null), '');
 });

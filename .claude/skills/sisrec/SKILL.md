@@ -100,7 +100,7 @@ Detalle y dónde vive cada control: `references/seguridad.md`. Lo mínimo en cad
 
 - **Secretos**: solo por variables de entorno leídas en `config.ts` (ningún otro módulo lee `process.env`). Nada de claves, tokens ni contraseñas en el código, en pruebas que se commitean con valores reales, ni en el chat.
 - Los usuarios demo existen **solo fuera de producción** (`config.isProduction` lo impide). No se agregan usuarios nuevos con clave en el código: en producción se usa `npm run crear-admin` / `crear-usuario`.
-- **Rutas**: toda ruta privada lleva `requireAuth` + `requireRoles([...])` explícitos (o `...staffOnly`); si modifica datos, `auditMutation`. Una ruta GET nueva sube el conteo fijo de `tests/api-seguridad.test.js` (hoy 40) y se agrega una prueba de que un rol sin permiso recibe 403.
+- **Rutas**: toda ruta privada lleva `requireAuth` + `requireRoles([...])` explícitos (o `...staffOnly`); si modifica datos, `auditMutation`. Una ruta GET nueva sube el conteo fijo de `tests/api-seguridad.test.js` (hoy 41) y se agrega una prueba de que un rol sin permiso recibe 403.
 - **Sesión**: JWT de acceso corto en memoria; refresh en la cookie HttpOnly `sisrec_refresh`. Ningún token en `localStorage`/`sessionStorage`, en la URL ni en logs.
 - **Contraseñas y llave del carnet**: contraseñas con bcrypt. El portal del comerciante entra solo con la llave del carnet (no hay PIN desde la 0017): se guarda su huella SHA-256, se muestra una vez al emitir el carnet y nunca se audita en claro.
 - **CORS**: lista blanca (`FRONTEND_URL`); jamás `origin: '*'` con `credentials`.

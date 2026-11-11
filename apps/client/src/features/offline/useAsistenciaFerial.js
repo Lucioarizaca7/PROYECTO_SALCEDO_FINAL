@@ -22,7 +22,10 @@ export function useAsistenciaFerial({ isOnline, jornadaMeta }) {
   useEffect(() => {
     (async () => {
       setFeriales(ferialesDelPadron(await padronStore.getAll().catch(() => [])));
-      setEstado(estadoDelDia(await jornadaStore.get(CLAVE_ASISTENCIAS).catch(() => null), hoyEnLima()));
+      const cargado = estadoDelDia(await jornadaStore.get(CLAVE_ASISTENCIAS).catch(() => null), hoyEnLima());
+      setEstado(cargado);
+      // Lo que quedó sin subir (también de días anteriores) sale apenas hay señal.
+      if (navigator.onLine && marcasPendientes(cargado).length) enviar(cargado);
     })();
   }, [jornadaMeta?.descargadoEn]);
 
@@ -43,10 +46,15 @@ export function useAsistenciaFerial({ isOnline, jornadaMeta }) {
       });
       const body = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(body.message || 'No se pudo subir la asistencia');
+      // El servidor guarda las buenas y devuelve las rechazadas (dado de baja, día muy antiguo) una por una.
+      const rechazadas = Array.isArray(body.rechazadas) ? body.rechazadas : [];
+      const enviadas = pendientes.filter((item) => !rechazadas.some((otra) => Number(otra.puesto_id) === item.puesto_id && otra.fecha === item.fecha));
       // Se relee lo guardado: el cobrador pudo cambiar una marca mientras se enviaba.
       const guardado = estadoDelDia(await jornadaStore.get(CLAVE_ASISTENCIAS).catch(() => null), actual.fecha);
-      await guardar(marcarEnviadas(guardado.fecha === actual.fecha ? guardado : actual, pendientes));
-      setMensaje(`${pendientes.length} marca(s) de asistencia subidas.`);
+      await guardar(marcarEnviadas(guardado.fecha === actual.fecha ? guardado : actual, enviadas, rechazadas));
+      setMensaje(rechazadas.length
+        ? `${enviadas.length} marca(s) subidas; ${rechazadas.length} no se registraron: ${rechazadas.map((item) => item.error).join(' · ')}`
+        : `${pendientes.length} marca(s) de asistencia subidas.`);
     } catch (error) {
       setMensaje(error instanceof TypeError ? 'Sin conexión: la asistencia queda guardada en el celular.' : error.message);
     } finally {

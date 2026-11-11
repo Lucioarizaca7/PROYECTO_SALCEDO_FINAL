@@ -42,9 +42,15 @@ export function ferialesDelPadron(padron = []) {
       || String(a.nombresRazonSocial).localeCompare(String(b.nombresRazonSocial)));
 }
 
-/** Las marcas valen solo el día en que se hicieron: otro día empieza vacío. */
+/**
+ * Las marcas en pantalla son las del día: otro día empieza vacío. Las de un día anterior que no llegaron a
+ * subir pasan a `anteriores` y se siguen enviando con su fecha. Antes se perdían: un día entero sin señal
+ * no generaba deuda (revisión del 11/11/2026).
+ */
 export function estadoDelDia(guardado, hoy) {
-  return guardado && guardado.fecha === hoy ? guardado : { clave: CLAVE_ASISTENCIAS, fecha: hoy, marcas: {} };
+  if (guardado && guardado.fecha === hoy) return { ...guardado, anteriores: guardado.anteriores || [] };
+  const anteriores = guardado ? marcasPendientes(guardado) : [];
+  return { clave: CLAVE_ASISTENCIAS, fecha: hoy, marcas: {}, anteriores };
 }
 
 export function aplicarMarca(estado, puestoId, asistio, ahora = new Date(), { motivo = null, observacion = null } = {}) {
@@ -58,9 +64,9 @@ export function aplicarMarca(estado, puestoId, asistio, ahora = new Date(), { mo
   };
 }
 
-/** Lo que falta subir, con la forma que espera POST /asistencias. */
+/** Lo que falta subir (de días anteriores y de hoy), con la forma que espera POST /asistencias. */
 export function marcasPendientes(estado) {
-  return Object.entries(estado.marcas)
+  return [...(estado.anteriores || []), ...Object.entries(estado.marcas)
     .filter(([, marca]) => !marca.enviado)
     .map(([puestoId, marca]) => ({
       puesto_id: Number(puestoId),
@@ -68,19 +74,30 @@ export function marcasPendientes(estado) {
       asistio: marca.asistio,
       ...(marca.motivo ? { motivo: marca.motivo } : {}),
       ...(marca.observacion ? { observacion: marca.observacion } : {})
-    }));
+    }))];
 }
 
 const mismaMarca = (actual, enviada) => actual.asistio === enviada.asistio
   && (actual.motivo ?? null) === (enviada.motivo ?? null)
   && (actual.observacion ?? null) === (enviada.observacion ?? null);
 
-/** Tras subirlas: solo se marcan como enviadas las que no cambiaron mientras tanto. */
-export function marcarEnviadas(estado, enviadas) {
+const mismoDia = (item, otra) => Number(item.puesto_id) === Number(otra.puesto_id) && item.fecha === otra.fecha;
+
+/**
+ * Tras subirlas: solo se marcan como enviadas las que no cambiaron mientras tanto. Las que el servidor
+ * rechazó (dado de baja, fecha muy antigua) tampoco se reintentan: reenviarlas daría el mismo error.
+ */
+export function marcarEnviadas(estado, enviadas, rechazadas = []) {
   const marcas = { ...estado.marcas };
   for (const item of enviadas) {
-    const actual = marcas[String(item.puesto_id)];
+    const actual = item.fecha === estado.fecha ? marcas[String(item.puesto_id)] : null;
     if (actual && mismaMarca(actual, item)) marcas[String(item.puesto_id)] = { ...actual, enviado: true };
   }
-  return { ...estado, marcas };
+  for (const item of rechazadas) {
+    const actual = item.fecha === estado.fecha ? marcas[String(item.puesto_id)] : null;
+    if (actual) marcas[String(item.puesto_id)] = { ...actual, enviado: true, rechazo: item.error || 'Rechazada' };
+  }
+  const anteriores = (estado.anteriores || []).filter((item) => !enviadas.some((otra) => mismoDia(item, otra) && mismaMarca(item, otra))
+    && !rechazadas.some((otra) => mismoDia(item, otra)));
+  return { ...estado, marcas, anteriores };
 }

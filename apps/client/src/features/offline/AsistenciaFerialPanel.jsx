@@ -55,6 +55,7 @@ export function AsistenciaFerialPanel({ isOnline, jornada }) {
               <div>
                 <strong>{ferial.nombresRazonSocial}</strong>
                 <span>{ferial.codigoPuesto || 'Puesto conservado'} · {ferial.zona || 'Sin zona'}{marca && !marca.enviado ? ' · sin subir' : ''}</span>
+                {marca?.rechazo && <span className="status danger">No se registró: {marca.rechazo}</span>}
                 {marca?.motivo && <span>Observación: {textoMotivo(marca.motivo)}{marca.observacion ? ` — ${marca.observacion}` : ''}</span>}
               </div>
               <div className="field-queue-actions">
