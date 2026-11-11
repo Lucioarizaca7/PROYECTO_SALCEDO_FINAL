@@ -66,6 +66,14 @@ Depende de `tipo_comerciante`:
   - No marca cuando se paga un mes anterior.
   - Si el cobro se rechaza, la marca no queda.
   - Así un cobro sin señal que llega antes que la marca no va a revisión.
+- **Cambio de zona de un puesto** (decisión del usuario, 02/11/2026, migración 0019): la zona nueva rige desde el día del cambio. Cada marca guarda su zona (`asistencias_feriales.zona_id`), así que los días anteriores conservan su tarifa y el mismo mes puede tener dos tramos (dos filas en `puestos_cobrados`). Una marca que llega después pero es de antes del cambio toma la zona de su fecha (`zona_de_asistencia`).
+  - **Excepción:** asignar una "zona por regularizar" corrige también los días pasados, porque la zona anterior era provisional. Puede subir o bajar la deuda de esos días; lo ya pagado no se toca.
+  - Un trigger registra cada cambio en `puestos_zona_cambios`, sea cual sea el camino (Sitios, mapa o padrón).
+  - No cubre la tarifa mensual, que depende de la zona del comerciante.
+- **Tarifas sin cruces** (decisión del usuario, 02/11/2026, migración 0020): dos tarifas activas del mismo rubro, zona y tipo de vía no pueden cruzar sus fechas; lo impide el trigger `tarifa_sin_cruces`.
+  - Crear una que empieza después cierra la anterior el día previo (`insertTarifa`, `tarifas_cerradas` en la respuesta y en la auditoría).
+  - Se rechaza con 409 si empieza el mismo día o antes, o si termina antes que la anterior, porque quedaría un tramo sin tarifa.
+  - Editar nunca cierra otra tarifa: si las fechas se cruzan, se rechaza.
 - Las tarifas generales de la migración 0013 rigen desde el mes en que se aplicó. Los meses anteriores siguen con la tarifa del rubro, así cargar el tipo de vía no reescribe la historia.
 - Un mes sin días cobrados devuelve `no_devengo` pero con `monto_pagado` (lo pagado se ve y la deuda acumulada lo muestra).
 - `diasAsistidos`: la marca de la app (`sesion = ''`) manda sobre las del Excel del mismo puesto y día ("no salió" anula una P importada).
@@ -113,6 +121,11 @@ Depende de `tipo_comerciante`:
 ## Panel y riesgo
 
 - **Morosidad del panel** (`indicadoresPanel`, auditoría 2026-10-27): deuda pendiente del periodo ÷ (deuda pendiente + lo cobrado en el periodo) × 100, a un decimal. Es la parte de lo devengado que sigue impaga. Antes se dividía la deuda entre sí misma (siempre 0 % o 100 %). Si el usuario prefiere otra definición (p. ej. % de comerciantes con deuda), se cambia solo en esa función.
+- **Veredicto de recaudación** (`veredictoRecaudacion.js`, decisión del usuario, 02/11/2026): compara el primer mes proyectado con el promedio de los últimos 3 meses completos.
+  - Más de +5 % es "sube", menos de −5 % es "baja" y lo demás es "estable".
+  - "No se puede concluir" si hay menos de 3 meses, si no hubo cobros en esos 3 meses, si no se pudo medir el error, o si el error (MAPE) es mayor que el cambio; para "estable", mayor que 5 %.
+  - La causa compara, por zona del comerciante, el último mes con el promedio de hasta 3 meses anteriores (umbrales confirmados por el usuario el 05/11/2026, en las constantes del módulo): asistencia que cae 10 % o más, cobro por día marcado que cae 10 % o más, y una zona que concentra 60 % o más de la caída.
+  - Las acciones son sugerencias: nada se ejecuta solo. Habla de recaudación, no de ventas, porque el sistema no conoce lo vendido.
 - **Riesgo de morosidad** (`getRiskDashboard`, `recalcularRiesgoMorosidad`; decisión del usuario, 11/11/2026):
   - el puntaje se recalcula una vez por día de Lima para **todos** los comerciantes no dados de baja, sin tope (antes, los primeros 300);
   - la deuda del puntaje es la **acumulada** (`calcularDeudaAcumulada`: meses atrasados y días cobrados sin pagar). Antes era solo el mes en curso, y a quien paga por día se le contaba 0;

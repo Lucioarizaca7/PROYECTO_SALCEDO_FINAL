@@ -5,6 +5,7 @@ import { useReportes } from '../hooks/useReportes';
 import { textoMetodo, textoPuntajeRiesgo } from '../lib/formato';
 import { hoyEnLima } from '../services/jornadaOffline';
 import { textoTicket } from '../services/ticketsOffline';
+import { VeredictoRecaudacion } from '../features/analitica/VeredictoRecaudacion';
 import { apiBase, authFetch } from '../services/session';
 
 // Páginas de solo lectura: muestran datos que ya cargó useDatosSisrec (y, en Analítica, el tiempo por cobro).
@@ -161,6 +162,8 @@ export function AnaliticaPage() {
           <p>Proyección de recaudación con suavizado exponencial sobre los cobros reales, con su error medido, y riesgo de morosidad.</p>
         </div>
       </div>
+
+      <VeredictoRecaudacion veredicto={predictiveData.veredicto} />
 
       <div className="stats-grid">
         <div className="stat-card">

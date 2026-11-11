@@ -8,6 +8,7 @@ import { pool, withTransaction, closePool, testSchema } from './pg.js';
 import { config } from './config.js';
 import { ValidationError, NotFoundError, ConflictError, ForbiddenError } from './errors.js';
 import { pronosticarSeries } from './prediccion.js';
+import { veredictoRecaudacion } from './veredictoRecaudacion.js';
 
 const migrationsDir = join(dirname(fileURLToPath(import.meta.url)), '..', 'migrations');
 
@@ -482,6 +483,21 @@ async function enGrupos(db, lista, fn) {
 // en 3 s, el respaldo local con el mismo algoritmo (prediccion.js). Nada de factores fijos.
 const MESES_HISTORIA = 12;
 
+// Días marcados por mes y zona del comerciante, la misma zona con la que se agrupan los cobros en la proyección.
+// Sirve para saber si una caída viene de menos asistencia o de que asisten y no pagan. Como en la liquidación,
+// la marca de la app manda sobre las del Excel de ese puesto y día.
+function diasMarcadosPorZona(db, desde, hasta) {
+  return rows(db, `
+    SELECT to_char(a.fecha, 'YYYY-MM') AS mes, c.zona_id, z.nombre AS zona, COUNT(DISTINCT (a.puesto_id, a.fecha))::int AS dias
+    FROM asistencias_feriales a
+    JOIN comerciantes c ON c.id = a.comerciante_id
+    LEFT JOIN zonas z ON z.id = c.zona_id
+    WHERE a.asistio AND to_char(a.fecha, 'YYYY-MM') BETWEEN $1 AND $2
+      AND (a.sesion = '' OR NOT EXISTS (
+        SELECT 1 FROM asistencias_feriales app WHERE app.puesto_id = a.puesto_id AND app.fecha = a.fecha AND app.sesion = ''))
+    GROUP BY 1, 2, 3`, [desde, hasta]);
+}
+
 async function proyectarSeries(series, horizonteMeses) {
   if (config.analyticsUrl) {
     try {
@@ -560,6 +576,19 @@ export async function generateForecastProjection(db, options = {}) {
     .sort((a, b) => b.proyectado - a.proyectado);
 
   const totalProyectado = alHorizonte(total);
+
+  // Una zona con marcas y sin cobros también cuenta: es justo el caso de "asisten y no pagan".
+  const zonasVeredicto = new Map(Object.keys(series).filter((clave) => clave.startsWith('zona:')).map((clave) => [clave, {
+    zona: nombres[clave], cobrado: series[clave], dias: usados.map(() => 0)
+  }]));
+  if (usados.length) {
+    for (const fila of await diasMarcadosPorZona(db, usados[0], usados[usados.length - 1])) {
+      const clave = `zona:${fila.zona_id}`;
+      if (!zonasVeredicto.has(clave)) zonasVeredicto.set(clave, { zona: fila.zona || 'Sin nombre', cobrado: usados.map(() => 0), dias: usados.map(() => 0) });
+      zonasVeredicto.get(clave).dias[usados.indexOf(fila.mes)] = fila.dias;
+    }
+  }
+
   const result = {
     periodo: period,
     horizonte_dias: horizonDays,
@@ -579,6 +608,12 @@ export async function generateForecastProjection(db, options = {}) {
     },
     serie: usados.map((periodo, i) => ({ periodo, monto: series.total[i] })),
     proyeccion_mensual: total?.proyeccion_mensual || [],
+    veredicto: veredictoRecaudacion({
+      serie: series.total,
+      proyectado: total?.proyeccion_mensual?.[0] ?? 0,
+      mape: total?.mape ?? null,
+      zonas: [...zonasVeredicto.values()]
+    }),
     porZona: desglose('zona:', 'zona_id', 'zona'),
     porRubro: desglose('rubro:', 'rubro_id', 'rubro')
   };
@@ -1424,13 +1459,45 @@ function validateTariff(payload) {
   return { rubroId, zonaId, tipoVia, tipoTarifa, montoFijo, montoVariable, unidadMedida, vigenciaInicio, vigenciaFin, version };
 }
 
+// Tarifas activas del mismo rubro, zona y tipo de vía cuyas fechas se cruzan con las indicadas (migración 0020).
+function tarifasQueSeCruzan(db, tariff, excluirId = null) {
+  return rows(db, `
+    SELECT id, vigencia_inicio::text AS vigencia_inicio, vigencia_fin::text AS vigencia_fin FROM tarifas
+    WHERE activo AND id <> COALESCE($1::int, 0)
+      AND rubro_id IS NOT DISTINCT FROM $2::int AND zona_id IS NOT DISTINCT FROM $3::int AND tipo_via IS NOT DISTINCT FROM $4::text
+      AND daterange(vigencia_inicio, vigencia_fin, '[]') && daterange($5::date, $6::date, '[]')
+    ORDER BY vigencia_inicio`,
+  [excluirId, tariff.rubroId, tariff.zonaId, tariff.tipoVia, tariff.vigenciaInicio, tariff.vigenciaFin]);
+}
+
+function errorCruceTarifa({ vigencia_inicio: inicio, vigencia_fin: fin }) {
+  const fechas = fin ? `del ${inicio} al ${fin}` : `desde el ${inicio} en adelante`;
+  return new ConflictError(`Ya hay una tarifa vigente ${fechas} para el mismo rubro, zona y tipo de vía. Corrija las fechas para que no se crucen`);
+}
+
+// Una tarifa que empieza después cierra la anterior el día previo; los meses pasados no cambian. Si empieza el
+// mismo día o antes, o termina antes que la anterior (quedaría un tramo sin tarifa), se rechaza.
 export async function insertTarifa(db, payload) {
   const tariff = validateTariff({ ...payload, version: payload.version ?? 1 });
-  const created = await first(db, `
-    INSERT INTO tarifas (rubro_id, zona_id, tipo_via, tipo_tarifa, monto_fijo, monto_variable, unidad_medida, vigencia_inicio, vigencia_fin, activo, version)
-    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, TRUE, $10) RETURNING id`,
-  [tariff.rubroId, tariff.zonaId, tariff.tipoVia, tariff.tipoTarifa, tariff.montoFijo, tariff.montoVariable, tariff.unidadMedida, tariff.vigenciaInicio, tariff.vigenciaFin, tariff.version]);
-  return findTarifa(db, created.id);
+  const { id, cerradas } = await withTransaction(async (client) => {
+    const cruces = await tarifasQueSeCruzan(client, tariff);
+    const noSeCierra = cruces.find((otra) => otra.vigencia_inicio >= tariff.vigenciaInicio
+      || (tariff.vigenciaFin && (!otra.vigencia_fin || otra.vigencia_fin > tariff.vigenciaFin)));
+    if (noSeCierra) throw errorCruceTarifa(noSeCierra);
+
+    const cierre = cruces.length ? await client.query(`
+      UPDATE tarifas SET vigencia_fin = $1::date - 1, version = version + 1
+      WHERE id = ANY($2::int[]) RETURNING id, vigencia_fin::text AS vigencia_fin`,
+    [tariff.vigenciaInicio, cruces.map((otra) => otra.id)]) : { rows: [] };
+
+    const created = await first(client, `
+      INSERT INTO tarifas (rubro_id, zona_id, tipo_via, tipo_tarifa, monto_fijo, monto_variable, unidad_medida, vigencia_inicio, vigencia_fin, activo, version)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, TRUE, $10) RETURNING id`,
+    [tariff.rubroId, tariff.zonaId, tariff.tipoVia, tariff.tipoTarifa, tariff.montoFijo, tariff.montoVariable, tariff.unidadMedida, tariff.vigenciaInicio, tariff.vigenciaFin, tariff.version]);
+    return { id: created.id, cerradas: cierre.rows };
+  });
+  // Va en la respuesta para que la auditoría de la ruta registre también el cierre de la anterior.
+  return { ...(await findTarifa(db, id)), tarifas_cerradas: cerradas };
 }
 
 export async function updateTarifa(db, id, payload) {
@@ -1454,6 +1521,12 @@ export async function updateTarifa(db, id, payload) {
     vigencia_fin: payload.vigencia_fin ?? current.vigencia_fin,
     version: current.version + 1
   });
+
+  // Editar nunca cierra otra tarifa: solo crear lo hace. Una tarifa inactiva no choca con ninguna.
+  if (current.estado) {
+    const [cruce] = await tarifasQueSeCruzan(db, tariff, Number(id));
+    if (cruce) throw errorCruceTarifa(cruce);
+  }
 
   const updated = await db.query(`
     UPDATE tarifas
@@ -1515,14 +1588,16 @@ async function findApplicableTariff(db, merchant, periodo) {
 // día: si el cobrador marcó "no salió", la P importada no cuenta.
 // Los días son del titular de cada marca (a.comerciante_id, migración 0015), no del que tiene el puesto hoy:
 // si el puesto pasó a otro o se liberó, lo marcado antes lo sigue debiendo quien lo tenía.
+// La zona también es la de la marca (migración 0019): si el puesto cambió de zona en el mes, sale una fila por
+// cada zona, porque cada tramo paga su tarifa.
 async function asistenciasPorPuesto(db, merchantId, periodo) {
   const data = await rows(db, `
-    SELECT p.id AS puesto_id, p.codigo_puesto, p.zona_id, p.metros_cuadrados, COUNT(DISTINCT a.fecha)::int AS dias
+    SELECT p.id AS puesto_id, p.codigo_puesto, a.zona_id, p.metros_cuadrados, COUNT(DISTINCT a.fecha)::int AS dias
     FROM asistencias_feriales a JOIN puestos p ON p.id = a.puesto_id
     WHERE a.comerciante_id = $1 AND a.asistio AND to_char(a.fecha, 'YYYY-MM') = $2
       AND (a.sesion = '' OR NOT EXISTS (
         SELECT 1 FROM asistencias_feriales app WHERE app.puesto_id = a.puesto_id AND app.fecha = a.fecha AND app.sesion = ''))
-    GROUP BY p.id ORDER BY p.id`,
+    GROUP BY p.id, a.zona_id ORDER BY p.id, MIN(a.fecha)`,
   [merchantId, periodo]);
   return data.map((fila) => ({ ...fila, puesto_id: Number(fila.puesto_id), zona_id: Number(fila.zona_id) }));
 }
@@ -1633,8 +1708,8 @@ export async function calcularDeudaAcumulada(db, comercianteId, { hasta = curren
   };
 }
 
-// Por cada puesto, sus días con asistencia × el monto de un día de la tarifa de la zona de ese puesto
-// (ferial, o permanente con tarifa por día cobrado). Un puesto en vía asfaltada y otro sin asfaltar pagan
+// Por cada puesto, sus días con asistencia × el monto de un día de la tarifa de la zona que tenía el puesto
+// esos días (ferial, o permanente con tarifa por día cobrado). Un puesto en vía asfaltada y otro sin asfaltar pagan
 // S/ 3 y S/ 2 aunque sean del mismo comerciante.
 async function liquidarPorAsistencia(db, { merchant, periodo, tarifa, puesto, asistencias }) {
   const metros = Number(puesto?.metros_cuadrados || 1);
@@ -2677,6 +2752,13 @@ export async function seriesDelComerciante(db, merchant, periodo = currentPeriod
     SELECT zona_id, COUNT(*)::int AS puestos FROM puestos
     WHERE comerciante_id = $1 AND estado <> 'inactivo' AND zona_id IS NOT NULL GROUP BY zona_id`, [merchant.id]))
     .map((fila) => [Number(fila.zona_id), fila.puestos]));
+  // Los días marcados en una zona anterior del puesto se pagan con su tarifa, así que también con su serie.
+  const zonasMarcadas = await rows(db, `
+    SELECT zona_id, COUNT(DISTINCT puesto_id)::int AS puestos FROM asistencias_feriales
+    WHERE comerciante_id = $1 AND asistio AND to_char(fecha, 'YYYY-MM') = $2 GROUP BY zona_id`, [merchant.id, periodo]);
+  for (const fila of zonasMarcadas) {
+    if (!zonas.has(Number(fila.zona_id))) zonas.set(Number(fila.zona_id), fila.puestos);
+  }
   if (!zonas.size && merchant.zona_id) zonas.set(Number(merchant.zona_id), 1);
   const series = new Map();
   for (const [zonaId, puestos] of zonas) {
