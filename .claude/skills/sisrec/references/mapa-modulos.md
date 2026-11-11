@@ -103,3 +103,5 @@ Para ver los roles exactos de una ruta: `grep -rn "'/api/v1/<ruta>" apps/server/
 - **0018:** `puestos.zona_por_regularizar` (puesto del padrón sin zona o con zona no registrada).
 - **0019:** `asistencias_feriales.zona_id` y `puestos_zona_cambios`: cada día marcado guarda la zona que tenía el puesto.
 - **0020:** trigger `tarifa_sin_cruces`: dos tarifas activas del mismo rubro, zona y tipo de vía no cruzan fechas.
+- **0021:** `zonas_via_cambios`, `via_de_zona()` y `asistencias_feriales.tipo_via`: cada día marcado guarda el tipo de vía que tenía su zona.
+- **0022:** `puestos.clave_cliente` (única si no es NULL): alta de puesto idempotente desde la cola del mapa.

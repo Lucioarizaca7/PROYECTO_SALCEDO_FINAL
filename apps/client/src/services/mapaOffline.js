@@ -48,7 +48,8 @@ export async function mapFetch(url, options) {
   try {
     return await authFetch(url, options);
   } catch (error) {
-    if (error instanceof TypeError) throw new Error('No se pudo conectar con el servidor. Revisa tu conexión o intenta más tarde.');
+    // sinConexion: el cambio no llegó (o no se supo si llegó); useSitios lo guarda en la cola del mapa.
+    if (error instanceof TypeError) throw Object.assign(new Error('No se pudo conectar con el servidor. Revisa tu conexión o intenta más tarde.'), { sinConexion: true });
     throw error;
   }
 }

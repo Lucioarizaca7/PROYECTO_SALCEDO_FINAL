@@ -37,7 +37,8 @@ function write(key, value) {
 
 LEGACY_TOKEN_KEYS.forEach((key) => write(key, null));
 
-function randomId() {
+/** Identificador aleatorio (UUID si el navegador lo da). También es la clave de un puesto nuevo del mapa. */
+export function randomId() {
   if (globalThis.crypto?.randomUUID) return globalThis.crypto.randomUUID();
   return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`;
 }
