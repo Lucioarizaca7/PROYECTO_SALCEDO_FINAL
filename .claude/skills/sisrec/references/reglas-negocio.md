@@ -119,6 +119,8 @@ Depende de `tipo_comerciante`:
 
 Antes pasar a un ferial a eventual borraba su deuda atrasada entera, y pasar un eventual a permanente le creaba deuda de meses en que era eventual.
 
+**Rubro, zona y metros de cada mes** (migración 0025, 11/11/2026, la misma decisión "rige desde el cambio"): un mes pasado se liquida con el rubro y la zona que tenía el comerciante y los metros que tenían sus puestos **el día 1 de ese mes** (`comercianteDelMes`, `metros_de_puesto`). El mes en curso usa los de hoy. Los cambios los guardan triggers en `comerciantes_datos_cambios` y `puestos_metros_cambios`. Antes, corregir un rubro, mover al comerciante de zona o cambiar el metraje recalculaba meses ya pagados.
+
 **Deuda acumulada** (`calcularDeudaAcumulada`): recorre los meses desde `max(mes de alta, parametros_sistema.inicio_cobro)` hasta el actual llamando a `calcularLiquidacion` en cada uno (no hay otra fórmula). El eventual no acumula, pero solo los meses en que fue eventual (ver abajo). Devuelve `periodos`, `meses_impagos`, `periodo_mas_antiguo` (el que se cobra primero), `deuda_vencida`, `deuda_mes` y `deuda_total`. Va en `/comerciantes/:id/saldo`, `/liquidaciones/:id`, el portal y el paquete de jornada.
 
 **Varios puestos:** con cobro por día (tarifa `semanal` o ferial) paga por cada puesto marcado. Con tarifa mensual o diaria de rubro sigue pagando por uno solo, el principal.

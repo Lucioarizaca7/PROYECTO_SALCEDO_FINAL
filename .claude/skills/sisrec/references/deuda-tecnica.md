@@ -133,6 +133,12 @@ Corregidos, con prueba en `tests/codigo-operacion.test.js`, `tests/tipo-via-de-c
 
 Queda: el paquete de jornada calcula dos veces el mes en curso (`calcularLiquidacion` y otra vez dentro de `calcularDeudaAcumulada`). Con un padrón mucho mayor convendrá la liquidación en lote (paso 6).
 
+## Novena revisión del 11/11/2026: rubro, zona y metros de cada mes
+
+Corregido, con prueba en `tests/rubro-zona-metros-de-cada-mes.test.js` (migración 0025): cambiar el rubro o la zona de un comerciante, o los metros de un puesto, recalculaba los meses pasados. En la prueba, un mes pagado a S/ 30 pasaba a S/ 50. Medido con 3051 comerciantes, el recálculo del riesgo y el paquete de jornada tardan lo mismo que antes, porque los datos del mes salen en la consulta que ya se hacía por el tipo de comerciante.
+
+Queda: el mes del cambio se liquida entero con los datos del día 1 cuando ya terminó, y con los de hoy mientras está en curso. Un cambio a mitad de mes no parte ese mes en dos tramos, salvo la zona del puesto y el tipo de vía, que van por día (0019 y 0021).
+
 ## Octava revisión del 11/11/2026: tarifas en el tiempo
 
 Corregidos, con prueba en `tests/tarifa-de-cada-dia.test.js` y `tests/tarifas-http.test.js`:
@@ -150,7 +156,7 @@ Corregidos, con prueba en `tests/cobro-sin-tarifa.test.js`:
 
 Corregido, con prueba en `tests/tipo-comerciante-de-cada-mes.test.js`: cambiar el tipo de un comerciante recalculaba todos sus meses pasados. Pasar a eventual borraba la deuda atrasada (en la prueba, S/ 28 pasaban a S/ 0). Migración 0023.
 
-Queda, de la misma clase: el **rubro**, la **zona del comerciante** y el **metraje actual del puesto** todavía se leen con el valor de hoy al liquidar un mes pasado. Con las tarifas generales por día y tipo de vía (0013), la zona y el tipo de vía de cada día ya van en la marca (0019, 0021). Lo que queda solo afecta a tarifas mensuales, por rubro o por m², y al eventual.
+(Resuelto en la novena revisión, migración 0025.) Antes: el **rubro**, la **zona del comerciante** y el **metraje actual del puesto** se leían con el valor de hoy al liquidar un mes pasado. Con las tarifas generales por día y tipo de vía (0013), la zona y el tipo de vía de cada día ya van en la marca (0019, 0021). Lo que queda solo afecta a tarifas mensuales, por rubro o por m², y al eventual.
 
 ## Quinta revisión del 11/11/2026: puestos sin señal y anulación
 

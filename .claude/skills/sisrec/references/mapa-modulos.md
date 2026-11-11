@@ -107,3 +107,4 @@ Para ver los roles exactos de una ruta: `grep -rn "'/api/v1/<ruta>" apps/server/
 - **0022:** `puestos.clave_cliente` (única si no es NULL): alta de puesto idempotente desde la cola del mapa.
 - **0023:** `comerciantes_tipo_cambios` (trigger `trg_comerciante_cambia_tipo`): cada mes pasado se liquida con el tipo que tenía.
 - **0024:** `transacciones.tarifa_id` acepta NULL: cobro sin señal de un comerciante sin tarifa, siempre observado.
+- **0025:** `comerciantes_datos_cambios` (rubro y zona), `puestos_metros_cambios` y `metros_de_puesto()`: un mes pasado se liquida con los datos de su día 1.
