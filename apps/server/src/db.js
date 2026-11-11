@@ -1383,6 +1383,13 @@ export async function insertPuesto(db, payload, { devolver = true, soloZonaDelTi
   const longitud = parseCoord(payload.longitud);
   // Solo la importación del padrón la envía (migrations/0018_zona_por_regularizar.sql).
   const zonaPorRegularizar = payload.zona_por_regularizar ?? null;
+  // Clave que genera el celular por cada alta (migrations/0022_puesto_clave_cliente.sql): un reenvío de la
+  // cola del mapa, cuando la respuesta se perdió, devuelve el puesto ya creado en vez de crear otro igual.
+  const claveCliente = parseClaveCliente(payload.clave_cliente ?? payload.claveCliente);
+  if (claveCliente) {
+    const previo = await first(db, 'SELECT id FROM puestos WHERE clave_cliente = $1', [claveCliente]);
+    if (previo) return puestoYaRegistrado(db, previo.id, devolver);
+  }
 
   if (!zonaId || !direccion || (metros !== null && (!Number.isFinite(metros) || metros <= 0))) {
     throw new ValidationError('Zona, dirección y metros cuadrados válidos son obligatorios');
@@ -1403,14 +1410,33 @@ export async function insertPuesto(db, payload, { devolver = true, soloZonaDelTi
   const finalCode = codigo || `S-${String(next.id).padStart(3, '0')}`;
   try {
     await db.query(`
-      INSERT INTO puestos (id, comerciante_id, zona_id, direccion, metros_cuadrados, estado, codigo_puesto, latitud, longitud, zona_por_regularizar)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
-    [next.id, comercianteId, zonaId, direccion, metros, estado, finalCode, latitud, longitud, zonaPorRegularizar]);
+      INSERT INTO puestos (id, comerciante_id, zona_id, direccion, metros_cuadrados, estado, codigo_puesto, latitud, longitud, zona_por_regularizar, clave_cliente)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+    [next.id, comercianteId, zonaId, direccion, metros, estado, finalCode, latitud, longitud, zonaPorRegularizar, claveCliente]);
   } catch (error) {
+    // Dos envíos del mismo alta a la vez: el segundo choca con la clave del primero y recibe ese puesto.
+    if (error.code === '23505' && error.constraint === 'uq_puestos_clave_cliente') {
+      const previo = await first(pool, 'SELECT id FROM puestos WHERE clave_cliente = $1', [claveCliente]);
+      if (previo) return puestoYaRegistrado(pool, previo.id, devolver);
+    }
     if (error.code === '23505') throw new ConflictError(`El código de puesto ${finalCode} ya está asignado`);
     throw error;
   }
   return devolver ? findPuesto(db, next.id) : { id: Number(next.id) };
+}
+
+const CLAVE_CLIENTE_RE = /^[A-Za-z0-9-]{8,80}$/;
+
+function parseClaveCliente(value) {
+  if (value === undefined || value === null || value === '') return null;
+  const clave = String(value).trim();
+  if (!CLAVE_CLIENTE_RE.test(clave)) throw new ValidationError('La clave del puesto nuevo no es válida');
+  return clave;
+}
+
+async function puestoYaRegistrado(db, id, devolver) {
+  const puesto = devolver ? await findPuesto(db, id) : { id: Number(id) };
+  return { ...puesto, ya_registrado: true };
 }
 
 // Si se envía comerciante_id sin estado: con titular pasa a ocupado; con null queda libre (disponible).
@@ -2312,13 +2338,27 @@ export async function anularCobro(db, id, { motivo, usuarioId, audit = null }) {
     WHERE transaccion_id = $1 AND estado = 'usado' RETURNING serie, numero`,
   [Number(id), `Cobro ${id} anulado: ${razon}`.slice(0, 300), Number(usuarioId)]);
   result.tickets_anulados = ticketsAnulados.map((item) => textoTicket(item.serie, item.numero));
+  // La asistencia que puso este cobro (marcarDiaCobrado, fuente 'cobro') se va con él si no queda otro cobro
+  // confirmado del comerciante ese día (decisión del usuario, 11/11/2026): si se anuló por ser del comerciante
+  // equivocado, ese día ya no se le cobra. Si sí estuvo, el cobrador vuelve a marcarlo. Las marcas de la app
+  // o del Excel no se tocan.
+  const asistenciasQuitadas = await rows(db, `
+    DELETE FROM asistencias_feriales a
+    WHERE a.comerciante_id = $1 AND a.fecha = ${LOCAL('$2::timestamptz')}::date AND a.sesion = '' AND a.fuente = 'cobro'
+      AND NOT EXISTS (
+        SELECT 1 FROM transacciones t
+        WHERE t.comerciante_id = $1 AND t.id <> $3 AND t.estado = 'confirmado'
+          AND ${LOCAL('t.fecha_cobro_cliente')}::date = a.fecha)
+    RETURNING ${DAY('a.fecha')} AS fecha`, [Number(previous.comerciante_id), previous.fecha_cobro_cliente, Number(id)]);
+  result.asistencias_quitadas = asistenciasQuitadas.map((fila) => fila.fecha);
 
   if (audit) {
     await appendAudit(db, {
       ...audit,
       usuarioId: audit.usuarioId ?? usuarioId,
       entidad: 'cobros',
-      detalle: `Cobro ${id} por S/ ${result.monto.toFixed(2)} anulado: ${razon}`,
+      detalle: `Cobro ${id} por S/ ${result.monto.toFixed(2)} anulado: ${razon}${result.asistencias_quitadas.length
+        ? `. Se quitó la asistencia del ${result.asistencias_quitadas.join(', ')} que había puesto el cobro` : ''}`,
       recursoId: result.id,
       payloadPrevio: previous,
       payloadNuevo: result

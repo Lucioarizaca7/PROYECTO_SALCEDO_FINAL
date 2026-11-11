@@ -399,3 +399,15 @@ test('una notificación manual tiene tope de largo y queda en la auditoría', as
   }
   assert.ok(auditada, 'antes se grababa sin auditoría');
 });
+
+test('POST /puestos-mapa con la misma clave: 201 la primera vez, 200 y el mismo puesto al reenviar', async () => {
+  const cuerpo = { zona_id: 1, metros_cuadrados: 4, direccion: `Reenvío mapa ${process.pid}`, clave_cliente: `http-${process.pid}-${Date.now()}` };
+  const enviar = () => fetch(`${baseUrl}/api/v1/puestos-mapa`, {
+    method: 'POST', headers: { Authorization: `Bearer ${tokens.cobrador}`, 'Content-Type': 'application/json' }, body: JSON.stringify(cuerpo)
+  });
+  const primero = await enviar();
+  assert.equal(primero.status, 201);
+  const reenvio = await enviar();
+  assert.equal(reenvio.status, 200, 'antes creaba otro puesto igual');
+  assert.equal((await reenvio.json()).data.id, (await primero.json()).data.id);
+});

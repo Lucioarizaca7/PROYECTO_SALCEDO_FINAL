@@ -30,6 +30,7 @@ router.post('/api/v1/puestos',
   }),
   async (req, res) => {
     const puesto = await insertPuesto(db, sinMarcaDelPadron(req.body), { soloZonaDelTitular: req.user?.rol !== 'super_admin' });
+    if (puesto.ya_registrado) return res.json({ data: puesto, message: 'El puesto ya estaba registrado' });
     return res.status(201).json({ data: puesto, message: 'Puesto asignado correctamente' });
   }
 );
@@ -52,6 +53,8 @@ router.post('/api/v1/puestos-mapa',
       metros_cuadrados: req.body.metros_cuadrados ?? req.body.metros ?? 1,
       estado: req.body.estado // sin estado: ocupado si tiene titular, disponible si no
     }, { soloZonaDelTitular: req.user?.rol !== 'super_admin' });
+    // Reenvío de la cola del mapa con la misma clave: el puesto ya existía y no se crea otro.
+    if (puesto.ya_registrado) return res.json({ data: puesto, message: 'El puesto ya estaba registrado' });
     return res.status(201).json({ data: puesto, message: 'Puesto geolocalizado registrado correctamente' });
   }
 );

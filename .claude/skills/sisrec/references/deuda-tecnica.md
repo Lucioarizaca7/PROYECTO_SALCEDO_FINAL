@@ -133,6 +133,15 @@ Corregidos, con prueba en `tests/codigo-operacion.test.js`, `tests/tipo-via-de-c
 
 Queda: el paquete de jornada calcula dos veces el mes en curso (`calcularLiquidacion` y otra vez dentro de `calcularDeudaAcumulada`). Con un padrón mucho mayor convendrá la liquidación en lote (paso 6).
 
+## Quinta revisión del 11/11/2026: puestos sin señal y anulación
+
+Corregidos, con prueba en `tests/puesto-idempotente.test.js`, `tests/anulacion-asistencia.test.js` y `tests/api-seguridad.test.js`:
+- **Puesto duplicado al reenviar la cola del mapa:** si el alta llegaba pero la respuesta se perdía, el reenvío creaba otro puesto igual. Migración 0022 (`clave_cliente`).
+- **Puesto perdido con señal débil:** el alta fallaba con "No se pudo conectar" y no pasaba a la cola. Ahora se encola.
+- **Anular un cobro dejaba la asistencia que había puesto:** el comerciante seguía debiendo ese día.
+
+Queda: la baja de un puesto con señal débil no se encola (es del super_admin, que trabaja con señal); un reenvío de una baja ya hecha saldría como rechazado en el aviso del mapa.
+
 ## Rediseño visual del Penpot (2026-10-28)
 
 - **Tres capas de estilos.** `tema-municipal.css` es ahora la capa del rediseño (tokens, menú por grupos, tarjetas, píldoras). Debajo sigue `styles.css` (~4600 líneas) con reglas que el tema pisa. Limpiarlo es un trabajo aparte.

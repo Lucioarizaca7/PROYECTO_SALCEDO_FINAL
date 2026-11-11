@@ -13,6 +13,8 @@
 Funciones de `db.js`:
 - `getPuestos(db, { incluirInactivos, conPagos, periodo })`. `/publico/resumen` usa `conPagos: false`.
 - `insertPuesto`: sin comerciante el puesto queda `disponible`; con comerciante queda `ocupado` por defecto.
+  - **Alta idempotente** (migración 0022, 11/11/2026): el celular manda `clave_cliente` (una por alta, la misma en línea y en la cola del mapa). Si ya existe un puesto con esa clave, se devuelve ese puesto (`ya_registrado`, HTTP 200) y no se crea otro.
+  - Con señal débil (el navegador cree que hay red pero la petición no llega), el alta y la corrección de ubicación pasan a la cola del mapa en vez de perderse (`useSitios`, `encolarSiFalla`).
 - `updatePuesto`: si recibe `comerciante_id` sin estado, pasa a `ocupado` (con id) o a `disponible` (con null).
 - **Solo `super_admin` cambia la zona de un puesto** (decisión del usuario, 28/10/2026): la zona fija la tarifa del cobro por día. El cobrador recibe 403 si pide otra zona, y reenviar la misma no confirma una "zona por regularizar"; sí mueve el puesto en el mapa y asigna o libera al titular. La importación del padrón (solo super_admin) sí asigna zonas.
 - `liberarPuesto` y `deactivatePuesto`.
@@ -205,6 +207,7 @@ Depende de `tipo_comerciante`:
   - `transacciones.tickets` guarda lo declarado.
   - Un cobrador sin lotes de esas series cobra sin ticket; es la transición.
 - **`anularCobro`:** anula también los tickets de ese cobro.
+- **Anular quita la asistencia que puso el cobro** (decisión del usuario, 11/11/2026): la marca de `marcarDiaCobrado` (`fuente = 'cobro'`) de ese día se borra si no queda otro cobro confirmado del comerciante ese día. Si el cobro era del comerciante equivocado, ese día ya no se le cobra; si sí estuvo, el cobrador vuelve a marcarlo. Las marcas de la app o del Excel no se tocan. La respuesta trae `asistencias_quitadas` y la auditoría lo dice.
 - **`anularTickets`:**
   - exige un motivo de al menos 5 caracteres y que el ticket sea del cobrador (el administrador puede anular cualquiera);
   - es idempotente: devuelve `ya_anulado`;
