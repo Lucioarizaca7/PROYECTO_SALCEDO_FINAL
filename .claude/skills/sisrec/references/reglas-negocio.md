@@ -47,6 +47,10 @@ Si se agrega un `estado_pago` nuevo, hay que actualizar también `SERVER_TO_MAP`
 Depende de `tipo_comerciante`:
 - **permanente:** cuota mensual = tarifa vigente del rubro y periodo × metraje del puesto principal.
 - **ferial:** paga los días con asistencia del mes (`asistencias_feriales.asistio`, en cualquiera de sus puestos; varias marcas del mismo día cuentan una vez) × la tarifa de un día (`dailyTariffAmount`). Lo mismo el permanente con tarifa por día cobrado (ver abajo). Sin asistencias devuelve `no_devengo` con el motivo `ferial_sin_asistencia`. La respuesta trae `dias_asistidos`. El cobrador marca con `POST /asistencias` (también sin señal: reenviar no duplica).
+  - **Qué días puede marcar** (11/11/2026): el cobrador, hasta `DIAS_COBRO_SIN_SENAL = 3` días atrás, la misma ventana que el cobro sin señal (decisión del 22/10/2026). Más atrás, solo el `super_admin`, y queda en la auditoría. Antes podía marcar cualquier día pasado y crear deuda sin revisión.
+  - **Dados de baja** (decisión del usuario, 11/11/2026): no se registra asistencia de un comerciante dado de baja ni de un puesto inactivo. La marca se rechaza con aviso y no genera deuda.
+  - **Lotes del celular:** `POST /asistencias` con `{ marcas }` responde marca por marca (`data` = guardadas, `rechazadas` = `{ puesto_id, fecha, error }`). Antes una sola marca inválida rechazaba todo el lote. El celular no reintenta las rechazadas y muestra su motivo.
+  - **Días anteriores sin señal:** las marcas que no subieron pasan al día siguiente a `anteriores` y se siguen enviando con su fecha. Antes se borraban al cambiar el día y ese día no generaba deuda.
 - **eventual:** se cobra por día (`cobro_diario: true`). Si el día pedido no cae en el periodo, devuelve `no_devengo` con el motivo `eventual`.
 - Un pendiente de regularización (titular sin DNI) paga igual que cualquier otro (decisión del usuario, 2026-10-27); antes no devengaba si le faltaba el metraje (`pendiente_regularizacion_sin_metraje`, ya no existe). Por eso entra en la deuda del panel (`getPendingDebt`) y en el padrón de la jornada (`getJornadaPackage`): los dos toman `estado IN ('activo', 'pendiente')` (`ESTADOS_QUE_PAGAN_SQL`).
 - Si no hay tarifa vigente, lanza un error ("No existe una tarifa vigente…"). Quien la llama debe tratar ese caso como `sin_tarifa` y no dejar que el proceso se caiga.
@@ -93,6 +97,10 @@ Depende de `tipo_comerciante`:
 - Un motivo que contradice la marca se rechaza.
 - Reporte: `GET /asistencias/observaciones?desde&hasta&comerciante_id` (`getObservacionesCobro`). El cobrador ve solo las suyas. Se muestra en Reportes.
 
+**Consulta de la auditoría** (11/11/2026): `GET /auditoria` filtra por `desde`/`hasta` (días de Lima), `buscar` (acción, entidad o detalle, sin comodines), `usuario_id`, `entidad` y `comerciante_id`, y pagina en el servidor (`page`, `limit` hasta 200, `total` = todo lo filtrado). La pantalla Auditoría trae el mes en curso de a 50 y el botón "Verificar integridad" (`GET /auditoria/verificacion`). Antes mostraba siempre los últimos 200 registros.
+
+**Preferencias del comerciante:** `POST /comerciantes/:id/preferencias` cambia solo las claves enviadas (claves `a-z0-9_`, hasta 30, valores de hasta 200 caracteres). Antes borraba todas.
+
 **Auditoría por comerciante:** `getAuditTrail({ comerciante_id })` busca el id exacto en `recurso_id` (entidades del comerciante) y en `payload_nuevo/previo->>'comerciante_id'` (cobros, puestos), nunca con LIKE.
 
 **Baja:** pasar a un comerciante a `inactivo` por `PUT` (o `updateComerciante`) da de baja sus puestos y fija `fecha_baja`, igual que `DELETE`. Al reactivarlo, los puestos siguen de baja hasta reasignarlos.
@@ -113,7 +121,8 @@ Depende de `tipo_comerciante`:
 - **Metraje:** opcional en una zona con tipo de vía (cobro por día, sin metros); obligatorio sin tipo de vía. `insertPuesto` acepta `metros_cuadrados: null` solo en una zona con tipo de vía.
 - **Zona por regularizar** (decisión del usuario, 28/10/2026; migración 0018). La zona se busca por nombre exacto (sin mayúsculas, tildes ni espacios de más) en la columna Zona o, si viene vacía, en el nombre de la hoja.
   - Si no hay coincidencia, la fila **no es error**: el puesto queda en la primera zona, paga con su tarifa y se guarda `puestos.zona_por_regularizar` (`''` = venía sin zona; texto = la zona del libro que no está registrada). La vista previa lo avisa por fila y cuenta `zonePendingPosts`.
-  - Antes la búsqueda era aproximada: "Barrio Alto Salcedo" caía en la zona "SALCEDO" sin avisar. Los rubros siguen con búsqueda aproximada.
+  - Antes la búsqueda era aproximada: "Barrio Alto Salcedo" caía en la zona "SALCEDO" sin avisar.
+- **Rubro exacto** (decisión del usuario, 11/11/2026): el rubro de la columna se busca por nombre exacto, igual que la zona. Si no está registrado, el comerciante queda en "otros" y la vista previa lo avisa por fila (no impide importar). Antes "Ropa de bebé" caía en "ropa" sin avisar. Si la columna viene vacía se usa el rubro del nombre del archivo ("FERIA ZAPATILLAS.xlsx") o de la hoja.
   - Se regulariza en Sitios ("Asignar zona…", solo `super_admin` en la pantalla) o reimportando con una zona registrada: enviar `zona_id` borra la marca; mover el puesto en el mapa no. Solo cambia la zona del **puesto** (la que usa el cobro por día); la zona del comerciante (tarifa mensual y su código) se corrige en Comerciantes.
 - **Ausente:** sigue la convención de puestos (queda `disponible` con titular).
 - **Plantilla oficial:** `GET /comerciantes/plantilla-padron` (super_admin, auditor), `padronPlantilla.js`; la hoja oculta `LISTAS_SISREC` no se lee como padrón.

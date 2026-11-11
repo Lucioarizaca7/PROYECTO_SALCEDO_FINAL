@@ -2,7 +2,8 @@ import { useEffect, useState } from 'react';
 import { useSisrec } from '../app/SisrecContext';
 import { textoMotivo } from '../services/asistenciaOffline';
 import { useReportes } from '../hooks/useReportes';
-import { textoMetodo, textoPuntajeRiesgo } from '../lib/formato';
+import { useAuditoria } from '../hooks/useAuditoria';
+import { textoMetodo, textoPuntajeRiesgo, textoVerificacion } from '../lib/formato';
 import { hoyEnLima } from '../services/jornadaOffline';
 import { textoTicket } from '../services/ticketsOffline';
 import { VeredictoRecaudacion } from '../features/analitica/VeredictoRecaudacion';
@@ -118,15 +119,40 @@ function ObservacionesCobro() {
 }
 
 export function AuditoriaPage() {
-  const { auditRecords } = useSisrec();
+  const auditoria = useAuditoria();
+  const { filtro, setFiltro } = auditoria;
+  const hoy = hoyEnLima();
   return (
     <section className="page">
-      <div className="page-heading"><div><div className="eyebrow">CONTROL / TRAZABILIDAD</div><h1>Auditoría</h1><p>Historial de acciones sensibles, usuario responsable y timestamp.</p></div></div>
+      <div className="page-heading">
+        <div><div className="eyebrow">CONTROL / TRAZABILIDAD</div><h1>Auditoría</h1><p>Historial de acciones sensibles, usuario responsable y fecha.</p></div>
+        <div className="report-actions"><button className="secondary-button" type="button" onClick={auditoria.verificar} disabled={auditoria.verificacion?.cargando}>Verificar integridad</button></div>
+      </div>
+      {auditoria.verificacion && (
+        <div className={`form-message ${auditoria.verificacion.valid === false ? 'error' : ''}`} role="status">{textoVerificacion(auditoria.verificacion)}</div>
+      )}
+      <div className="map-toolbar">
+        <label><span>Desde</span><input type="date" aria-label="Desde" max={hoy} value={filtro.desde} onChange={(event) => setFiltro({ desde: event.target.value })} /></label>
+        <label><span>Hasta</span><input type="date" aria-label="Hasta" max={hoy} value={filtro.hasta} onChange={(event) => setFiltro({ hasta: event.target.value })} /></label>
+        <label><span>Buscar</span><input type="search" aria-label="Buscar en la auditoría" placeholder="Acción, entidad o detalle (p. ej. R-000123)" value={filtro.buscar} onChange={(event) => setFiltro({ buscar: event.target.value })} /></label>
+      </div>
+      {auditoria.mensaje && <div className="form-message">{auditoria.mensaje}</div>}
       <div className="table-card">
         <table>
           <thead><tr><th>Fecha</th><th>Usuario</th><th>Entidad</th><th>Acción</th><th>Detalle</th></tr></thead>
-          <tbody>{auditRecords.map((item) => <tr key={item.id}><td>{item.fecha}</td><td>{item.usuario || `Usuario ${item.usuario_id}`}</td><td>{item.entidad}</td><td><span className="status paid">{item.accion}</span></td><td>{item.detalle}</td></tr>)}</tbody>
+          <tbody>
+            {auditoria.filas.map((item) => <tr key={item.id}><td>{item.fecha}</td><td>{item.usuario || `Usuario ${item.usuario_id}`}</td><td>{item.entidad}</td><td><span className="status paid">{item.accion}</span></td><td>{item.detalle}</td></tr>)}
+            {!auditoria.filas.length && !auditoria.cargando && <tr><td colSpan="5">No hay registros de auditoría con estos filtros.</td></tr>}
+          </tbody>
         </table>
+      </div>
+      <div className="pagination-row" aria-label="Paginación de la auditoría">
+        <span>{auditoria.cargando ? 'Buscando…' : `${auditoria.total} ${auditoria.total === 1 ? 'registro' : 'registros'}`}</span>
+        <div>
+          <button type="button" className="secondary-button" disabled={auditoria.page <= 1} onClick={() => auditoria.setPage((page) => page - 1)} aria-label="Página anterior">Anterior</button>
+          <span className="page-number" aria-live="polite">Página {auditoria.page} de {auditoria.totalPaginas}</span>
+          <button type="button" className="secondary-button" disabled={auditoria.page >= auditoria.totalPaginas} onClick={() => auditoria.setPage((page) => page + 1)} aria-label="Página siguiente">Siguiente</button>
+        </div>
       </div>
     </section>
   );

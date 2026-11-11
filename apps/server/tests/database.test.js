@@ -29,21 +29,23 @@ test('getDbStats devuelve números básicos del sistema', async () => {
   assert.ok(stats.totalCobros >= 0);
 });
 
-test('las preferencias del comerciante se guardan como clave/valor y se reemplazan', async () => {
+test('las preferencias del comerciante se guardan como clave/valor y solo cambian las enviadas', async () => {
   const db = await initializeDatabase();
   const merchant = (await db.query('SELECT id FROM comerciantes ORDER BY id LIMIT 1')).rows[0];
+  await updateComerciantePreferencias(db, merchant.id, { notificaciones_activadas: 'true' });
 
-  const updated = await updateComerciantePreferencias(db, merchant.id, {
-    metodo_pago_preferido: 'yape',
-    monto_sugerido: 75.5
-  });
-  assert.equal(updated.length, 2);
+  await updateComerciantePreferencias(db, merchant.id, { metodo_pago_preferido: 'yape', monto_sugerido: 75.5 });
+  // Cada cobro guarda la sugerencia express: antes se borraban las demás claves.
+  await updateComerciantePreferencias(db, merchant.id, { monto_sugerido: 3 });
 
   const stored = await getComerciantePreferencias(db, merchant.id);
   const asMap = Object.fromEntries(stored.map((item) => [item.clave, item.valor]));
   assert.equal(asMap.metodo_pago_preferido, 'yape');
-  assert.equal(asMap.monto_sugerido, '75.5');
+  assert.equal(asMap.monto_sugerido, '3');
+  assert.equal(asMap.notificaciones_activadas, 'true');
+  assert.equal(stored.filter((item) => item.clave === 'monto_sugerido').length, 1);
 
+  await assert.rejects(updateComerciantePreferencias(db, merchant.id, { 'clave rara; DROP': 1 }), /no es válida/);
   await assert.rejects(updateComerciantePreferencias(db, 999999, {}), { name: 'NotFoundError' });
 });
 

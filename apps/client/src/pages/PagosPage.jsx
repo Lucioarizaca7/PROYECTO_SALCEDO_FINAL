@@ -189,7 +189,7 @@ export function PagosPage() {
             <select value={form.metodo_pago} onChange={(event) => setForm({ ...form, metodo_pago: event.target.value })}><option value="efectivo">Efectivo</option><option value="yape">Yape</option><option value="plin">Plin</option><option value="pos">POS</option></select>
           </div>
           {form.metodo_pago !== 'efectivo' && <input required placeholder="Código de operación digital" value={form.codigo_operacion} onChange={(event) => setForm({ ...form, codigo_operacion: event.target.value })} />}
-          <input placeholder="Observaciones (opcional)" value={form.observaciones} onChange={(event) => setForm({ ...form, observaciones: event.target.value })} />
+          <input placeholder="Observaciones (opcional)" maxLength={500} value={form.observaciones} onChange={(event) => setForm({ ...form, observaciones: event.target.value })} />
           {pagos.message && <div className="form-message">{pagos.message}</div>}
           <button className="primary-button payment-submit" disabled={!merchant || !balance || balance.saldo <= 0} type="submit">Confirmar y emitir comprobante</button>
           {pagos.receipt && <ReceiptCard receipt={pagos.receipt} printStatus={pagos.printStatus} setPrintStatus={pagos.setPrintStatus} />}

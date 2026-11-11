@@ -41,6 +41,16 @@ export const textoPuntajeRiesgo = ({ calculado_el: calculadoEl, actualizando } =
   return `Puntaje del ${fecha}${actualizando ? ' · actualizando…' : ''}`;
 };
 
+/** Texto del resultado de la verificación de la cadena de hashes de la auditoría (GET /auditoria/verificacion). */
+export function textoVerificacion(resultado) {
+  if (!resultado) return '';
+  if (resultado.cargando) return 'Verificando…';
+  if (resultado.error) return resultado.error;
+  return resultado.valid
+    ? `Cadena íntegra: ${resultado.total} registro(s) enlazados sin cambios.`
+    : `La cadena se rompe en el registro ${resultado.broken_at}: alguien alteró la auditoría desde ahí.`;
+}
+
 const METODOS = { efectivo: 'Efectivo', yape: 'Yape', plin: 'Plin', pos: 'POS' };
 export const textoMetodo = (metodo) => METODOS[String(metodo || '').toLowerCase()] || metodo || '';
 

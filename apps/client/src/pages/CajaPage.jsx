@@ -118,7 +118,7 @@ export function CajaPage() {
                   <input type="number" min="0" step="0.01" inputMode="decimal" placeholder={`Lo que tengo en ${label}`} value={declarado[key]} onChange={(event) => setDeclarado({ ...declarado, [key]: event.target.value })} />
                 </label>
               ))}
-              <input placeholder="Observaciones (opcional)" value={caja.observaciones} onChange={(event) => caja.setObservaciones(event.target.value)} />
+              <input placeholder="Observaciones (opcional)" maxLength={500} value={caja.observaciones} onChange={(event) => caja.setObservaciones(event.target.value)} />
             </div>
             <p className="caja-diferencia"><span className={`status ${claseDiferencia(caja.diferencia)}`}>{textoDiferencia(caja.diferencia)}</span></p>
             <TicketsDelDia tickets={resumen.tickets} />
