@@ -1,8 +1,14 @@
 import { useEffect, useState } from 'react';
 import { useSisrec } from '../app/SisrecContext';
+import { hoyEnLima } from '../services/jornadaOffline';
 import { apiBase, authFetch } from '../services/session';
 
-const NEW_TARIFF = { rubro_id: '1', aplica_a: '', tipo_tarifa: 'fija', monto_fijo: '18', monto_variable: '0', unidad_medida: 'diaria', vigencia_inicio: '2026-01-01', vigencia_fin: '' };
+// Una tarifa nueva empieza hoy por omisión: con una fecha pasada (antes venía 2026-01-01) cambiaba la deuda de
+// los meses anteriores.
+const nuevaTarifa = () => ({ rubro_id: '1', aplica_a: '', tipo_tarifa: 'fija', monto_fijo: '18', monto_variable: '0', unidad_medida: 'diaria', vigencia_inicio: hoyEnLima(), vigencia_fin: '' });
+
+/** Una tarifa que ya empezó a regir no cambia lo que cobra: solo se puede cerrar (decisión del 11/11/2026). */
+export const tarifaYaRige = (tarifa, hoy = hoyEnLima()) => Boolean(tarifa?.vigencia_inicio) && tarifa.vigencia_inicio <= hoy;
 
 // Rubro vacío: la tarifa es para todos los rubros.
 // "Aplica a" en un solo selector: todas las zonas (''), un tipo de vía ('via:asfaltada') o una zona ('zona:3').
@@ -43,18 +49,22 @@ export function useTarifas() {
   };
   const [editingId, setEditingId] = useState(null);
   const [message, setMessage] = useState('');
-  const [form, setForm] = useState(NEW_TARIFF);
+  const [form, setForm] = useState(nuevaTarifa);
 
   // Sin vaciar el formulario, "Nueva tarifa" tras editar mostraba esa tarifa y guardaba un duplicado.
   const toggleNew = () => {
     setEditingId(null);
-    setForm(NEW_TARIFF);
+    setYaRige(false);
+    setForm(nuevaTarifa());
     setMessage('');
     setShowForm((current) => !current);
   };
 
+  const [yaRige, setYaRige] = useState(false);
+
   const edit = (item) => {
     setEditingId(item.id);
+    setYaRige(tarifaYaRige(item));
     setForm({ rubro_id: item.rubro_id === null ? '' : String(item.rubro_id), aplica_a: aplicaA(item), tipo_tarifa: item.tipo_tarifa, monto_fijo: String(item.monto_fijo), monto_variable: String(item.monto_variable), unidad_medida: item.unidad_medida, vigencia_inicio: item.vigencia_inicio, vigencia_fin: item.vigencia_fin || '' });
     setShowForm(true);
   };
@@ -79,5 +89,5 @@ export function useTarifas() {
     }
   };
 
-  return { showForm, editingId, message, form, setForm, toggleNew, edit, submit, inicioCobro, setInicioCobro, guardarInicioCobro, puedeEditar: user?.rol === 'super_admin' };
+  return { showForm, editingId, yaRige, message, form, setForm, toggleNew, edit, submit, inicioCobro, setInicioCobro, guardarInicioCobro, puedeEditar: user?.rol === 'super_admin' };
 }

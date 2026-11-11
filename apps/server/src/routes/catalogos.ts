@@ -2,7 +2,7 @@
 import express from 'express';
 import { getZonas, getCalles, insertZona, updateZona, deleteZona, insertCalle, updateCalle, deleteCalle } from '../db.js';
 import { requireAuth, requireRoles, auditMutation } from '../auth.js';
-import { rowById } from '../http/comunes.js';
+import { rowById, staffOnly } from '../http/comunes.js';
 import { pool as db } from '../pg.js';
 
 export const router = express.Router();
@@ -30,7 +30,8 @@ router.delete('/api/v1/zonas/:id', requireAuth, requireRoles(['super_admin']), a
   return res.json({ data, message: 'Zona eliminada correctamente' });
 });
 
-router.get('/api/v1/calles', requireAuth, async (_req, res) => {
+// Con roles, como toda ruta privada: antes bastaba la sesión (también la del rol comerciante).
+router.get('/api/v1/calles', ...staffOnly, async (_req, res) => {
   const zonaId = Number(_req.query.zona_id || 0);
   res.json({
     data: await getCalles(db, { zona_id: zonaId }),

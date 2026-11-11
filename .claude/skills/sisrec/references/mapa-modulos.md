@@ -63,7 +63,8 @@ Roles: `super_admin`, `cobrador`, `auditor`, `comerciante`. `staffOnly` = los tr
 | Panel y analítica | `GET /dashboard`, `/analitica/prediccion`, `/analitica/riesgo`, `/reportes` | lectura del personal |
 | Catálogos | `GET /roles`, `/catalogos`; CRUD `/zonas`, `/calles` | super_admin |
 | Comerciantes | CRUD `/comerciantes`, `POST /comerciantes/importar-padron`, `GET /comerciantes/plantilla-padron`, `/comerciantes/:id/preferencias` | super_admin (las preferencias también cobrador); el auditor solo descarga la plantilla |
-| Puestos | `GET /puestos?incluirInactivos=1`, `POST /puestos`, `POST/PUT/DELETE /puestos-mapa`, `POST /puestos/:id/liberar` | super_admin, cobrador |
+| Puestos | `GET /puestos?incluirInactivos=1`, `POST /puestos`, `POST/PUT /puestos-mapa` (el cobrador solo la ubicación) | super_admin, cobrador |
+| Puestos (titular y baja) | `POST /puestos/:id/liberar`, `DELETE /puestos-mapa/:id` | super_admin |
 | Tarifas | `GET/POST/PUT /tarifas` | según la ruta (ver `routes/tarifas.ts`) |
 | Liquidación | `GET /liquidaciones/:comercianteId`, `GET /comerciantes/:id/saldo` | lectura |
 | Cobros | `GET/POST /cobros`, `POST /cobros/sincronizar`, `/cobros/sincronizar-lote`, `/cobros/observados(/:id/resolver)`, `/cobros/sincronizacion/errores` | cobrador, super_admin |

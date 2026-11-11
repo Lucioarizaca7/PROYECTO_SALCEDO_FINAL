@@ -29,7 +29,7 @@ router.post('/api/v1/puestos',
     serializeResponse: (body) => body?.data ?? body
   }),
   async (req, res) => {
-    const puesto = await insertPuesto(db, sinMarcaDelPadron(req.body));
+    const puesto = await insertPuesto(db, sinMarcaDelPadron(req.body), { soloZonaDelTitular: req.user?.rol !== 'super_admin' });
     return res.status(201).json({ data: puesto, message: 'Puesto asignado correctamente' });
   }
 );
@@ -51,7 +51,7 @@ router.post('/api/v1/puestos-mapa',
       direccion: req.body.direccion || req.body.sector || req.body.codigoPuesto,
       metros_cuadrados: req.body.metros_cuadrados ?? req.body.metros ?? 1,
       estado: req.body.estado // sin estado: ocupado si tiene titular, disponible si no
-    });
+    }, { soloZonaDelTitular: req.user?.rol !== 'super_admin' });
     return res.status(201).json({ data: puesto, message: 'Puesto geolocalizado registrado correctamente' });
   }
 );
@@ -67,14 +67,14 @@ router.put('/api/v1/puestos-mapa/:id',
     serializeResponse: (body) => body?.data ?? body
   }),
   async (req, res) => {
-    const puesto = await updatePuesto(db, req.params.id, sinMarcaDelPadron(req.body), { puedeCambiarZona: req.user?.rol === 'super_admin' });
+    const puesto = await updatePuesto(db, req.params.id, sinMarcaDelPadron(req.body), req.user?.rol === 'super_admin' ? {} : { puedeCambiarZona: false, soloUbicacion: true });
     return res.json({ data: puesto, message: 'Puesto geolocalizado actualizado correctamente' });
   }
 );
 
 router.post('/api/v1/puestos/:id/liberar',
   requireAuth,
-  requireRoles(['super_admin', 'cobrador']),
+  requireRoles(['super_admin']),
   auditMutation({
     db,
     accion: 'LIBERAR_PUESTO',
@@ -89,7 +89,7 @@ router.post('/api/v1/puestos/:id/liberar',
 
 router.delete('/api/v1/puestos-mapa/:id',
   requireAuth,
-  requireRoles(['super_admin', 'cobrador']),
+  requireRoles(['super_admin']),
   auditMutation({
     db,
     accion: 'DAR_DE_BAJA_PUESTO_MAPA',
