@@ -3,12 +3,14 @@ import { canSee, navItems, pathOf } from '../app/navegacion';
 import { useSisrec } from '../app/SisrecContext';
 import { DashboardSkeleton } from '../components/ui/DashboardSkeleton';
 import { KpiCard } from '../components/ui/KpiCard';
-import { formatPEN } from '../lib/formato';
+import { fechaHoraEnLima, formatPEN } from '../lib/formato';
 
 export function PanelPage() {
   const { user, loading, dashboardStats, operational, mapPuestos, auditRecords, riskData } = useSisrec();
   if (loading) return <DashboardSkeleton />;
   const veAuditoria = canSee(navItems.find((item) => item.key === 'auditoria'), user?.rol);
+  // El auditor no tiene el mapa: el enlace lo devolvía al panel.
+  const veMapa = canSee(navItems.find((item) => item.key === 'mapa'), user?.rol);
   // Alerta = riesgo alto o crítico, el mismo criterio con que el servidor marca `alerta` en la métrica.
   const alertas = (riskData.records || []).filter((item) => ['alto', 'critico'].includes(item.nivel_riesgo));
 
@@ -51,7 +53,7 @@ export function PanelPage() {
               <div className="panel-title">Mapa de sitios</div>
               <div className="panel-subtitle">Distribución por estado de pago</div>
             </div>
-            <Link className="view-all" to={pathOf('mapa')}>Ver mapa →</Link>
+            {veMapa && <Link className="view-all" to={pathOf('mapa')}>Ver mapa →</Link>}
           </div>
           <div className="activity-list dashboard-site-stats">
             <div className="metric-line"><span>Puestos registrados</span><strong>{mapPuestos.length}</strong></div>

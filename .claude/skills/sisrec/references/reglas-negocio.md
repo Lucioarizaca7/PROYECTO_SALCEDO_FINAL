@@ -128,6 +128,22 @@ Depende de `tipo_comerciante`:
 - `syncOfflineCobro` devuelve `SUCCESS`, `IGNORED` (ya se había recibido) u `OBSERVED` (se aceptó y va a revisión, por ejemplo porque excede el saldo).
 - `syncOfflineBatch`: como máximo `MAX_LOTE_COBROS = 100` cobros por lote. Responde 200 con `data.resumen` (sincronizado, observado, duplicado, rechazado), aunque haya cobros rechazados.
 - `resolveCobroObservado`: bloquea la fila con `SELECT … FOR UPDATE` dentro de `withTransaction`.
+- **Código de operación** (corregido el 10/11/2026): es el número de Yape, Plin o POS. En efectivo no existe:
+  - `codigoOperacionDelPago` (`db.js`) ignora el que llegue con un cobro en efectivo y solo usa `idempotency_key`;
+  - el cliente lo limpia, junto con la nota, después de cada cobro y al cambiar de comerciante.
+  - Antes el formulario arrastraba el código del Yape anterior: el efectivo siguiente se rechazaba en línea (409) y sin señal se tomaba como "duplicado" y se perdía.
+- **Nota del cobrador** (`transacciones.observaciones`, corregido el 10/11/2026): la ve el personal en:
+  - Cobros recientes;
+  - Reportes y su CSV;
+  - Revisión de cobros;
+  - el panel "Observaciones de cobro" (`getObservacionesCobro`, con `origen: 'cobro'`; las de asistencia llevan `origen: 'asistencia'`);
+  - el detalle de la auditoría.
+
+  No va en el PDF del comerciante, porque puede ser una anotación interna.
+- **Reportes** (`GET /reportes`):
+  - El cobrador ve solo sus cobros, como en `GET /cobros`. Excepción: con `comerciante_id` ve el historial de ese comerciante, que la pantalla de cobro usa para sugerir monto y método.
+  - El total de la pantalla suma solo los cobros confirmados.
+  - El super_admin anula desde el reporte. Antes solo podía desde los 6 cobros más recientes.
 
 ### Tickets preimpresos (migración 0014, `routes/tickets.ts`)
 
@@ -175,6 +191,11 @@ Depende de `tipo_comerciante`:
 ## Offline (cliente)
 
 - `GET /jornada/paquete` (`getJornadaPackage`) entrega al cobrador los comerciantes y saldos del periodo. Se guarda en IndexedDB (`offlineStore.js`).
+- **Deuda atrasada sin señal** (corregido el 10/11/2026):
+  - El paquete trae `periodos_impagos` (el saldo de cada mes) además de `deuda_vencida`.
+  - Sin señal, la pantalla muestra los meses impagos y cobra primero el más antiguo, como en línea (`aSaldoDePantalla`).
+  - `aplicarCobroLocal` descuenta el cobro del mes al que se aplicó.
+  - "Cobrar" desde Sitios o el Mapa sin señal carga el saldo del padrón del celular (`jornada.porId`).
 - Cada cobro offline lleva una huella SHA-256 (`offlineQueue.js`), que el servidor usa como clave de idempotencia.
 - Un conflicto nunca se resuelve en el cliente: va a `cobros_observados` y se revisa en `ReviewPanel`.
 - **Cambios del mapa sin señal** (`mapa_pendientes`, decisión del usuario, 28/10/2026): se suben en orden (`colaMapa.js`).

@@ -446,17 +446,27 @@ export function indicadoresPanel(metrics) {
 // Sin él, el panel no sumaba su deuda y el padrón de la jornada no lo traía (no se le marcaba asistencia).
 const ESTADOS_QUE_PAGAN_SQL = `('activo', 'pendiente')`;
 
-// La deuda se devenga por liquidación (tarifa vigente - cobros del periodo).
-export async function getPendingDebt(db, period = currentPeriod(), maxMerchants = 300) {
-  const merchants = await rows(db, `SELECT id FROM comerciantes WHERE estado IN ${ESTADOS_QUE_PAGAN_SQL} ORDER BY id LIMIT $1`, [maxMerchants]);
-  let total = 0;
-  for (const merchant of merchants) {
+// La deuda se devenga por liquidación (tarifa vigente - cobros del periodo), de TODOS los comerciantes que
+// pagan. Antes se cortaba en los primeros 300 y, con el padrón importado, el panel mostraba menos deuda.
+// Se calculan de a LIQUIDACIONES_EN_PARALELO para no hacer esperar al panel con un padrón grande.
+const LIQUIDACIONES_EN_PARALELO = 8;
+
+export async function getPendingDebt(db, period = currentPeriod()) {
+  const merchants = await rows(db, `SELECT id FROM comerciantes WHERE estado IN ${ESTADOS_QUE_PAGAN_SQL} ORDER BY id`);
+  const saldoDe = async (merchant) => {
     try {
       const liquidation = await calcularLiquidacion(db, merchant.id, period);
-      if (!liquidation.cobro_diario) total += Number(liquidation.saldo || 0);
+      return liquidation.cobro_diario ? 0 : Number(liquidation.saldo || 0);
     } catch {
-      // sin tarifa vigente: no devenga
+      return 0; // sin tarifa vigente: no devenga
     }
+  };
+  let total = 0;
+  // Con un cliente de transacción (PoolClient) las consultas van una tras otra; con el pool, en paralelo.
+  const enParalelo = typeof db?.release === 'function' ? 1 : LIQUIDACIONES_EN_PARALELO;
+  for (let inicio = 0; inicio < merchants.length; inicio += enParalelo) {
+    const saldos = await Promise.all(merchants.slice(inicio, inicio + enParalelo).map(saldoDe));
+    total += saldos.reduce((suma, saldo) => suma + saldo, 0);
   }
   return Number(total.toFixed(2));
 }
@@ -666,13 +676,28 @@ export async function getRiskDashboard(db, options = {}) {
     ORDER BY score_riesgo DESC, id DESC
     LIMIT $1`, [limit]);
 
+  // El resumen cuenta a TODOS los comerciantes puntuados, no solo a los `limit` que se listan (antes "riesgo
+  // alto" y "críticos" nunca pasaban de 5).
+  const conteo = await first(db, `
+    SELECT COUNT(*)::int AS total,
+           COUNT(*) FILTER (WHERE nivel = 'bajo')::int AS bajo,
+           COUNT(*) FILTER (WHERE nivel = 'medio')::int AS medio,
+           COUNT(*) FILTER (WHERE nivel = 'alto')::int AS alto,
+           COUNT(*) FILTER (WHERE nivel = 'critico')::int AS critico
+    FROM (
+      SELECT DISTINCT ON (m.entidad_id) m.nivel
+      FROM modelos_ia_metricas m JOIN comerciantes c ON c.id = m.entidad_id
+      WHERE m.modelo = 'riesgo_morosidad' AND m.entidad_tipo = 'comerciante' AND c.estado <> 'inactivo'
+      ORDER BY m.entidad_id, m.generado_en DESC, m.id DESC
+    ) ultimos`);
+
   return {
     summary: {
-      total: records.length,
-      bajo: records.filter((item) => item.nivel_riesgo === 'bajo').length,
-      medio: records.filter((item) => item.nivel_riesgo === 'medio').length,
-      alto: records.filter((item) => item.nivel_riesgo === 'alto').length,
-      critico: records.filter((item) => item.nivel_riesgo === 'critico').length
+      total: Number(conteo?.total || 0),
+      bajo: Number(conteo?.bajo || 0),
+      medio: Number(conteo?.medio || 0),
+      alto: Number(conteo?.alto || 0),
+      critico: Number(conteo?.critico || 0)
     },
     records: records.map(({ id, ...item }) => ({
       ...item,

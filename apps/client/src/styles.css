@@ -2035,15 +2035,10 @@ tbody td {
 /* Impresión.
    - Recibo: printThermalReceipt copia el recibo a #print-recibo (hijo directo de body) y marca body.print-recibo;
      se oculta todo lo demás con display:none (con visibility:hidden la página oculta seguía ocupando espacio y
-     salían hojas en blanco). Papel de la ticketera: 80 mm de ancho.
+     salían hojas en blanco). Papel de la ticketera: 80 mm de ancho, con el alto del recibo.
    - QR y carnet del comerciante: solo su diálogo.
    - Cualquier otra página (p. ej. Reportes): sin menú ni barras. Antes la regla del recibo ocultaba todo y
      "Imprimir / PDF" de Reportes salía en blanco. */
-@page recibo {
-  size: 80mm auto;
-  margin: 3mm;
-}
-
 @media print {
   .sidebar,
   .sidebar-backdrop,
@@ -2057,9 +2052,13 @@ tbody td {
     display: none !important;
   }
 
+  /* El tamaño del papel (80 mm de ancho y el alto del recibo) lo pone imprimirReciboEnNavegador. */
+  body.print-recibo {
+    background: white !important;
+  }
+
   #print-recibo {
     display: block;
-    page: recibo;
     width: 100%;
   }
 
@@ -2120,8 +2119,11 @@ tbody td {
   }
 }
 
-#print-recibo {
-  display: none;
+/* En pantalla la copia para imprimir no se ve (dentro de @media screen para no pisar la regla de impresión). */
+@media screen {
+  #print-recibo {
+    display: none;
+  }
 }
 
 .table-actions {
