@@ -4,7 +4,11 @@ Ordenada de más a menos grave. Antes de tomar uno de estos puntos, comprobar qu
 
 1. (Resuelto: el portal pide DNI o código + llave del carnet, con bloqueo tras 5 llaves erradas, y devuelve el documento oculto. El PIN de la rama `seguridad/portal-y-sesion` se quitó en la 0017.)
 2. (Resuelto en la misma rama: el token de renovación va en la cookie HttpOnly `sisrec_refresh` y el de acceso solo en memoria.)
-3. (Resuelto en "Refactor 6", rama `claude/compassionate-hermann-e2df59`: `getPendingDebt` ya no corta en 300 comerciantes.)
+3. (Resuelto el 10/11/2026 en la rama de trabajo actual:
+   - `getPendingDebt` ya no corta en 300 comerciantes; calcula de a 8 en paralelo.
+   - El resumen de riesgo cuenta a todos los puntuados, no solo a los 5 que lista.
+
+   Con un padrón de miles sigue siendo una liquidación por comerciante en cada carga del panel. La versión en lote de "Refactor 6" vive en `claude/compassionate-hermann-e2df59`, que no está en el remoto.)
 4. (Resuelto en "Refactor 6": `calcularLiquidacionLote` reemplaza el bucle N+1 en el panel, el mapa, la jornada y el riesgo de morosidad.)
 5. (Resuelto en "Refactor 5": `App.jsx` quedó en las rutas; cada página tiene su archivo y su hook.) Queda: todos los datos compartidos se recargan juntos con `refresh()` (10 peticiones), sin caché por página.
 6. **Varios puestos:** con cobro por día paga por cada puesto marcado; con tarifa mensual o diaria de rubro, por uno solo (el principal).
@@ -74,6 +78,26 @@ Pendientes menores:
 - **Barra superior.** Se quitaron la caja "Buscar registro" y el botón de notificaciones porque no tenían ninguna acción. Una búsqueda global sería una función nueva.
 - **Riesgo de morosidad N+1.** `getRiskDashboard` recalcula una vez al día con un `calcularLiquidacion` por comerciante (hasta 300); con un padrón grande conviene la liquidación en lote (paso 6).
 - **Tarifas superpuestas.** El tarifario local tiene varias tarifas activas iguales para `comida` desde 2026-01-01; `findApplicableTariff` toma una. Falta decidir si la base debe impedir dos tarifas vigentes para el mismo rubro, zona y tipo de vía.
+
+## Revisión de fallos del 10/11/2026
+
+Corregidos (prueba en `apps/server/tests/fallos-noviembre.test.js` y en las pruebas del cliente):
+- **Nota del cobro:** no se mostraba.
+- **Boleta:** se cortaba a 390 px y la impresión salía en hoja A4/Carta con páginas en blanco.
+- **"Imprimir / PDF" de Reportes** salía en blanco.
+- **Código de operación** arrastrado al cobro en efectivo.
+- **Reportes:** sumaba los anulados.
+- **Sugerencia express:** tomaba el cobro más antiguo.
+- **Deuda atrasada sin señal.**
+- **Portal:** mostraba pagos anulados como válidos y "al día" con meses atrasados.
+- **Comerciantes:** solo los 100 más recientes, con filtros por texto.
+- **Calculadora pública:** usaba m².
+- **Texto del PIN.**
+
+Quedan:
+- **Motivos de cada ticket.** El motivo de anulación o de devolución de cada ticket se guarda, pero `TicketsPage` muestra solo los conteos por lote. Para verlos hace falta una consulta de los tickets de un lote.
+- **Riesgo de morosidad:** puntúa a los primeros `MAX_COMERCIANTES_RIESGO = 300` comerciantes.
+- **Tamaño del papel al imprimir el recibo:** sale del alto medido en pantalla. Puede sobrar un poco de papel al final.
 
 ## Rediseño visual del Penpot (2026-10-28)
 

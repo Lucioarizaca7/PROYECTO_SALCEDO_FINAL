@@ -9,7 +9,7 @@ import assert from 'node:assert/strict';
 
 import {
   buildReportCsv, closeDatabase, currentPeriod, getAuditTrail, getCobrosObservados, getObservacionesCobro,
-  getReportRows, initializeDatabase, insertComerciante, registrarCobro, syncOfflineCobro, todayInLima
+  getReportRows, getRiskDashboard, getSyncErrors, initializeDatabase, insertComerciante, registrarCobro, syncOfflineCobro, todayInLima
 } from '../src/db.js';
 import { pool } from '../src/pg.js';
 
@@ -89,4 +89,24 @@ test('un cobro en efectivo ignora el código de operación que arrastró del cob
 
   // El mismo código digital sigue sin poder usarse dos veces.
   await assert.rejects(() => registrarCobro(pool, { comerciante_id: merchant.id, cobrador_id: 1, monto: 5, metodo_pago: 'plin', codigo_operacion: codigo }), /código de operación/);
+});
+
+test('el resumen de riesgo cuenta a todos los puntuados, no solo a los que lista', async () => {
+  await nuevoComerciante();
+  await nuevoComerciante();
+  const corto = await getRiskDashboard(pool, { limit: 1 });
+  assert.equal(corto.records.length, 1);
+  assert.ok(corto.summary.total > 1, 'el total no se corta en el límite de la lista');
+  const { bajo, medio, alto, critico, total } = corto.summary;
+  assert.equal(bajo + medio + alto + critico, total);
+});
+
+test('los cobros rechazados al sincronizar muestran el nombre del comerciante', async () => {
+  const merchant = await nuevoComerciante();
+  // Un cobro digital sin código de operación se rechaza siempre (no se arregla reintentando).
+  await assert.rejects(() => syncOfflineCobro(pool, {
+    comerciante_id: merchant.id, cobrador_id: 1, monto: 5, metodo_pago: 'yape', hash_transaccion: `rechazo-${Date.now()}`
+  }));
+  const fila = (await getSyncErrors(pool)).find((item) => Number(item.payload?.comerciante_id) === merchant.id);
+  assert.equal(fila.comerciante, merchant.nombre);
 });

@@ -69,7 +69,7 @@ export function MerchantCardDialog({ merchants, onIssue, onClose }) {
         {!emitidos ? (
           <>
             <p className="carnet-intro">
-              Al frente va el QR que escanea el cobrador; al reverso, la llave con la que el comerciante consulta sus pagos y su deuda desde su celular. El PIN, si lo tiene, sigue sirviendo.
+              Al frente va el QR que escanea el cobrador; al reverso, la llave con la que el comerciante consulta sus pagos y su deuda desde su celular. La llave es la única forma de entrar al portal: un carnet nuevo anula la anterior.
             </p>
             {lote && (
               <ul className="carnet-lista">

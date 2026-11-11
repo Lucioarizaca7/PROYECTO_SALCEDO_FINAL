@@ -53,7 +53,12 @@ export function TicketsPage() {
                 <td>{lote.id}{lote.lote_origen_id ? ` (de ${lote.lote_origen_id})` : ''}</td>
                 <td>{lote.serie} · S/ {lote.valor.toFixed(2)}</td>
                 <td>{numero(lote.numero_desde)} – {numero(lote.numero_hasta)}</td>
-                <td>{lote.cobrador}</td>
+                <td>
+                  {lote.cobrador}
+                  {/* Quién entregó el lote, cuándo y su observación (antes se guardaban y no se veían). */}
+                  {lote.asignado_por_nombre && <small className="celda-detalle">Asignó {lote.asignado_por_nombre}{lote.asignado_en ? `, ${lote.asignado_en}` : ''}</small>}
+                  {lote.observacion && <small className="celda-detalle">{lote.observacion}</small>}
+                </td>
                 <td>{numero(lote.siguiente)}</td>
                 <td>{lote.disponibles}</td><td>{lote.usados}</td><td>{lote.anulados}</td><td>{lote.devueltos}</td>
                 <td><span className={`status ${lote.estado === 'activo' ? 'paid' : 'pending'}`}>{lote.estado}</span></td>

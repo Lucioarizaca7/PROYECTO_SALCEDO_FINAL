@@ -68,6 +68,8 @@ function TicketsDelCobro({ pagos }) {
         ))}
       </div>
       {tickets.anulacionesPendientes > 0 && <small>{tickets.anulacionesPendientes} anulación(es) por subir.</small>}
+      {/* Respuesta del servidor al subir anulaciones (p. ej. un ticket que ya no es del cobrador). */}
+      {tickets.mensaje && <small className="form-message">{tickets.mensaje}</small>}
     </div>
   );
 }

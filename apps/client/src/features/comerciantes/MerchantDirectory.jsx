@@ -40,7 +40,7 @@ export function MerchantDirectory({
   const seleccionables = directory.visibleMerchants.filter((row) => !deBaja(row));
   const todosMarcados = seleccionables.length > 0 && seleccionables.every((row) => seleccion.has(row[0]));
   const marcarTodos = () => setSeleccion(todosMarcados ? new Set() : new Set(seleccionables.map((row) => row[0])));
-  const emitirSeleccion = () => setCarnetPara(merchants.filter((row) => seleccion.has(row[0])).map(aCarnet));
+  const emitirSeleccion = () => setCarnetPara([...seleccion].map((id) => directory.filaPorId(id)).filter(Boolean).map(aCarnet));
 
   return (
     <section className="page" aria-labelledby="merchant-heading">
@@ -196,12 +196,12 @@ export function MerchantDirectory({
         <label className="sr-only" htmlFor="merchant-category">Filtrar por rubro</label>
         <select id="merchant-category" value={directory.rubro} onChange={(event) => directory.changeRubro(event.target.value)}>
           <option value="">Todos los rubros</option>
-          {catalogos.rubros.map((item) => <option key={item.id} value={item.nombre}>{item.nombre}</option>)}
+          {catalogos.rubros.map((item) => <option key={item.id} value={item.id}>{item.nombre}</option>)}
         </select>
         <label className="sr-only" htmlFor="merchant-zone">Filtrar por zona</label>
         <select id="merchant-zone" value={directory.zona} onChange={(event) => directory.changeZona(event.target.value)}>
           <option value="">Todas las zonas</option>
-          {catalogos.zonas.map((item) => <option key={item.id} value={item.nombre}>{item.nombre}</option>)}
+          {catalogos.zonas.map((item) => <option key={item.id} value={item.id}>{item.nombre}</option>)}
         </select>
       </div>
 
@@ -216,7 +216,8 @@ export function MerchantDirectory({
         </div>
       )}
 
-      <div className="table-card" aria-busy={loading}>
+      {directory.error && <div className="form-error" role="alert">{directory.error}</div>}
+      <div className="table-card" aria-busy={loading || directory.cargando}>
         {loading ? (
           <div className="merchant-list-skeleton" role="status" aria-label="Cargando comerciantes">
             {[1, 2, 3, 4].map((row) => <span className="skeleton-line" key={row} />)}
@@ -240,7 +241,9 @@ export function MerchantDirectory({
               {directory.visibleMerchants.map((row) => {
                 // code es el id interno (para editar y dar de baja); businessCode es el código que ve la gente.
                 const [code, name, category, document, zone, state, date, , businessCode, , carnet] = row;
-                const statusClass = state === 'Pendiente' ? 'pending' : state === 'Inactivo' ? 'neutral' : 'paid';
+                // El servidor manda el estado en minúsculas ('pendiente', 'inactivo'): antes todos salían en verde.
+                const estado = String(state || '').toLowerCase();
+                const statusClass = estado === 'pendiente' ? 'pending' : estado === 'inactivo' ? 'neutral' : 'paid';
                 return (
                   <tr key={code} className={seleccion.has(code) ? 'fila-seleccionada' : undefined}>
                     {onIssueCards && (
@@ -279,7 +282,7 @@ export function MerchantDirectory({
       </div>
 
       <div className="pagination-row" aria-label="Paginación del padrón">
-        <span>{directory.filteredMerchants.length} {directory.filteredMerchants.length === 1 ? 'registro encontrado' : 'registros encontrados'}</span>
+        <span>{directory.cargando ? 'Buscando…' : `${directory.total} ${directory.total === 1 ? 'registro encontrado' : 'registros encontrados'}`}</span>
         <div>
           <button type="button" className="secondary-button" disabled={directory.page <= 1} onClick={() => directory.setPage((page) => page - 1)} aria-label="Página anterior">Anterior</button>
           <span className="page-number" aria-live="polite">Página {directory.page} de {directory.totalPages}</span>

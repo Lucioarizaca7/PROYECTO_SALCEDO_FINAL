@@ -18,12 +18,25 @@ export function imprimirReciboEnNavegador() {
   contenedor.id = 'print-recibo';
   const copia = original.cloneNode(true);
   copia.removeAttribute('id');
+  copia.querySelector('.receipt-actions')?.remove(); // los botones no se imprimen ni cuentan en el alto
   contenedor.appendChild(copia);
   document.body.appendChild(contenedor);
   document.body.classList.add('print-recibo');
+  // Papel de la ticketera: 80 mm de ancho y el alto justo del recibo (Chrome no acepta "auto" en @page).
+  // Se mide con el ancho de impresión (≈ 74 mm útiles = 280 px) y se pasa a milímetros (96 px = 25,4 mm).
+  const MM_POR_PX = 25.4 / 96;
+  copia.style.width = '280px';
+  contenedor.style.display = 'block';
+  const altoMm = Math.ceil(copia.getBoundingClientRect().height * MM_POR_PX) + 12;
+  contenedor.style.display = '';
+  copia.style.width = '';
+  const papel = document.createElement('style');
+  papel.textContent = `@page { size: 80mm ${Math.max(altoMm, 60)}mm; margin: 3mm; }`;
+  document.head.appendChild(papel);
   const limpiar = () => {
     document.body.classList.remove('print-recibo');
     contenedor.remove();
+    papel.remove();
     window.removeEventListener('afterprint', limpiar);
   };
   window.addEventListener('afterprint', limpiar);

@@ -65,6 +65,8 @@ export function FieldWorkPanel({ isOnline, jornada, queue }) {
               <strong>{item.comerciante || `Comerciante ${item.comercianteId}`}</strong>
               <span>{formatPEN(item.monto)} · {item.metodoPago} · {formatTime(item.fechaCobro)}</span>
               {item.comprobante && <span>Comprobante {item.comprobante}{item.resultado === 'observado' ? ' · en revisión' : ''}</span>}
+              {/* Por qué quedó en revisión o se tomó como repetido (lo dice el servidor al sincronizar). */}
+              {item.mensaje && item.resultado !== 'sincronizado' && <span className="field-queue-note">{item.mensaje}</span>}
               {item.ultimoError && <span className="field-queue-error">{item.ultimoError}{item.estado === 'pendiente' ? ` (intento ${item.intentos} de 3)` : ''}</span>}
             </div>
             <div className="field-queue-actions">
