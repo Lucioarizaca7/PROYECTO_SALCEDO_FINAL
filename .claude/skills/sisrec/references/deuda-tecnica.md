@@ -107,6 +107,16 @@ Corregidos, con prueba en `tests/asistencia-lote.test.js`, `tests/auditoria-filt
 - **Rubro aproximado** al importar el padrón.
 - **JWT sin algoritmo fijo**, **textos del cobro sin tope** y **preferencias que se borraban** en cada cobro.
 
+## Tercera revisión del 11/11/2026: lo pasado no cambia
+
+Corregidos, con prueba en `tests/api-seguridad.test.js`, `tests/tipo-via-de-cada-dia.test.js` y `tests/tarifas-vigentes.test.js`:
+- **Puestos:** el cobrador rodeaba la prohibición de cambiar la zona. Podía crear un puesto en una zona más barata, pasar un puesto a otro titular, o liberarlo o darlo de baja. Ahora solo registra la ubicación.
+- **Tipo de vía:** al cambiarlo se recalculaban los días pasados. Migración 0021.
+- **Tarifas:** editar el monto de una tarifa que ya regía cambiaba los meses pasados. El formulario de tarifa nueva traía una fecha de inicio pasada.
+- **`GET /calles`:** no pedía rol.
+
+Queda: un cobro sin señal de un comerciante sin ninguna tarifa aplicable se rechaza (`transacciones.tarifa_id` es NOT NULL), aunque el dinero ya se recibió. Es raro con las tarifas generales por tipo de vía, pero conviene que quede observado.
+
 Ramas viejas (decisión del usuario, 11/11/2026): `limpieza/archivos-sobrantes` se unió a esta rama. `fix/arranque-local` está obsoleta (puerto 4000 y `apiService.js`, que ya no existen; `.env.example` ya estaba) y el usuario pidió borrarla del remoto.
 
 Quedan:

@@ -1368,7 +1368,10 @@ async function validatePuestoPlacement(db, { comercianteId, zonaId, direccion, e
 
 // devolver: false evita recalcular el estado de pago del puesto (findPuesto) cuando el llamador no lo usa,
 // como la importación del padrón, que guarda miles de puestos seguidos.
-export async function insertPuesto(db, payload, { devolver = true } = {}) {
+// soloZonaDelTitular: el cobrador (decisión del usuario, 11/11/2026). Un puesto con titular queda en la zona
+// del comerciante: si no, crear un puesto en una zona más barata rodeaba la prohibición de cambiar la zona.
+// Un puesto sin titular no genera deuda hasta que el administrador se lo asigna.
+export async function insertPuesto(db, payload, { devolver = true, soloZonaDelTitular = false } = {}) {
   const comercianteId = parseComercianteId(payload.comerciante_id) ?? null;
   const zonaId = Number(payload.zona_id);
   const direccion = String(payload.direccion || '').trim();
@@ -1388,6 +1391,12 @@ export async function insertPuesto(db, payload, { devolver = true } = {}) {
     throw new ValidationError('El metraje es obligatorio en una zona sin tipo de vía: su tarifa puede ser por metro cuadrado');
   }
   if (estado === 'inactivo') throw new ValidationError('Estado de puesto no válido');
+  if (soloZonaDelTitular && comercianteId) {
+    const titular = await first(db, 'SELECT zona_id FROM comerciantes WHERE id = $1', [comercianteId]);
+    if (titular && Number(titular.zona_id) !== zonaId) {
+      throw new ForbiddenError('El puesto de un comerciante va en la zona del comerciante: otra zona la asigna el super administrador');
+    }
+  }
   await validatePuestoPlacement(db, { comercianteId, zonaId, direccion, estado });
 
   const next = await first(db, `SELECT nextval(pg_get_serial_sequence('puestos', 'id')) AS id`);
@@ -1407,8 +1416,11 @@ export async function insertPuesto(db, payload, { devolver = true } = {}) {
 // Si se envía comerciante_id sin estado: con titular pasa a ocupado; con null queda libre (disponible).
 // puedeCambiarZona: false para quien no es super_admin (decisión del usuario, 28/10/2026). La zona del puesto
 // fija la tarifa del cobro por día, así que el cobrador no la cambia ni confirma una "zona por regularizar";
-// sí mueve el puesto en el mapa y le asigna o quita titular.
-export async function updatePuesto(db, id, payload, { devolver = true, puedeCambiarZona = true } = {}) {
+// sí mueve el puesto en el mapa.
+// soloUbicacion: también el cobrador (decisión del usuario, 11/11/2026). Solo corrige la ubicación GPS y la
+// dirección; cambiar el titular (la deuda pasaría a otro), el estado o el metraje es del super administrador.
+// Se compara con lo guardado: la cola del mapa reenvía el puesto completo.
+export async function updatePuesto(db, id, payload, { devolver = true, puedeCambiarZona = true, soloUbicacion = false } = {}) {
   const puestoId = Number(id);
   const current = await first(db, 'SELECT * FROM puestos WHERE id = $1', [puestoId]);
   if (!current) throw new NotFoundError('Puesto no encontrado');
@@ -1423,6 +1435,14 @@ export async function updatePuesto(db, id, payload, { devolver = true, puedeCamb
   // Puestos del padrón ferial pueden no tener metraje todavía: se respeta mientras no se envíe uno.
   const metros = payload.metros_cuadrados === undefined ? current.metros_cuadrados : Number(payload.metros_cuadrados);
   const estado = String(payload.estado ?? (requested === undefined ? current.estado : requested ? 'ocupado' : 'disponible')).trim();
+  if (soloUbicacion) {
+    const mismo = (a, b) => (a === null || a === undefined ? null : Number(a)) === (b === null || b === undefined ? null : Number(b));
+    if (!mismo(comercianteId, current.comerciante_id)) {
+      throw new ForbiddenError('Solo el super administrador cambia el titular de un puesto: la deuda pasaría a otro comerciante');
+    }
+    if (estado !== current.estado) throw new ForbiddenError('Solo el super administrador cambia el estado de un puesto');
+    if (!mismo(metros, current.metros_cuadrados)) throw new ForbiddenError('Solo el super administrador cambia el metraje de un puesto');
+  }
   // Sin coordenada en el pedido se conserva la actual (también si es null).
   const latitud = payload.latitud === undefined ? parseCoord(current.latitud) : parseCoord(payload.latitud);
   const longitud = payload.longitud === undefined ? parseCoord(current.longitud) : parseCoord(payload.longitud);
@@ -1569,6 +1589,29 @@ export async function updateTarifa(db, id, payload) {
     version: current.version + 1
   });
 
+  // Una tarifa que ya empezó a regir no cambia lo que cobra (decisión del usuario, 11/11/2026): editarla
+  // recalculaba los meses pasados y un mes pagado aparecía con deuda o saldo a favor. Para otro monto se crea
+  // una tarifa nueva, que cierra esta sola. Sí se puede cerrar con vigencia_fin, pero no antes de hoy.
+  const hoy = todayInLima();
+  if (current.vigencia_inicio <= hoy) {
+    const cambiaCobro = ['rubro_id', 'zona_id', 'tipo_via', 'tipo_tarifa', 'monto_fijo', 'monto_variable', 'unidad_medida', 'vigencia_inicio']
+      .filter((campo) => payload[campo] !== undefined)
+      .filter((campo) => {
+        const antes = { rubro_id: current.rubro_id, zona_id: current.zona_id, tipo_via: current.tipo_via }[campo] ?? current[campo];
+        const despues = payload[campo] === '' ? null : payload[campo];
+        if (['monto_fijo', 'monto_variable', 'rubro_id', 'zona_id'].includes(campo)) {
+          return (antes === null || antes === undefined ? null : Number(antes)) !== (despues === null ? null : Number(despues));
+        }
+        return String(antes ?? '') !== String(despues ?? '');
+      });
+    if (cambiaCobro.length) {
+      throw new ValidationError(`Esta tarifa rige desde el ${current.vigencia_inicio}: para cambiar ${cambiaCobro.includes('monto_fijo') || cambiaCobro.includes('monto_variable') ? 'el monto' : 'lo que cobra'} registre una tarifa nueva desde el mes que corresponda; la anterior se cierra sola`);
+    }
+    if (payload.vigencia_fin !== undefined && payload.vigencia_fin && String(payload.vigencia_fin) < hoy) {
+      throw new ValidationError('Una tarifa que ya rigió no se puede cerrar antes de hoy: cambiaría la deuda de días pasados');
+    }
+  }
+
   // Editar nunca cierra otra tarifa: solo crear lo hace. Una tarifa inactiva no choca con ninguna.
   if (current.estado) {
     const [cruce] = await tarifasQueSeCruzan(db, tariff, Number(id));
@@ -1616,17 +1659,20 @@ function dailyTariffAmount(tarifa, dia, metros = 1) {
 // de vía de esa zona (asfaltada / sin asfaltar), luego la del rubro y al final la de todos los rubros.
 // Así la tarifa general por tipo de vía (cobro por día cobrado) gana a las del rubro en cuanto la zona
 // tiene tipo de vía.
-async function findApplicableTariff(db, merchant, periodo) {
+// `tipoVia` (puede ser null): el tipo de vía que tenía la zona el día cobrado (asistencias_feriales.tipo_via,
+// migración 0021). Sin él se usa el actual de la zona.
+async function findApplicableTariff(db, merchant, periodo, opciones = {}) {
+  const conVia = Object.prototype.hasOwnProperty.call(opciones, 'tipoVia');
   return first(db, `
     ${TARIFA_SELECT}
     LEFT JOIN zonas zc ON zc.id = $2
     WHERE (t.rubro_id = $1 OR t.rubro_id IS NULL) AND t.activo
       AND (t.zona_id IS NULL OR t.zona_id = $2)
-      AND (t.tipo_via IS NULL OR t.tipo_via = zc.tipo_via)
+      AND (t.tipo_via IS NULL OR t.tipo_via = ${conVia ? '$4::text' : 'zc.tipo_via'})
       AND t.vigencia_inicio <= $3::date AND (t.vigencia_fin IS NULL OR t.vigencia_fin >= $3::date)
     ORDER BY (t.zona_id IS NOT NULL) DESC, (t.tipo_via IS NOT NULL) DESC, (t.rubro_id IS NOT NULL) DESC,
              t.vigencia_inicio DESC, t.id DESC LIMIT 1`,
-  [merchant.rubro_id, merchant.zona_id, `${periodo}-01`]);
+  [merchant.rubro_id, merchant.zona_id, `${periodo}-01`, ...(conVia ? [opciones.tipoVia ?? null] : [])]);
 }
 
 // Días con asistencia en el mes, por puesto: cada puesto marcado un día se cobra ese día (dos puestos el
@@ -1636,15 +1682,16 @@ async function findApplicableTariff(db, merchant, periodo) {
 // Los días son del titular de cada marca (a.comerciante_id, migración 0015), no del que tiene el puesto hoy:
 // si el puesto pasó a otro o se liberó, lo marcado antes lo sigue debiendo quien lo tenía.
 // La zona también es la de la marca (migración 0019): si el puesto cambió de zona en el mes, sale una fila por
-// cada zona, porque cada tramo paga su tarifa.
+// cada zona, porque cada tramo paga su tarifa. Lo mismo el tipo de vía (0021): si la calle se asfaltó en el
+// mes, los días de antes pagan S/ 2 y los de después S/ 3.
 async function asistenciasPorPuesto(db, merchantId, periodo) {
   const data = await rows(db, `
-    SELECT p.id AS puesto_id, p.codigo_puesto, a.zona_id, p.metros_cuadrados, COUNT(DISTINCT a.fecha)::int AS dias
+    SELECT p.id AS puesto_id, p.codigo_puesto, a.zona_id, a.tipo_via, p.metros_cuadrados, COUNT(DISTINCT a.fecha)::int AS dias
     FROM asistencias_feriales a JOIN puestos p ON p.id = a.puesto_id
     WHERE a.comerciante_id = $1 AND a.asistio AND to_char(a.fecha, 'YYYY-MM') = $2
       AND (a.sesion = '' OR NOT EXISTS (
         SELECT 1 FROM asistencias_feriales app WHERE app.puesto_id = a.puesto_id AND app.fecha = a.fecha AND app.sesion = ''))
-    GROUP BY p.id, a.zona_id ORDER BY p.id, MIN(a.fecha)`,
+    GROUP BY p.id, a.zona_id, a.tipo_via ORDER BY p.id, MIN(a.fecha)`,
   [merchantId, periodo]);
   return data.map((fila) => ({ ...fila, puesto_id: Number(fila.puesto_id), zona_id: Number(fila.zona_id) }));
 }
@@ -1762,9 +1809,8 @@ async function liquidarPorAsistencia(db, { merchant, periodo, tarifa, puesto, as
   const metros = Number(puesto?.metros_cuadrados || 1);
   const puestosCobrados = [];
   for (const item of asistencias) {
-    const tarifaPuesto = item.zona_id === Number(merchant.zona_id)
-      ? tarifa
-      : (await findApplicableTariff(db, { ...merchant, zona_id: item.zona_id }, periodo)) || tarifa;
+    // La tarifa del tipo de vía que tenía la zona esos días, no la de hoy.
+    const tarifaPuesto = (await findApplicableTariff(db, { ...merchant, zona_id: item.zona_id }, periodo, { tipoVia: item.tipo_via ?? null })) || tarifa;
     const montoDia = dailyTariffAmount(tarifaPuesto, `${periodo}-01`, Number(item.metros_cuadrados || 1));
     puestosCobrados.push({ puesto_id: item.puesto_id, codigo_puesto: item.codigo_puesto, dias: item.dias, monto_dia: montoDia, tarifa_id: tarifaPuesto.id });
   }

@@ -66,13 +66,14 @@ test('fechas que no se cruzan conviven, y otra zona o tipo de vía no cuenta com
 });
 
 test('editar no cierra otra tarifa: si las fechas se cruzan, se rechaza', async () => {
+  // Tarifas que todavía no empiezan: una que ya rigió no cambia su inicio (tarifas-vigentes.test.js).
   const { db, rubroId } = await preparar();
-  await tarifa(db, rubroId, { vigencia_fin: '2026-02-28' });
-  const segunda = await tarifa(db, rubroId, { vigencia_inicio: '2026-03-01' });
+  await tarifa(db, rubroId, { vigencia_inicio: '2030-01-01', vigencia_fin: '2030-02-28' });
+  const segunda = await tarifa(db, rubroId, { vigencia_inicio: '2030-03-01' });
 
-  await assert.rejects(() => updateTarifa(db, segunda.id, { vigencia_inicio: '2026-02-01', version: segunda.version }), /del 2026-01-01 al 2026-02-28/);
-  const movida = await updateTarifa(db, segunda.id, { vigencia_inicio: '2026-04-01', version: segunda.version });
-  assert.equal(movida.vigencia_inicio, '2026-04-01');
+  await assert.rejects(() => updateTarifa(db, segunda.id, { vigencia_inicio: '2030-02-01', version: segunda.version }), /del 2030-01-01 al 2030-02-28/);
+  const movida = await updateTarifa(db, segunda.id, { vigencia_inicio: '2030-04-01', version: segunda.version });
+  assert.equal(movida.vigencia_inicio, '2030-04-01');
 });
 
 test('la base rechaza un cruce aunque entre por otro camino', async () => {

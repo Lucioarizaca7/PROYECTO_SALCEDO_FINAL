@@ -85,7 +85,7 @@ grep -rn "nombreFuncion(" apps/server/src apps/client/src
 
 ## 3. Base de datos
 
-- **Las migraciones solo se agregan**: `migrations/000N_nombre.sql` (la siguiente es la 0021), con `BEGIN; … COMMIT;`, comentarios en español, la corrección de los datos existentes y su prueba. Nunca se edita una que ya se aplicó.
+- **Las migraciones solo se agregan**: `migrations/000N_nombre.sql` (la siguiente es la 0022), con `BEGIN; … COMMIT;`, comentarios en español, la corrección de los datos existentes y su prueba. Nunca se edita una que ya se aplicó.
 - **La regla también va en la base**: CHECK, FK, UNIQUE (parcial si hace falta). El JS valida para dar un buen mensaje; la base impide el dato malo aunque entre por otro camino. Ejemplos: `puestos_ocupado_con_titular`, `tarifas_zona_o_tipo_via`, `UNIQUE (serie, numero)` de tickets.
 - Dinero en `NUMERIC(12,2)`; se redondea solo al mostrar.
 - Todo lo que escribe en más de una tabla va en `withTransaction`. Lo que lee un saldo para luego escribir **bloquea** (`FOR UPDATE` / `FOR NO KEY UPDATE`) para que dos cobros simultáneos no pasen del saldo.

@@ -100,7 +100,10 @@ function TitularPicker({ id, value, onChange, searchMerchants, placeholder }) {
 
 const emptyTitular = { text: '', merchant: null };
 
-export function SitesMap({ sites = [], zonas = [], searchMerchants, onCollect, onCreate, onUpdate, onDelete, onAssign, onRelease }) {
+// Sin onAssign, onRelease u onDelete (el cobrador, decisión del 11/11/2026) no se ofrecen esas acciones: el
+// cobrador solo registra puestos y corrige su ubicación. soloZonaDelTitular: el puesto nuevo de un comerciante
+// va en la zona de ese comerciante (el servidor lo vuelve a comprobar).
+export function SitesMap({ sites = [], zonas = [], searchMerchants, onCollect, onCreate, onUpdate, onDelete, onAssign, onRelease, soloZonaDelTitular = false }) {
   const [category, setCategory] = useState('todos');
   const [paymentStatus, setPaymentStatus] = useState('todos');
   const [selectedSite, setSelectedSite] = useState(null);
@@ -207,6 +210,8 @@ export function SitesMap({ sites = [], zonas = [], searchMerchants, onCollect, o
     setCorrectingLocation(false);
   };
 
+  const zonaDelTitular = soloZonaDelTitular && draftTitular.merchant?.zona_id ? Number(draftTitular.merchant.zona_id) : null;
+
   const submitDraft = async (event) => {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
@@ -219,7 +224,7 @@ export function SitesMap({ sites = [], zonas = [], searchMerchants, onCollect, o
     try {
       await onCreate?.({
         codigoPuesto: form.get('codigoPuesto'),
-        zona_id: form.get('zona_id'),
+        zona_id: zonaDelTitular ?? form.get('zona_id'),
         comerciante_id: draftTitular.merchant?.id ?? null,
         direccion: form.get('direccion'),
         metros_cuadrados: form.get('metros_cuadrados'),
@@ -344,17 +349,23 @@ export function SitesMap({ sites = [], zonas = [], searchMerchants, onCollect, o
           <div className="map-edit-grid">
             <input name="codigoPuesto" placeholder="Código (vacío = se genera)" aria-label="Código de puesto" />
             <input name="direccion" required placeholder="Sector o dirección" aria-label="Sector o dirección" />
-            <select name="zona_id" required defaultValue={zonas[0]?.id ?? ''} aria-label="Zona">
-              {!zonas.length && <option value="">Sin zonas registradas</option>}
-              {zonas.map((zona) => <option key={zona.id} value={zona.id}>{zona.nombre}</option>)}
-            </select>
+            {zonaDelTitular !== null ? (
+              <select aria-label="Zona" disabled value={zonaDelTitular} onChange={() => {}}>
+                {zonas.map((zona) => <option key={zona.id} value={zona.id}>{zona.nombre}</option>)}
+              </select>
+            ) : (
+              <select name="zona_id" required defaultValue={zonas[0]?.id ?? ''} aria-label="Zona">
+                {!zonas.length && <option value="">Sin zonas registradas</option>}
+                {zonas.map((zona) => <option key={zona.id} value={zona.id}>{zona.nombre}</option>)}
+              </select>
+            )}
             <TitularPicker id="titular-nuevo-puesto" value={draftTitular} onChange={setDraftTitular} searchMerchants={searchMerchants} placeholder="Titular: nombre, DNI o código (vacío = libre)" />
             <input name="metros_cuadrados" required defaultValue="1" type="number" min="0.1" step="0.1" placeholder="m²" aria-label="Metros cuadrados" />
             <button type="submit" className="primary-button" disabled={savingDraft}>{savingDraft ? 'Guardando…' : 'Guardar puesto'}</button>
           </div>
           <p className="map-form-hint">
             {draftTitular.merchant
-              ? `Categoría: ${draftTitular.merchant.tipo_comerciante || draftTitular.merchant.categoria || 'permanente'} (la define el comerciante).`
+              ? `Categoría: ${draftTitular.merchant.tipo_comerciante || draftTitular.merchant.categoria || 'permanente'} (la define el comerciante).${zonaDelTitular !== null ? ' El puesto va en la zona del comerciante.' : ''}`
               : 'Sin titular el puesto queda libre; luego se le puede asignar un comerciante.'}
           </p>
           {draftError && <p className="form-error" role="alert">{draftError}</p>}
@@ -380,8 +391,8 @@ export function SitesMap({ sites = [], zonas = [], searchMerchants, onCollect, o
               <button type="button" className="primary-button" onClick={() => onCollect?.(currentSite)}>Cobrar aquí</button>
             )}
             {currentSite.comerciante_id ? (
-              <button type="button" className="secondary-button" disabled={detailBusy} onClick={() => runDetailAction(() => onRelease?.(currentSite))}>Liberar puesto</button>
-            ) : (
+              onRelease && <button type="button" className="secondary-button" disabled={detailBusy} onClick={() => runDetailAction(() => onRelease(currentSite))}>Liberar puesto</button>
+            ) : onAssign && (
               <>
                 <TitularPicker id="titular-asignar" value={assignTitular} onChange={setAssignTitular} searchMerchants={searchMerchants} placeholder="Buscar comerciante para asignar" />
                 <button
@@ -397,7 +408,7 @@ export function SitesMap({ sites = [], zonas = [], searchMerchants, onCollect, o
                 </button>
               </>
             )}
-            <button type="button" className="table-action peligro" disabled={detailBusy} onClick={() => runDetailAction(() => onDelete?.(currentSite))}>Dar de baja</button>
+            {onDelete && <button type="button" className="table-action peligro" disabled={detailBusy} onClick={() => runDetailAction(() => onDelete(currentSite))}>Dar de baja</button>}
           </div>
           {detailError && <p className="form-error" role="alert">{detailError}</p>}
         </section>

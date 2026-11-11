@@ -334,3 +334,45 @@ test('la auditoría pagina en el servidor y el cobrador no puede consultarla', a
   assert.ok(body.total >= body.data.length, 'el total cuenta todo lo filtrado, no solo la página');
   assert.equal((await pedir('cobrador', 'page=1')).status, 403);
 });
+
+test('el cobrador solo corrige la ubicación de un puesto: titular, liberar y baja son del administrador', async () => {
+  const [zonaA, zonaB] = await getZonas(pool);
+  const [titular, otro] = (await pool.query(`SELECT id, zona_id FROM comerciantes WHERE estado = 'activo' AND zona_id = $1 ORDER BY id LIMIT 2`, [zonaA.id])).rows;
+  assert.ok(titular && otro, 'la semilla trae dos comerciantes en la primera zona');
+  const puesto = await insertPuesto(pool, { zona_id: zonaA.id, direccion: `Puesto permisos ${Date.now()}`, metros_cuadrados: 4, comerciante_id: titular.id });
+  const pedir = (token, metodo, ruta, body) => fetch(`${baseUrl}/api/v1${ruta}`, {
+    method: metodo, headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: body ? JSON.stringify(body) : undefined
+  });
+
+  const cambioTitular = await pedir(tokens.cobrador, 'PUT', `/puestos-mapa/${puesto.id}`, { comerciante_id: otro.id });
+  assert.equal(cambioTitular.status, 403, 'la deuda pasaría a otro comerciante');
+  assert.match((await cambioTitular.json()).message, /titular/);
+  assert.equal((await pedir(tokens.cobrador, 'PUT', `/puestos-mapa/${puesto.id}`, { metros_cuadrados: 1 })).status, 403);
+  assert.equal((await pedir(tokens.cobrador, 'POST', `/puestos/${puesto.id}/liberar`)).status, 403);
+  assert.equal((await pedir(tokens.cobrador, 'DELETE', `/puestos-mapa/${puesto.id}`)).status, 403);
+  // Reenviar el puesto completo, como hace la cola del mapa, con otra ubicación: sí se acepta.
+  const mover = await pedir(tokens.cobrador, 'PUT', `/puestos-mapa/${puesto.id}`, {
+    comerciante_id: titular.id, zona_id: zonaA.id, metros_cuadrados: '4', latitud: -15.881, longitud: -70.021
+  });
+  assert.equal(mover.status, 200);
+
+  // Un puesto nuevo con titular va en la zona del comerciante.
+  const enOtraZona = await pedir(tokens.cobrador, 'POST', '/puestos-mapa', { comerciante_id: titular.id, zona_id: zonaB.id, direccion: `Otra zona ${Date.now()}`, metros_cuadrados: 4 });
+  assert.equal(enOtraZona.status, 403);
+  const enSuZona = await pedir(tokens.cobrador, 'POST', '/puestos-mapa', { comerciante_id: titular.id, zona_id: zonaA.id, direccion: `Su zona ${Date.now()}`, metros_cuadrados: 4 });
+  assert.equal(enSuZona.status, 201);
+
+  const fila = (await pool.query('SELECT comerciante_id, estado FROM puestos WHERE id = $1', [puesto.id])).rows[0];
+  assert.equal(Number(fila.comerciante_id), Number(titular.id));
+  assert.equal(fila.estado, 'ocupado');
+
+  assert.equal((await pedir(tokens.admin, 'PUT', `/puestos-mapa/${puesto.id}`, { comerciante_id: otro.id })).status, 200);
+  assert.equal((await pedir(tokens.admin, 'POST', `/puestos/${puesto.id}/liberar`)).status, 200);
+  assert.equal((await pedir(tokens.admin, 'DELETE', `/puestos-mapa/${puesto.id}`)).status, 200);
+});
+
+test('las calles solo las ve el personal: el rol comerciante recibe 403', async () => {
+  const pedir = (rol) => fetch(`${baseUrl}/api/v1/calles`, { headers: { Authorization: `Bearer ${tokens[rol]}` } });
+  assert.equal((await pedir('comerciante')).status, 403);
+  assert.equal((await pedir('cobrador')).status, 200);
+});
