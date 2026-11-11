@@ -1768,6 +1768,12 @@ export async function setInicioCobro(db, valor, { usuarioId = null } = {}) {
     RETURNING clave, valor, ${TS('actualizado_en')} AS actualizado_en`, [periodo, usuarioId ? Number(usuarioId) : null]);
 }
 
+// El comerciante no tiene tarifa aplicable (zona sin tipo de vía y rubro sin tarifa, o un mes sin tarifa). La marca
+// sinTarifa deja que el cobro sin señal y el portal lo distingan de otros errores de datos.
+function sinTarifaVigente() {
+  return Object.assign(new ValidationError('No existe una tarifa vigente para el rubro y periodo indicado'), { sinTarifa: true });
+}
+
 // Tipo con que se liquida un mes (migración 0023, decisión del usuario del 11/11/2026): el cambio de tipo rige
 // desde su día. El mes en curso usa el tipo actual (la pantalla de cobro lo necesita así). Un mes pasado usa el
 // que tenía; si en ese mes fue ferial o permanente aunque sea unos días, se liquida con ese tipo (sus días
@@ -1924,7 +1930,7 @@ export async function calcularLiquidacion(db, comercianteId, periodo, { dia = nu
     const day = dia || todayInLima();
     if (day.slice(0, 7) !== periodo) return noDevengo('eventual');
     const tarifa = await findApplicableTariff(db, merchant, periodo);
-    if (!tarifa) throw new ValidationError('No existe una tarifa vigente para el rubro y periodo indicado');
+    if (!tarifa) throw sinTarifaVigente();
     const montoDia = dailyTariffAmount(tarifa, day, Number(puesto?.metros_cuadrados || 1));
     const paidToday = await first(db, `
       SELECT COALESCE(SUM(monto), 0) AS pagado FROM transacciones
@@ -1954,12 +1960,12 @@ export async function calcularLiquidacion(db, comercianteId, periodo, { dia = nu
     if (!asistencias.length) return noDevengo('ferial_sin_asistencia', { metros_cuadrados: 0, dias_asistidos: 0, monto_pagado: await paidInPeriod(db, merchant.id, periodo) });
 
     const tarifa = await findApplicableTariff(db, merchant, periodo);
-    if (!tarifa) throw new ValidationError('No existe una tarifa vigente para el rubro y periodo indicado');
+    if (!tarifa) throw sinTarifaVigente();
     return liquidarPorAsistencia(db, { merchant, periodo, tarifa, puesto, asistencias });
   }
 
   const tarifa = await findApplicableTariff(db, merchant, periodo);
-  if (!tarifa) throw new ValidationError('No existe una tarifa vigente para el rubro y periodo indicado');
+  if (!tarifa) throw sinTarifaVigente();
 
   // Tarifa por día cobrado: el permanente paga los días que el cobrador marcó; sin marcas no devenga.
   if (tarifa.unidad_medida === 'semanal') {
@@ -2584,21 +2590,33 @@ export async function registrarCobro(db, payload, { audit = null, allowExcess = 
   const inicioAtencion = parseInicioAtencion(payload.inicio_atencion ?? payload.inicioAtencion, clientDate);
   if (payload.periodo && !PERIODO_RE.test(String(payload.periodo))) throw new ValidationError('El periodo debe tener formato AAAA-MM');
   await marcarDiaCobrado(db, comercianteId, cobradorId, todayInLima(clientDate), payload.periodo);
-  const liquidation = await calcularLiquidacion(db, comercianteId, payload.periodo, { dia: todayInLima(clientDate) });
+  // Sin señal el dinero ya se recibió: un comerciante sin tarifa vigente no rechaza el cobro, lo deja observado
+  // (migración 0024). En línea se sigue rechazando.
+  let liquidation;
+  try {
+    liquidation = await calcularLiquidacion(db, comercianteId, payload.periodo, { dia: todayInLima(clientDate) });
+  } catch (error) {
+    if (!allowExcess || !error.sinTarifa) throw error;
+    const comerciante = await findComerciante(db, comercianteId);
+    if (!comerciante) throw new ValidationError('El comerciante indicado no existe');
+    liquidation = {
+      comerciante, tarifa: null, periodo: payload.periodo || todayInLima(clientDate).slice(0, 7),
+      monto_total: 0, monto_pagado: 0, saldo: 0, sin_tarifa: true
+    };
+  }
   // El mes al que se aplica el pago (puede ser uno anterior con deuda). El eventual paga el día: no lleva mes.
   const periodoAplicado = liquidation.cobro_diario ? null : liquidation.periodo;
   let observacion = null;
   let tarifaId = liquidation.tarifa?.id;
   if (monto > liquidation.saldo) {
     if (!allowExcess) throw new ValidationError(`El monto excede el saldo pendiente de S/ ${liquidation.saldo.toFixed(2)}`);
-    observacion = liquidation.no_devengo
-      ? `Cobro offline en un periodo sin devengo (${liquidation.motivo})`
-      : `Cobro offline de S/ ${monto.toFixed(2)} excede el saldo pendiente de S/ ${liquidation.saldo.toFixed(2)}`;
-    if (!tarifaId) {
-      const tarifa = await findApplicableTariff(db, liquidation.comerciante, liquidation.periodo);
-      if (!tarifa) throw new ValidationError('No existe una tarifa vigente para el rubro y periodo indicado');
-      tarifaId = tarifa.id;
-    }
+    observacion = liquidation.sin_tarifa
+      ? 'Cobro offline de un comerciante sin tarifa vigente: revise su rubro, zona o tarifa'
+      : liquidation.no_devengo
+        ? `Cobro offline en un periodo sin devengo (${liquidation.motivo})`
+        : `Cobro offline de S/ ${monto.toFixed(2)} excede el saldo pendiente de S/ ${liquidation.saldo.toFixed(2)}`;
+    // Sin tarifa aplicable el cobro va sin tarifa_id (NULL, 0024): queda observado y lo revisa el administrador.
+    if (!tarifaId) tarifaId = (await findApplicableTariff(db, liquidation.comerciante, liquidation.periodo))?.id ?? null;
   }
 
   // Tickets preimpresos: uno por puesto y día cobrado, de los lotes del cobrador; su suma es el monto.

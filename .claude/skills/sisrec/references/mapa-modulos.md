@@ -106,3 +106,4 @@ Para ver los roles exactos de una ruta: `grep -rn "'/api/v1/<ruta>" apps/server/
 - **0021:** `zonas_via_cambios`, `via_de_zona()` y `asistencias_feriales.tipo_via`: cada día marcado guarda el tipo de vía que tenía su zona.
 - **0022:** `puestos.clave_cliente` (única si no es NULL): alta de puesto idempotente desde la cola del mapa.
 - **0023:** `comerciantes_tipo_cambios` (trigger `trg_comerciante_cambia_tipo`): cada mes pasado se liquida con el tipo que tenía.
+- **0024:** `transacciones.tarifa_id` acepta NULL: cobro sin señal de un comerciante sin tarifa, siempre observado.

@@ -93,8 +93,14 @@ export function PortalPage() {
         <div className="portal-content">
           <div className="page-heading">
             <div><div className="eyebrow">MI CUENTA / INFORMACIÓN MUNICIPAL</div><h1>Hola, {data.comerciante.nombre}</h1><p>{data.comerciante.codigo} · {data.comerciante.rubro} · {data.comerciante.zona}{data.comerciante.documento ? ` · Doc. ${data.comerciante.documento}` : ''}</p></div>
-            <span className={`status ${deudaTotal > 0 ? 'pending' : 'paid'}`}>{deudaTotal > 0 ? `Debe: S/ ${deudaTotal.toFixed(2)}` : 'Cuenta al día'}</span>
+            {data.deuda.sin_tarifa && !deudaTotal
+              ? <span className="status pending">Sin tarifa vigente</span>
+              : <span className={`status ${deudaTotal > 0 ? 'pending' : 'paid'}`}>{deudaTotal > 0 ? `Debe: S/ ${deudaTotal.toFixed(2)}` : 'Cuenta al día'}</span>}
           </div>
+          {/* Sin tarifa vigente el servidor no puede calcular el mes: no se dice "al día" (podría no estarlo). */}
+          {data.deuda.sin_tarifa ? (
+            <div className="offline-banner" role="status">Aún no hay una tarifa vigente para su puesto: consulte en la municipalidad. Sus pagos y recibos están abajo.</div>
+          ) : (
           <div className="portal-debt panel">
             <div><span>Periodo</span><strong>{data.deuda.periodo}</strong></div>
             <div><span>Total</span><strong>S/ {data.deuda.monto_total.toFixed(2)}</strong></div>
@@ -102,6 +108,7 @@ export function PortalPage() {
             <div><span>Saldo pendiente</span><strong>S/ {data.deuda.saldo.toFixed(2)}</strong></div>
             {data.deuda.deuda_vencida > 0 && <div><span>Meses anteriores</span><strong>S/ {data.deuda.deuda_vencida.toFixed(2)}</strong></div>}
           </div>
+          )}
           {data.deuda.meses_impagos?.length > 0 && (
             <div className="table-card">
               <table>
