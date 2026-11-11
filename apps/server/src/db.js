@@ -1768,6 +1768,28 @@ export async function setInicioCobro(db, valor, { usuarioId = null } = {}) {
     RETURNING clave, valor, ${TS('actualizado_en')} AS actualizado_en`, [periodo, usuarioId ? Number(usuarioId) : null]);
 }
 
+// Tipo con que se liquida un mes (migración 0023, decisión del usuario del 11/11/2026): el cambio de tipo rige
+// desde su día. El mes en curso usa el tipo actual (la pantalla de cobro lo necesita así). Un mes pasado usa el
+// que tenía; si en ese mes fue ferial o permanente aunque sea unos días, se liquida con ese tipo (sus días
+// marcados se deben) y no como eventual, que no acumula. cambios: los de comerciantes_tipo_cambios en orden.
+export function tipoEnPeriodo(tipoActual, cambios, periodo, actual = currentPeriod()) {
+  const tipo = String(tipoActual || '').trim().toLowerCase();
+  if (periodo >= actual) return tipo;
+  const primerDia = `${periodo}-01`;
+  const finDelMes = `${siguientePeriodo(periodo)}-01`;
+  const posteriores = cambios.filter((cambio) => cambio.desde > primerDia);
+  if (!posteriores.length) return tipo;
+  const tipos = [posteriores[0].tipo_anterior, ...posteriores.filter((cambio) => cambio.desde < finDelMes).map((cambio) => cambio.tipo_nuevo)];
+  const acumulan = tipos.filter((item) => item !== 'eventual');
+  return acumulan.length ? acumulan[acumulan.length - 1] : 'eventual';
+}
+
+async function cambiosDeTipo(db, comercianteId) {
+  return rows(db, `
+    SELECT tipo_anterior, tipo_nuevo, ${DAY('desde')} AS desde FROM comerciantes_tipo_cambios
+    WHERE comerciante_id = $1 ORDER BY desde, id`, [Number(comercianteId)]);
+}
+
 function siguientePeriodo(periodo) {
   const [anio, mes] = periodo.split('-').map(Number);
   return mes === 12 ? `${anio + 1}-01` : `${anio}-${String(mes + 1).padStart(2, '0')}`;
@@ -1782,16 +1804,20 @@ export async function calcularDeudaAcumulada(db, comercianteId, { hasta = curren
   const inicioCobro = await getInicioCobro(db);
   const alta = (await first(db, `SELECT to_char(${LOCAL('creado_en')}, 'YYYY-MM') AS mes FROM comerciantes WHERE id = $1`, [merchant.id])).mes;
   const tipo = String(merchant.tipo_comerciante || '').toLowerCase();
+  // Los meses en que fue ferial o permanente se deben aunque hoy sea eventual (0023).
+  const cambios = await cambiosDeTipo(db, merchant.id);
 
   let desde = alta > inicioCobro ? alta : inicioCobro;
   if (desde > hasta) desde = hasta;
   const periodos = [];
-  if (tipo !== 'eventual') {
+  if (tipo !== 'eventual' || cambios.length) {
     let periodo = desde;
     // Si el rango es más largo que MAX_MESES_DEUDA, se toman los últimos meses.
     const meses = [];
     while (periodo <= hasta) { meses.push(periodo); periodo = siguientePeriodo(periodo); }
     for (const mes of meses.slice(-MAX_MESES_DEUDA)) {
+      // El eventual no acumula: un mes en que lo fue (o el mes en curso, si lo es hoy) no entra en la deuda.
+      if (tipoEnPeriodo(tipo, cambios, mes) === 'eventual') continue;
       try {
         const liquidacion = await calcularLiquidacion(db, merchant.id, mes);
         if (liquidacion.no_devengo && !liquidacion.monto_pagado) continue;
@@ -1871,7 +1897,10 @@ export async function calcularLiquidacion(db, comercianteId, periodo, { dia = nu
   const merchant = await findComerciante(db, comercianteId);
   if (!merchant) throw new NotFoundError('Comerciante no encontrado');
 
-  const merchantType = String(merchant.tipo_comerciante || '').trim().toLowerCase();
+  // Un mes pasado se liquida con el tipo que tenía ese mes (0023); el mes en curso, con el actual.
+  const merchantType = periodo < currentPeriod()
+    ? tipoEnPeriodo(merchant.tipo_comerciante, await cambiosDeTipo(db, merchant.id), periodo)
+    : String(merchant.tipo_comerciante || '').trim().toLowerCase();
   // Un pendiente de regularización (titular sin DNI) paga igual que cualquier otro: decisión del usuario,
   // 2026-10-27. Antes no devengaba si le faltaba el metraje.
   const puesto = await findMerchantPost(db, merchant.id);

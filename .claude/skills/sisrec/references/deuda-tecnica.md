@@ -117,7 +117,7 @@ Corregidos, con prueba en `tests/api-seguridad.test.js`, `tests/tipo-via-de-cada
 
 Queda: un cobro sin señal de un comerciante sin ninguna tarifa aplicable se rechaza (`transacciones.tarifa_id` es NOT NULL), aunque el dinero ya se recibió. Es raro con las tarifas generales por tipo de vía, pero conviene que quede observado.
 
-Ramas viejas (decisión del usuario, 11/11/2026): `limpieza/archivos-sobrantes` se unió a esta rama. `fix/arranque-local` está obsoleta (puerto 4000 y `apiService.js`, que ya no existen; `.env.example` ya estaba) y el usuario pidió borrarla del remoto.
+Ramas viejas (decisión del usuario, 11/11/2026): `limpieza/archivos-sobrantes` se unió a esta rama. `fix/arranque-local` está obsoleta (puerto 4000 y `apiService.js`, que ya no existen; `.env.example` ya estaba) y el usuario la borró del remoto (11/11/2026).
 
 Quedan:
 - **Tamaño del papel al imprimir el recibo:** sale del alto medido en pantalla. Puede sobrar un poco de papel al final.
@@ -132,6 +132,12 @@ Corregidos, con prueba en `tests/codigo-operacion.test.js`, `tests/tipo-via-de-c
 - **`POST /notificaciones`** sin auditoría ni largo máximo; **`GET /catalogos` y `GET /roles`** sin rol.
 
 Queda: el paquete de jornada calcula dos veces el mes en curso (`calcularLiquidacion` y otra vez dentro de `calcularDeudaAcumulada`). Con un padrón mucho mayor convendrá la liquidación en lote (paso 6).
+
+## Sexta revisión del 11/11/2026: el tipo de comerciante rige desde el cambio
+
+Corregido, con prueba en `tests/tipo-comerciante-de-cada-mes.test.js`: cambiar el tipo de un comerciante recalculaba todos sus meses pasados. Pasar a eventual borraba la deuda atrasada (en la prueba, S/ 28 pasaban a S/ 0). Migración 0023.
+
+Queda, de la misma clase: el **rubro**, la **zona del comerciante** y el **metraje actual del puesto** todavía se leen con el valor de hoy al liquidar un mes pasado. Con las tarifas generales por día y tipo de vía (0013), la zona y el tipo de vía de cada día ya van en la marca (0019, 0021). Lo que queda solo afecta a tarifas mensuales, por rubro o por m², y al eventual.
 
 ## Quinta revisión del 11/11/2026: puestos sin señal y anulación
 
