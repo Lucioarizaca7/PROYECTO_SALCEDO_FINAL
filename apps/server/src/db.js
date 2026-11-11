@@ -461,14 +461,20 @@ export async function getPendingDebt(db, period = currentPeriod()) {
       return 0; // sin tarifa vigente: no devenga
     }
   };
-  let total = 0;
-  // Con un cliente de transacción (PoolClient) las consultas van una tras otra; con el pool, en paralelo.
+  const saldos = await enGrupos(db, merchants, saldoDe);
+  return Number(saldos.reduce((suma, saldo) => suma + saldo, 0).toFixed(2));
+}
+
+// Aplica `fn` a cada elemento de a LIQUIDACIONES_EN_PARALELO y devuelve los resultados en el mismo orden.
+// Con un cliente de transacción (PoolClient) las consultas van una tras otra: un cliente no admite
+// consultas simultáneas. Con el pool, en paralelo.
+async function enGrupos(db, lista, fn) {
   const enParalelo = typeof db?.release === 'function' ? 1 : LIQUIDACIONES_EN_PARALELO;
-  for (let inicio = 0; inicio < merchants.length; inicio += enParalelo) {
-    const saldos = await Promise.all(merchants.slice(inicio, inicio + enParalelo).map(saldoDe));
-    total += saldos.reduce((suma, saldo) => suma + saldo, 0);
+  const resultados = [];
+  for (let inicio = 0; inicio < lista.length; inicio += enParalelo) {
+    resultados.push(...await Promise.all(lista.slice(inicio, inicio + enParalelo).map(fn)));
   }
-  return Number(total.toFixed(2));
+  return resultados;
 }
 
 // Proyección de recaudación: series mensuales reales (cobros confirmados, meses de Lima, sin el mes en
@@ -587,31 +593,18 @@ export async function generateForecastProjection(db, options = {}) {
   return result;
 }
 
-export async function scoreMorosidadComerciante(db, comercianteId) {
-  const merchant = await findComerciante(db, comercianteId);
-  if (!merchant) throw new NotFoundError('Comerciante no encontrado');
+// ---------------------------------------------------------------------------
+// Riesgo de morosidad (heurístico, una vez por día de Lima)
+// ---------------------------------------------------------------------------
 
-  let deudaTotal = 0;
-  try {
-    const liquidation = await calcularLiquidacion(db, merchant.id);
-    deudaTotal = liquidation.cobro_diario ? 0 : Number(liquidation.saldo || 0);
-  } catch {
-    deudaTotal = 0;
-  }
-
-  const pagos = await first(db, `
-    SELECT COUNT(*) AS total_pagos, COALESCE(SUM(monto), 0) AS monto_pagado,
-           to_char(MAX(fecha_cobro_cliente), 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS ultima_fecha
-    FROM transacciones WHERE comerciante_id = $1 AND estado = 'confirmado'`, [merchant.id]);
-
-  const totalPagos = Number(pagos.total_pagos);
-  const montoPagado = Number(pagos.monto_pagado);
-  const ultimaFecha = pagos.ultima_fecha ? new Date(pagos.ultima_fecha) : null;
-  const diasSinPago = ultimaFecha ? Math.max(0, (Date.now() - ultimaFecha.getTime()) / 86400000) : 90;
+// Fórmula única del puntaje: la usan el cálculo de un comerciante y el del padrón completo.
+export function puntuarMorosidad({ estado, deudaTotal, totalPagos, montoPagado, ultimaFecha }, ahora = Date.now()) {
+  const fechaPago = ultimaFecha ? new Date(ultimaFecha) : null;
+  const diasSinPago = fechaPago ? Math.max(0, (ahora - fechaPago.getTime()) / 86400000) : 90;
   const deudaRatio = deudaTotal > 0 ? clamp(deudaTotal / Math.max(1, montoPagado + deudaTotal), 0, 1) : 0;
   const cumplimiento = totalPagos > 0 ? clamp(montoPagado / Math.max(1, deudaTotal + montoPagado), 0, 1) : 0.45;
   const recencyPenalty = clamp(diasSinPago / 90, 0, 1);
-  const estadoPenalty = merchant.estado === 'pendiente' ? 0.2 : merchant.estado === 'inactivo' ? 0.3 : 0;
+  const estadoPenalty = estado === 'pendiente' ? 0.2 : estado === 'inactivo' ? 0.3 : 0;
 
   const score = clamp(0.45 * deudaRatio + 0.25 * (1 - cumplimiento) + 0.20 * recencyPenalty + 0.10 * estadoPenalty, 0, 1);
   let nivel = 'bajo';
@@ -622,43 +615,131 @@ export async function scoreMorosidadComerciante(db, comercianteId) {
   let motivo = 'Pago regular y cumplimiento estable';
   if (deudaTotal > 0 && score >= 0.5) motivo = 'Existe deuda pendiente acumulada con historial de pagos intermitentes';
   else if (diasSinPago > 45) motivo = 'No registra pagos recientes en la última ventana de cobranza';
-  else if (merchant.estado === 'pendiente') motivo = 'El comerciante requiere seguimiento por estado de padrón';
+  else if (estado === 'pendiente') motivo = 'El comerciante requiere seguimiento por estado de padrón';
+
+  return { score: Number(score.toFixed(4)), nivel, motivo };
+}
+
+// La deuda del puntaje es la acumulada (meses atrasados + días cobrados sin pagar), la misma que ve Pagos.
+// Antes era solo el saldo del mes y, a quien paga por día, se le contaba 0: con meses atrasados salía "bajo".
+async function deudaParaRiesgo(db, comercianteId) {
+  try {
+    return Number((await calcularDeudaAcumulada(db, comercianteId)).deuda_total || 0);
+  } catch {
+    return 0; // sin tarifa vigente: no devenga
+  }
+}
+
+const SELECT_PAGOS_RIESGO = `
+  SELECT comerciante_id, COUNT(*) AS total_pagos, COALESCE(SUM(monto), 0) AS monto_pagado,
+         to_char(MAX(fecha_cobro_cliente), 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS ultima_fecha
+  FROM transacciones WHERE estado = 'confirmado'`;
+
+const filaDeRiesgo = (merchant, deudaTotal, pagos) => {
+  const { score, nivel, motivo } = puntuarMorosidad({
+    estado: merchant.estado,
+    deudaTotal,
+    totalPagos: Number(pagos?.total_pagos || 0),
+    montoPagado: Number(pagos?.monto_pagado || 0),
+    ultimaFecha: pagos?.ultima_fecha || null
+  });
+  return { comerciante_id: Number(merchant.id), nombre: merchant.nombre, score, nivel, motivo_principal: motivo, deuda_total: Number(deudaTotal.toFixed(2)) };
+};
+
+const metricasDeRiesgo = (fila) => JSON.stringify({
+  motivo_principal: fila.motivo_principal,
+  deuda_total: fila.deuda_total,
+  alerta: ['alto', 'critico'].includes(fila.nivel)
+});
+
+export async function scoreMorosidadComerciante(db, comercianteId) {
+  const merchant = await findComerciante(db, comercianteId);
+  if (!merchant) throw new NotFoundError('Comerciante no encontrado');
+  const deudaTotal = await deudaParaRiesgo(db, merchant.id);
+  const pagos = await first(db, `${SELECT_PAGOS_RIESGO} AND comerciante_id = $1 GROUP BY comerciante_id`, [merchant.id]);
+  const fila = filaDeRiesgo(merchant, deudaTotal, pagos);
 
   const now = new Date().toISOString();
   await db.query(
     `INSERT INTO modelos_ia_metricas (modelo, version, entidad_tipo, entidad_id, periodo, score, nivel, metricas)
      VALUES ('riesgo_morosidad', 'heuristico-v1', 'comerciante', $1, $2, $3, $4, $5::jsonb)`,
-    [merchant.id, now.slice(0, 7), Number(score.toFixed(4)), nivel, JSON.stringify({
-      motivo_principal: motivo,
-      deuda_total: deudaTotal,
-      alerta: ['alto', 'critico'].includes(nivel)
-    })]
+    [merchant.id, currentPeriod(), fila.score, fila.nivel, metricasDeRiesgo(fila)]
   );
-
-  return {
-    comerciante_id: merchant.id,
-    nombre: merchant.nombre,
-    score: Number(score.toFixed(4)),
-    nivel,
-    motivo_principal: motivo,
-    fecha_calculo: now,
-    deuda_total: Number(deudaTotal.toFixed(2))
-  };
+  return { ...fila, fecha_calculo: now };
 }
 
-// Comerciantes que se puntúan al recalcular el riesgo (el mismo tope que la deuda del panel).
-const MAX_COMERCIANTES_RIESGO = 300;
+// Filas por INSERT al guardar el puntaje del padrón (cada fila lleva 5 arreglos de parámetros).
+const FILAS_RIESGO_POR_INSERT = 1000;
+// Llave del candado de PostgreSQL que impide que dos instancias guarden el puntaje del mismo día.
+const CANDADO_RIESGO = 7002;
 
-export async function getRiskDashboard(db, options = {}) {
-  const limit = Math.min(Math.max(Number(options.limit || 5), 1), 20);
-  // El puntaje guardado vale por el día (hora de Lima). Antes se calculaba una sola vez y el panel
-  // mostraba para siempre la alerta de esa fecha; además solo se puntuaban los primeros `limit` por id.
+const puntuadoHoy = async (db) => {
   const ultimo = await first(db, `
     SELECT MAX(generado_en) AS fecha FROM modelos_ia_metricas
     WHERE modelo = 'riesgo_morosidad' AND entidad_tipo = 'comerciante'`);
-  if (!ultimo?.fecha || todayInLima(new Date(ultimo.fecha)) !== todayInLima()) {
-    const vigentes = await rows(db, `SELECT id FROM comerciantes WHERE estado <> 'inactivo' ORDER BY id LIMIT $1`, [MAX_COMERCIANTES_RIESGO]);
-    for (const { id } of vigentes) await scoreMorosidadComerciante(db, id);
+  return { fecha: ultimo?.fecha || null, hoy: Boolean(ultimo?.fecha) && todayInLima(new Date(ultimo.fecha)) === todayInLima() };
+};
+
+/**
+ * Puntúa a TODO el padrón no dado de baja (antes solo los primeros 300 por id). Los pagos salen de una
+ * sola consulta agrupada y la deuda se calcula de a LIQUIDACIONES_EN_PARALELO. Se guarda todo junto en
+ * una transacción: nunca queda medio padrón puntuado, y si otra instancia ya lo guardó hoy, no se repite.
+ */
+export async function recalcularRiesgoMorosidad(db = pool) {
+  const merchants = await rows(db, `SELECT id, nombre, estado FROM comerciantes WHERE estado <> 'inactivo' ORDER BY id`);
+  const pagosPorComerciante = new Map(
+    (await rows(db, `${SELECT_PAGOS_RIESGO} GROUP BY comerciante_id`)).map((fila) => [Number(fila.comerciante_id), fila])
+  );
+  const deudas = await enGrupos(db, merchants, (merchant) => deudaParaRiesgo(db, merchant.id));
+  const filas = merchants.map((merchant, i) => filaDeRiesgo(merchant, deudas[i], pagosPorComerciante.get(Number(merchant.id))));
+
+  const guardar = async (client) => {
+    const { rows: [candado] } = await client.query('SELECT pg_try_advisory_xact_lock($1) AS tomado', [CANDADO_RIESGO]);
+    if (!candado.tomado || (await puntuadoHoy(client)).hoy) return { puntuados: 0, guardado: false };
+    for (let inicio = 0; inicio < filas.length; inicio += FILAS_RIESGO_POR_INSERT) {
+      const tanda = filas.slice(inicio, inicio + FILAS_RIESGO_POR_INSERT);
+      await client.query(
+        `INSERT INTO modelos_ia_metricas (modelo, version, entidad_tipo, entidad_id, periodo, score, nivel, metricas)
+         SELECT 'riesgo_morosidad', 'heuristico-v1', 'comerciante', t.id, $1, t.score, t.nivel, t.metricas
+         FROM unnest($2::bigint[], $3::numeric[], $4::text[], $5::jsonb[]) AS t (id, score, nivel, metricas)`,
+        [currentPeriod(), tanda.map((f) => f.comerciante_id), tanda.map((f) => f.score), tanda.map((f) => f.nivel), tanda.map(metricasDeRiesgo)]
+      );
+    }
+    return { puntuados: filas.length, guardado: true };
+  };
+  return typeof db?.release === 'function' ? guardar(db) : withTransaction(guardar);
+}
+
+// Recálculo en marcha en esta instancia: evita lanzar dos a la vez cuando varios abren el panel.
+let recalculoRiesgo = null;
+
+function lanzarRecalculoRiesgo(db) {
+  if (!recalculoRiesgo) {
+    recalculoRiesgo = recalcularRiesgoMorosidad(db)
+      .catch((error) => { console.warn(`No se pudo recalcular el riesgo de morosidad: ${error.message}`); })
+      .finally(() => { recalculoRiesgo = null; });
+  }
+  return recalculoRiesgo;
+}
+
+// Para las pruebas: la promesa del recálculo en marcha, o null si no hay ninguno.
+export const esperarRecalculoRiesgo = () => recalculoRiesgo;
+
+export async function getRiskDashboard(db, options = {}) {
+  const limit = Math.min(Math.max(Number(options.limit || 5), 1), 20);
+  // El puntaje vale por el día de Lima. Si el de hoy falta, se recalcula por detrás y mientras tanto se
+  // muestra el anterior con `actualizando` (decisión del usuario, 11/11/2026): con miles de comerciantes la
+  // primera carga del día tardaría. Solo si nunca se puntuó (base nueva) se espera el cálculo.
+  let estado = await puntuadoHoy(db);
+  let actualizando = false;
+  if (!estado.hoy) {
+    const enMarcha = lanzarRecalculoRiesgo(db);
+    if (!estado.fecha) {
+      await enMarcha;
+      estado = await puntuadoHoy(db);
+    } else {
+      actualizando = true;
+    }
   }
 
   const records = await rows(db, `
@@ -692,6 +773,8 @@ export async function getRiskDashboard(db, options = {}) {
     ) ultimos`);
 
   return {
+    calculado_el: estado.fecha ? new Date(estado.fecha).toISOString() : null,
+    actualizando,
     summary: {
       total: Number(conteo?.total || 0),
       bajo: Number(conteo?.bajo || 0),

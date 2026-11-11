@@ -113,7 +113,13 @@ Depende de `tipo_comerciante`:
 ## Panel y riesgo
 
 - **Morosidad del panel** (`indicadoresPanel`, auditoría 2026-10-27): deuda pendiente del periodo ÷ (deuda pendiente + lo cobrado en el periodo) × 100, a un decimal. Es la parte de lo devengado que sigue impaga. Antes se dividía la deuda entre sí misma (siempre 0 % o 100 %). Si el usuario prefiere otra definición (p. ej. % de comerciantes con deuda), se cambia solo en esa función.
-- **Riesgo de morosidad** (`getRiskDashboard`): el puntaje se recalcula una vez por día de Lima para todos los comerciantes no dados de baja (tope `MAX_COMERCIANTES_RIESGO = 300`); los dados de baja no aparecen. El panel muestra como "Alertas importantes" solo los niveles `alto` y `critico`, igual que la marca `alerta` de la métrica.
+- **Riesgo de morosidad** (`getRiskDashboard`, `recalcularRiesgoMorosidad`; decisión del usuario, 11/11/2026):
+  - el puntaje se recalcula una vez por día de Lima para **todos** los comerciantes no dados de baja, sin tope (antes, los primeros 300);
+  - la deuda del puntaje es la **acumulada** (`calcularDeudaAcumulada`: meses atrasados y días cobrados sin pagar). Antes era solo el mes en curso, y a quien paga por día se le contaba 0;
+  - el recálculo corre **por detrás**: la primera carga del día muestra el puntaje anterior con el aviso "Puntaje del … · actualizando…". Solo si nunca se puntuó se espera el cálculo;
+  - se guarda todo junto en una transacción, con el candado `pg_try_advisory_xact_lock(7002)`, así que dos instancias no duplican el puntaje del día;
+  - la fórmula vive solo en `puntuarMorosidad`;
+  - los dados de baja no aparecen. El panel muestra como "Alertas importantes" solo los niveles `alto` y `critico`, igual que la marca `alerta` de la métrica.
 
 ## Cobros
 

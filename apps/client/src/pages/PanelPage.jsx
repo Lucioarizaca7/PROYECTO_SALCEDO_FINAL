@@ -3,7 +3,7 @@ import { canSee, navItems, pathOf } from '../app/navegacion';
 import { useSisrec } from '../app/SisrecContext';
 import { DashboardSkeleton } from '../components/ui/DashboardSkeleton';
 import { KpiCard } from '../components/ui/KpiCard';
-import { fechaHoraEnLima, formatPEN } from '../lib/formato';
+import { fechaHoraEnLima, formatPEN, textoPuntajeRiesgo } from '../lib/formato';
 
 export function PanelPage() {
   const { user, loading, dashboardStats, operational, mapPuestos, auditRecords, riskData } = useSisrec();
@@ -88,7 +88,7 @@ export function PanelPage() {
           <div className="panel-heading">
             <div>
               <div className="panel-title">Alertas importantes</div>
-              <div className="panel-subtitle">Requieren atención del equipo</div>
+              <div className="panel-subtitle">Requieren atención del equipo{textoPuntajeRiesgo(riskData) && <> · {textoPuntajeRiesgo(riskData)}</>}</div>
             </div>
             <span className="status pending">{alertas.length} {alertas.length === 1 ? 'alerta' : 'alertas'}</span>
           </div>

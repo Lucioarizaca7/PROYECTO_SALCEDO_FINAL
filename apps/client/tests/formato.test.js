@@ -4,7 +4,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { textoTarifa } from '../src/lib/formato.js';
+import { textoPuntajeRiesgo, textoTarifa } from '../src/lib/formato.js';
 
 test('sin cobro por día muestra el monto de la tarifa', () => {
   assert.equal(textoTarifa({ tarifa: { monto_fijo: 90 } }), 'S/ 90');
@@ -21,4 +21,13 @@ test('puestos con montos distintos muestran el detalle', () => {
     { puesto_id: 1, codigo_puesto: 'S-01', dias: 2, monto_dia: 3 },
     { puesto_id: 2, codigo_puesto: 'T-02', dias: 1, monto_dia: 2 }
   ] }), 'S/ 3 × 2 (S-01) + S/ 2 × 1 (T-02)');
+});
+
+test('el riesgo de morosidad dice de cuándo es el puntaje y si se está recalculando', () => {
+  // 14:30 UTC = 09:30 en Lima.
+  assert.match(textoPuntajeRiesgo({ calculado_el: '2026-11-10T14:30:00.000Z', actualizando: true }), /^Puntaje del 10\/11\/2026, 09:30 .* · actualizando…$/);
+  assert.match(textoPuntajeRiesgo({ calculado_el: '2026-11-11T14:30:00.000Z', actualizando: false }), /^Puntaje del 11\/11\/2026, 09:30 [^·]*$/);
+  assert.equal(textoPuntajeRiesgo({ calculado_el: null, actualizando: true }), 'Calculando el puntaje…');
+  assert.equal(textoPuntajeRiesgo({}), '');
+  assert.equal(textoPuntajeRiesgo(), '');
 });

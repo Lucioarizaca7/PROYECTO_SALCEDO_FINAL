@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { useSisrec } from '../app/SisrecContext';
 import { textoMotivo } from '../services/asistenciaOffline';
 import { useReportes } from '../hooks/useReportes';
-import { textoMetodo } from '../lib/formato';
+import { textoMetodo, textoPuntajeRiesgo } from '../lib/formato';
 import { hoyEnLima } from '../services/jornadaOffline';
 import { textoTicket } from '../services/ticketsOffline';
 import { apiBase, authFetch } from '../services/session';
@@ -206,6 +206,7 @@ export function AnaliticaPage() {
         </div>
         <div className="panel detail-card">
           <h3>Scoring de morosidad</h3>
+          {textoPuntajeRiesgo(riskData) && <p className="panel-subtitle">{textoPuntajeRiesgo(riskData)}</p>}
           {(riskData.records || []).slice(0, 4).map((item) => (
             <div className="metric-line" key={item.comerciante_id}>
               <span>{item.nombre}</span>
