@@ -19,3 +19,7 @@ apps/*/temp/
 *.backup
 *.log
 .env.production
+
+# Python
+__pycache__/
+*.pyc
