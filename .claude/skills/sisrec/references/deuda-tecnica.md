@@ -133,6 +133,10 @@ Corregidos, con prueba en `tests/codigo-operacion.test.js`, `tests/tipo-via-de-c
 
 Queda: el paquete de jornada calcula dos veces el mes en curso (`calcularLiquidacion` y otra vez dentro de `calcularDeudaAcumulada`). Con un padrón mucho mayor convendrá la liquidación en lote (paso 6).
 
+## Décima revisión del 11/11/2026: revisión de un cobro anulado
+
+Corregido, con prueba en `tests/anular-cobro-observado.test.js` (migración 0026): anular desde la lista de cobros un cobro sin señal que estaba en revisión dejaba la revisión pendiente para siempre. Anularla respondía 409 ("El cobro ya estaba anulado") y aceptarla dejaba como pago válido un cobro anulado. Ahora `anularCobro` cierra la revisión con el mismo motivo, y `resolveCobroObservado` no acepta un cobro anulado. La migración cierra las que ya estaban así.
+
 ## Novena revisión del 11/11/2026: rubro, zona y metros de cada mes
 
 Corregido, con prueba en `tests/rubro-zona-metros-de-cada-mes.test.js` (migración 0025): cambiar el rubro o la zona de un comerciante, o los metros de un puesto, recalculaba los meses pasados. En la prueba, un mes pagado a S/ 30 pasaba a S/ 50. Medido con 3051 comerciantes, el recálculo del riesgo y el paquete de jornada tardan lo mismo que antes, porque los datos del mes salen en la consulta que ya se hacía por el tipo de comerciante.

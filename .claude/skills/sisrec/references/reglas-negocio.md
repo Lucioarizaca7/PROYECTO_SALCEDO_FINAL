@@ -219,6 +219,7 @@ Antes pasar a un ferial a eventual borraba su deuda atrasada entera, y pasar un 
   - Un cobrador sin lotes de esas series cobra sin ticket; es la transición.
 - **`anularCobro`:** anula también los tickets de ese cobro.
 - **Anular quita la asistencia que puso el cobro** (decisión del usuario, 11/11/2026): la marca de `marcarDiaCobrado` (`fuente = 'cobro'`) de ese día se borra si no queda otro cobro confirmado del comerciante ese día. Si el cobro era del comerciante equivocado, ese día ya no se le cobra; si sí estuvo, el cobrador vuelve a marcarlo. Las marcas de la app o del Excel no se tocan. La respuesta trae `asistencias_quitadas` y la auditoría lo dice.
+- **Anular un cobro en revisión cierra su revisión** (11/11/2026, migración 0026): si el cobro sin señal estaba observado y pendiente, la revisión queda anulada con el mismo motivo y quien anuló (`observacion_cerrada` en la respuesta). Un cobro ya anulado no se puede aceptar en la revisión: solo se cierra como anulado, sin volver a anularlo. Antes la revisión quedaba pendiente para siempre (anularla daba 409 y aceptarla dejaba como válido un cobro anulado).
 - **`anularTickets`:**
   - exige un motivo de al menos 5 caracteres y que el ticket sea del cobrador (el administrador puede anular cualquiera);
   - es idempotente: devuelve `ya_anulado`;

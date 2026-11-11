@@ -2478,6 +2478,14 @@ export async function anularCobro(db, id, { motivo, usuarioId, audit = null }) {
           AND ${LOCAL('t.fecha_cobro_cliente')}::date = a.fecha)
     RETURNING ${DAY('a.fecha')} AS fecha`, [Number(previous.comerciante_id), previous.fecha_cobro_cliente, Number(id)]);
   result.asistencias_quitadas = asistenciasQuitadas.map((fila) => fila.fecha);
+  // Un cobro sin señal observado y anulado desde la lista de cobros cierra su revisión con el mismo motivo
+  // (revisión del 11/11/2026). Antes la revisión seguía pendiente para siempre: anularla respondía 409 y
+  // aceptarla dejaba como pago válido un cobro anulado. Desde la revisión (resolveCobroObservado) ya no está
+  // pendiente cuando se llega aquí.
+  const observacion = await first(db, `
+    UPDATE cobros_observados SET estado = 'anulado', resolucion = $2, revisado_por = $3, revisado_en = now()
+    WHERE transaccion_id = $1 AND estado = 'pendiente' RETURNING id`, [Number(id), razon, Number(usuarioId)]);
+  result.observacion_cerrada = observacion ? Number(observacion.id) : null;
 
   if (audit) {
     await appendAudit(db, {
@@ -2485,7 +2493,8 @@ export async function anularCobro(db, id, { motivo, usuarioId, audit = null }) {
       usuarioId: audit.usuarioId ?? usuarioId,
       entidad: 'cobros',
       detalle: `Cobro ${id} por S/ ${result.monto.toFixed(2)} anulado: ${razon}${result.asistencias_quitadas.length
-        ? `. Se quitó la asistencia del ${result.asistencias_quitadas.join(', ')} que había puesto el cobro` : ''}`,
+        ? `. Se quitó la asistencia del ${result.asistencias_quitadas.join(', ')} que había puesto el cobro` : ''}${result.observacion_cerrada
+        ? `. Se cerró su revisión pendiente (observado ${result.observacion_cerrada})` : ''}`,
       recursoId: result.id,
       payloadPrevio: previous,
       payloadNuevo: result
@@ -2994,11 +3003,18 @@ export async function resolveCobroObservado(_db, id, { decision, resolucion, usu
     const previous = await first(client, 'SELECT * FROM cobros_observados WHERE id = $1 FOR UPDATE', [Number(id)]);
     if (!previous) throw new NotFoundError('Cobro observado no encontrado');
     if (previous.estado !== 'pendiente') throw new ConflictError(`El cobro ya fue revisado (${previous.estado})`);
+    // Un cobro anulado no vuelve a ser pago válido. Antes de la 0026 podía quedar una revisión pendiente de un
+    // cobro ya anulado: se cierra como anulada sin volver a anular el cobro (antes respondía 409 y no se cerraba).
+    const cobro = await first(client, 'SELECT estado FROM transacciones WHERE id = $1 FOR UPDATE', [Number(previous.transaccion_id)]);
+    const yaAnulado = cobro?.estado === 'anulado';
+    if (yaAnulado && decision === 'aceptado') {
+      throw new ConflictError('El cobro ya está anulado: no se puede aceptar como pago. Cierre la revisión como anulada');
+    }
 
     const updated = await first(client, `
       UPDATE cobros_observados SET estado = $2, resolucion = $3, revisado_por = $4, revisado_en = now()
       WHERE id = $1 RETURNING id, transaccion_id, estado, resolucion`, [Number(id), decision, nota, Number(usuarioId)]);
-    if (decision === 'anulado') {
+    if (decision === 'anulado' && !yaAnulado) {
       await anularCobro(client, previous.transaccion_id, { motivo: nota, usuarioId });
     }
     if (audit) {
