@@ -1570,8 +1570,15 @@ function errorCruceTarifa({ vigencia_inicio: inicio, vigencia_fin: fin }) {
 
 // Una tarifa que empieza después cierra la anterior el día previo; los meses pasados no cambian. Si empieza el
 // mismo día o antes, o termina antes que la anterior (quedaría un tramo sin tarifa), se rechaza.
-export async function insertTarifa(db, payload) {
+// Una tarifa nueva no empieza antes de hoy (decisión del usuario, 11/11/2026): con una fecha pasada cerraba la
+// anterior hacia atrás y recalculaba meses ya cobrados, lo mismo que se prohibió al editar (updateTarifa). Si una
+// ordenanza llega tarde, la diferencia se cobra aparte. permitirInicioPasado solo lo usan las pruebas para armar
+// historia; la API nunca lo pasa.
+export async function insertTarifa(db, payload, { permitirInicioPasado = false } = {}) {
   const tariff = validateTariff({ ...payload, version: payload.version ?? 1 });
+  if (!permitirInicioPasado && tariff.vigenciaInicio < todayInLima()) {
+    throw new ValidationError(`Una tarifa nueva no puede empezar antes de hoy (${todayInLima()}): cambiaría lo que ya se cobró`);
+  }
   const { id, cerradas } = await withTransaction(async (client) => {
     const cruces = await tarifasQueSeCruzan(client, tariff);
     const noSeCierra = cruces.find((otra) => otra.vigencia_inicio >= tariff.vigenciaInicio
@@ -1619,6 +1626,10 @@ export async function updateTarifa(db, id, payload) {
   // recalculaba los meses pasados y un mes pagado aparecía con deuda o saldo a favor. Para otro monto se crea
   // una tarifa nueva, que cierra esta sola. Sí se puede cerrar con vigencia_fin, pero no antes de hoy.
   const hoy = todayInLima();
+  // Una tarifa que todavía no empieza tampoco se mueve a una fecha pasada: sería crearla hacia atrás.
+  if (current.vigencia_inicio > hoy && tariff.vigenciaInicio < hoy) {
+    throw new ValidationError(`La tarifa no puede empezar antes de hoy (${hoy}): cambiaría lo que ya se cobró`);
+  }
   if (current.vigencia_inicio <= hoy) {
     const cambiaCobro = ['rubro_id', 'zona_id', 'tipo_via', 'tipo_tarifa', 'monto_fijo', 'monto_variable', 'unidad_medida', 'vigencia_inicio']
       .filter((campo) => payload[campo] !== undefined)
@@ -1687,8 +1698,10 @@ function dailyTariffAmount(tarifa, dia, metros = 1) {
 // tiene tipo de vía.
 // `tipoVia` (puede ser null): el tipo de vía que tenía la zona el día cobrado (asistencias_feriales.tipo_via,
 // migración 0021). Sin él se usa el actual de la zona.
+// `dia` (AAAA-MM-DD): la tarifa vigente ese día; sin él, la del día 1 del periodo (la cuota mensual).
 async function findApplicableTariff(db, merchant, periodo, opciones = {}) {
   const conVia = Object.prototype.hasOwnProperty.call(opciones, 'tipoVia');
+  const fecha = opciones.dia || `${periodo}-01`;
   return first(db, `
     ${TARIFA_SELECT}
     LEFT JOIN zonas zc ON zc.id = $2
@@ -1698,7 +1711,31 @@ async function findApplicableTariff(db, merchant, periodo, opciones = {}) {
       AND t.vigencia_inicio <= $3::date AND (t.vigencia_fin IS NULL OR t.vigencia_fin >= $3::date)
     ORDER BY (t.zona_id IS NOT NULL) DESC, (t.tipo_via IS NOT NULL) DESC, (t.rubro_id IS NOT NULL) DESC,
              t.vigencia_inicio DESC, t.id DESC LIMIT 1`,
-  [merchant.rubro_id, merchant.zona_id, `${periodo}-01`, ...(conVia ? [opciones.tipoVia ?? null] : [])]);
+  [merchant.rubro_id, merchant.zona_id, fecha, ...(conVia ? [opciones.tipoVia ?? null] : [])]);
+}
+
+// Tarifas que rigen algún día del mes, en el mismo orden de preferencia que findApplicableTariff. Con ellas se
+// elige la de cada día sin una consulta por día (tarifaDelDia): el cobro por día cobra cada día con la tarifa
+// vigente ese día (decisión del usuario, 11/11/2026). Antes se tomaba la del día 1: una tarifa nueva "desde
+// hoy" recién se aplicaba el mes siguiente.
+async function tarifasDelMes(db, merchant, periodo, { tipoVia }) {
+  return rows(db, `
+    ${TARIFA_SELECT}
+    WHERE (t.rubro_id = $1 OR t.rubro_id IS NULL) AND t.activo
+      AND (t.zona_id IS NULL OR t.zona_id = $2)
+      AND (t.tipo_via IS NULL OR t.tipo_via = $5::text)
+      AND t.vigencia_inicio <= $4::date AND (t.vigencia_fin IS NULL OR t.vigencia_fin >= $3::date)
+    ORDER BY (t.zona_id IS NOT NULL) DESC, (t.tipo_via IS NOT NULL) DESC, (t.rubro_id IS NOT NULL) DESC,
+             t.vigencia_inicio DESC, t.id DESC`,
+  [merchant.rubro_id, merchant.zona_id, `${periodo}-01`, ultimoDiaDelMes(periodo), tipoVia ?? null]);
+}
+
+const tarifaDelDia = (candidatas, dia) =>
+  candidatas.find((tarifa) => tarifa.vigencia_inicio <= dia && (!tarifa.vigencia_fin || tarifa.vigencia_fin >= dia)) || null;
+
+function ultimoDiaDelMes(periodo) {
+  const [anio, mes] = periodo.split('-').map(Number);
+  return `${periodo}-${String(new Date(Date.UTC(anio, mes, 0)).getUTCDate()).padStart(2, '0')}`;
 }
 
 // Días con asistencia en el mes, por puesto: cada puesto marcado un día se cobra ese día (dos puestos el
@@ -1712,7 +1749,8 @@ async function findApplicableTariff(db, merchant, periodo, opciones = {}) {
 // mes, los días de antes pagan S/ 2 y los de después S/ 3.
 async function asistenciasPorPuesto(db, merchantId, periodo) {
   const data = await rows(db, `
-    SELECT p.id AS puesto_id, p.codigo_puesto, a.zona_id, a.tipo_via, p.metros_cuadrados, COUNT(DISTINCT a.fecha)::int AS dias
+    SELECT p.id AS puesto_id, p.codigo_puesto, a.zona_id, a.tipo_via, p.metros_cuadrados, COUNT(DISTINCT a.fecha)::int AS dias,
+           array_agg(DISTINCT ${DAY('a.fecha')} ORDER BY ${DAY('a.fecha')}) AS fechas
     FROM asistencias_feriales a JOIN puestos p ON p.id = a.puesto_id
     WHERE a.comerciante_id = $1 AND a.asistio AND to_char(a.fecha, 'YYYY-MM') = $2
       AND (a.sesion = '' OR NOT EXISTS (
@@ -1866,11 +1904,24 @@ export async function calcularDeudaAcumulada(db, comercianteId, { hasta = curren
 async function liquidarPorAsistencia(db, { merchant, periodo, tarifa, puesto, asistencias }) {
   const metros = Number(puesto?.metros_cuadrados || 1);
   const puestosCobrados = [];
+  let tarifaUltimoDia = null;
   for (const item of asistencias) {
-    // La tarifa del tipo de vía que tenía la zona esos días, no la de hoy.
-    const tarifaPuesto = (await findApplicableTariff(db, { ...merchant, zona_id: item.zona_id }, periodo, { tipoVia: item.tipo_via ?? null })) || tarifa;
-    const montoDia = dailyTariffAmount(tarifaPuesto, `${periodo}-01`, Number(item.metros_cuadrados || 1));
-    puestosCobrados.push({ puesto_id: item.puesto_id, codigo_puesto: item.codigo_puesto, dias: item.dias, monto_dia: montoDia, tarifa_id: tarifaPuesto.id });
+    // La tarifa del tipo de vía que tenía la zona esos días (0021), y la vigente cada día: si en el mes entra
+    // una tarifa nueva, los días de antes van con la anterior y los de después con la nueva (dos filas).
+    const candidatas = await tarifasDelMes(db, { ...merchant, zona_id: item.zona_id }, periodo, { tipoVia: item.tipo_via ?? null });
+    const porTarifa = new Map();
+    for (const dia of item.fechas) {
+      const tarifaDia = tarifaDelDia(candidatas, dia) || tarifa;
+      if (!tarifaDia) throw sinTarifaVigente();
+      const tramo = porTarifa.get(tarifaDia.id) || { tarifa: tarifaDia, dias: 0, primerDia: dia };
+      tramo.dias += 1;
+      porTarifa.set(tarifaDia.id, tramo);
+      tarifaUltimoDia = tarifaDia;
+    }
+    for (const tramo of porTarifa.values()) {
+      const montoDia = dailyTariffAmount(tramo.tarifa, tramo.primerDia, Number(item.metros_cuadrados || 1));
+      puestosCobrados.push({ puesto_id: item.puesto_id, codigo_puesto: item.codigo_puesto, dias: tramo.dias, monto_dia: montoDia, tarifa_id: tramo.tarifa.id });
+    }
   }
   const dias = puestosCobrados.reduce((total, item) => total + item.dias, 0);
   const montos = new Set(puestosCobrados.map((item) => item.monto_dia));
@@ -1881,7 +1932,8 @@ async function liquidarPorAsistencia(db, { merchant, periodo, tarifa, puesto, as
   const saldo = Number(Math.max(montoTotal - montoPagado, 0).toFixed(2));
   return {
     comerciante: merchant,
-    tarifa,
+    // La del último día cobrado: la que rige ahora si el mes trajo una tarifa nueva.
+    tarifa: tarifaUltimoDia || tarifa,
     periodo,
     metros_cuadrados: metros,
     dias_asistidos: dias,
@@ -1929,7 +1981,8 @@ export async function calcularLiquidacion(db, comercianteId, periodo, { dia = nu
   if (merchantType === 'eventual') {
     const day = dia || todayInLima();
     if (day.slice(0, 7) !== periodo) return noDevengo('eventual');
-    const tarifa = await findApplicableTariff(db, merchant, periodo);
+    // El eventual paga el día en que se le encuentra, con la tarifa vigente ese día.
+    const tarifa = await findApplicableTariff(db, merchant, periodo, { dia: day });
     if (!tarifa) throw sinTarifaVigente();
     const montoDia = dailyTariffAmount(tarifa, day, Number(puesto?.metros_cuadrados || 1));
     const paidToday = await first(db, `
@@ -1959,8 +2012,8 @@ export async function calcularLiquidacion(db, comercianteId, periodo, { dia = nu
     const asistencias = await asistenciasPorPuesto(db, merchant.id, periodo);
     if (!asistencias.length) return noDevengo('ferial_sin_asistencia', { metros_cuadrados: 0, dias_asistidos: 0, monto_pagado: await paidInPeriod(db, merchant.id, periodo) });
 
+    // La del día 1 es solo el respaldo: cada día marcado busca la suya (sin ninguna, sinTarifaVigente).
     const tarifa = await findApplicableTariff(db, merchant, periodo);
-    if (!tarifa) throw sinTarifaVigente();
     return liquidarPorAsistencia(db, { merchant, periodo, tarifa, puesto, asistencias });
   }
 
@@ -3008,10 +3061,13 @@ export async function seriesDelComerciante(db, merchant, periodo = currentPeriod
   }
   const series = new Map();
   for (const { zonaId, tipoVia, puestos } of tramos.values()) {
-    const tarifa = await findApplicableTariff(db, { ...merchant, zona_id: zonaId }, periodo, { tipoVia });
+    // En el mes en curso, la tarifa de hoy: si entró una nueva con otro monto, los tickets de la serie vieja ya no
+    // sirven desde ese día (cada día se cobra con su tarifa).
+    const diaTarifa = periodo === currentPeriod() ? todayInLima() : `${periodo}-01`;
+    const tarifa = await findApplicableTariff(db, { ...merchant, zona_id: zonaId }, periodo, { tipoVia, dia: diaTarifa });
     if (tarifa?.unidad_medida !== 'semanal' || !tarifa.tipo_via) continue;
     const serie = await first(db, 'SELECT codigo, valor FROM ticket_series WHERE tipo_via = $1 AND activa', [tarifa.tipo_via]);
-    if (!serie || Number(serie.valor) !== dailyTariffAmount(tarifa, `${periodo}-01`)) continue;
+    if (!serie || Number(serie.valor) !== dailyTariffAmount(tarifa, diaTarifa)) continue;
     const actual = series.get(serie.codigo) || { serie: serie.codigo, valor: Number(serie.valor), puestos: 0 };
     actual.puestos += puestos;
     series.set(serie.codigo, actual);

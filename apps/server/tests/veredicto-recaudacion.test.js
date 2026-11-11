@@ -97,7 +97,7 @@ test('la proyección trae el veredicto con los cobros y las marcas reales de cad
   const sufijo = `${process.pid} ${Date.now()}`;
   const rubroId = (await db.query('INSERT INTO rubros (nombre) VALUES ($1) RETURNING id', [`rubro veredicto ${sufijo}`])).rows[0].id;
   const zona = await insertZona(db, { nombre: `Zona veredicto ${sufijo}` });
-  await insertTarifa(db, { rubro_id: rubroId, tipo_tarifa: 'fija', monto_fijo: 5000, unidad_medida: 'mensual', vigencia_inicio: '2020-01-01' });
+  await insertTarifa(db, { rubro_id: rubroId, tipo_tarifa: 'fija', monto_fijo: 5000, unidad_medida: 'mensual', vigencia_inicio: '2020-01-01' }, { permitirInicioPasado: true });
   const comerciante = await insertComerciante(db, {
     dni_ruc: '20666000001', nombre: 'Comerciante Veredicto', rubro_id: rubroId, zona_id: zona.id,
     tipo_comerciante: 'permanente', estado: 'activo', usuario_creador: 1

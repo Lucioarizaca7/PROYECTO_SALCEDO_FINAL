@@ -29,7 +29,7 @@ async function permanente(db, rubroId, zonaId, metros = 1) {
 
 const tarifa = (db, rubroId, extra) => insertTarifa(db, {
   rubro_id: rubroId, tipo_tarifa: 'fija', unidad_medida: 'mensual', vigencia_inicio: '2026-01-01', ...extra
-});
+}, { permitirInicioPasado: true });
 
 test('la tarifa del tipo de vía gana a la general y la de la zona gana a ambas', async () => {
   const db = await initializeDatabase();

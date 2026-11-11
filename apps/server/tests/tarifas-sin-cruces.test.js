@@ -17,7 +17,7 @@ async function preparar() {
   return { db, rubroId: rubro.rows[0].id };
 }
 
-const tarifa = (db, rubroId, extra) => insertTarifa(db, { rubro_id: rubroId, tipo_tarifa: 'fija', monto_fijo: 10, unidad_medida: 'mensual', vigencia_inicio: '2026-01-01', ...extra });
+const tarifa = (db, rubroId, extra) => insertTarifa(db, { rubro_id: rubroId, tipo_tarifa: 'fija', monto_fijo: 10, unidad_medida: 'mensual', vigencia_inicio: '2026-01-01', ...extra }, { permitirInicioPasado: true });
 
 test('una tarifa que empieza después cierra la anterior y los meses pasados no cambian', async () => {
   const { db, rubroId } = await preparar();
