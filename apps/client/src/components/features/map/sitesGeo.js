@@ -54,7 +54,8 @@ export function mapPaymentStatus(site) {
 const NO_DEVENGO_TEXT = {
   ferial_sin_asistencia: 'Ferial: no devenga por inasistencia',
   sin_asistencia: 'Cobro por día: sin días cobrados en el mes',
-  eventual: 'Eventual: se cobra solo el día que vende'
+  eventual: 'Eventual: se cobra solo el día que vende',
+  dado_de_baja: 'Dado de baja: no paga este mes'
 };
 
 /** Una línea legible del estado de cuenta del puesto en el mes. */
