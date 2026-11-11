@@ -133,6 +133,12 @@ Corregidos, con prueba en `tests/codigo-operacion.test.js`, `tests/tipo-via-de-c
 
 Queda: el paquete de jornada calcula dos veces el mes en curso (`calcularLiquidacion` y otra vez dentro de `calcularDeudaAcumulada`). Con un padrón mucho mayor convendrá la liquidación en lote (paso 6).
 
+## Undécima revisión del 11/11/2026: meses de baja
+
+Corregido, con prueba en `tests/baja-de-cada-mes.test.js` (migración 0027): la cuota mensual se cobraba también los meses en que el comerciante estaba de baja. Dado de baja en julio y reactivado en noviembre, debía S/ 180 en vez de S/ 90; y uno de baja desde antes de este mes mostraba la cuota del mes. Los cambios de estado anteriores se reconstruyen de la auditoría (`ACTUALIZAR`, `DAR_DE_BAJA` y el alta que reactiva); un dado de baja sin rastro en la auditoría toma su `fecha_baja`.
+
+Queda: un comerciante reactivado por la importación del padrón antes de esta migración no tiene la reactivación en la auditoría; sus meses de baja se siguen cobrando hasta que se corrija a mano.
+
 ## Décima revisión del 11/11/2026: revisión de un cobro anulado
 
 Corregido, con prueba en `tests/anular-cobro-observado.test.js` (migración 0026): anular desde la lista de cobros un cobro sin señal que estaba en revisión dejaba la revisión pendiente para siempre. Anularla respondía 409 ("El cobro ya estaba anulado") y aceptarla dejaba como pago válido un cobro anulado. Ahora `anularCobro` cierra la revisión con el mismo motivo, y `resolveCobroObservado` no acepta un cobro anulado. La migración cierra las que ya estaban así.

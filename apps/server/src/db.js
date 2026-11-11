@@ -1689,8 +1689,23 @@ async function findMerchantPost(db, merchantId, fecha = null) {
 // Va en la misma consulta que ya se hacía por los cambios de tipo, así un mes pasado no suma consultas (medido con
 // 3051 comerciantes: el recálculo del riesgo y la jornada quedan igual). metrosCambiaron evita metros_de_puesto
 // cuando el comerciante nunca cambió un metraje (casi siempre).
+//
+// activoEnMes (migración 0027): si estuvo activo o pendiente algún día del mes. Un mes de baja entero no paga la
+// cuota mensual; el de la baja y el de la reactivación, sí (como el tipo en 0023). En el mes en curso solo se
+// consulta si hoy está de baja.
+const ESTADO_EN_MES_SQL = `
+  (SELECT estado_anterior FROM comerciantes_estado_cambios
+    WHERE comerciante_id = $1 AND desde >= $2::date ORDER BY desde, id LIMIT 1) AS estado_inicio,
+  EXISTS (SELECT 1 FROM comerciantes_estado_cambios
+           WHERE comerciante_id = $1 AND desde BETWEEN $2::date AND $3::date AND estado_nuevo <> 'inactivo') AS reactivado_en_mes`;
+const activoSegun = (estadoActual, datos) => (datos.estado_inicio ?? estadoActual) !== 'inactivo' || Boolean(datos.reactivado_en_mes);
+
 async function comercianteDelMes(db, merchant, periodo) {
-  if (periodo >= currentPeriod()) return { merchant, cambiosTipo: [], metrosCambiaron: false };
+  if (periodo >= currentPeriod()) {
+    const activoEnMes = merchant.estado !== 'inactivo'
+      || activoSegun(merchant.estado, await first(db, `SELECT ${ESTADO_EN_MES_SQL}`, [merchant.id, `${periodo}-01`, ultimoDiaDelMes(periodo)]));
+    return { merchant, cambiosTipo: [], metrosCambiaron: false, activoEnMes };
+  }
   const datos = await first(db, `
     SELECT (SELECT valor_anterior FROM comerciantes_datos_cambios
              WHERE comerciante_id = $1 AND campo = 'rubro_id' AND desde > $2::date ORDER BY desde, id LIMIT 1) AS rubro_previo,
@@ -1700,8 +1715,9 @@ async function comercianteDelMes(db, merchant, periodo) {
                        'desde', ${DAY('desde')}) ORDER BY desde, id)
                      FROM comerciantes_tipo_cambios WHERE comerciante_id = $1), '[]'::json) AS cambios_tipo,
            EXISTS (SELECT 1 FROM puestos_metros_cambios m JOIN puestos p ON p.id = m.puesto_id
-                    WHERE p.comerciante_id = $1 AND m.desde > $2::date) AS metros_cambiaron`,
-  [merchant.id, `${periodo}-01`]);
+                    WHERE p.comerciante_id = $1 AND m.desde > $2::date) AS metros_cambiaron,
+           ${ESTADO_EN_MES_SQL}`,
+  [merchant.id, `${periodo}-01`, ultimoDiaDelMes(periodo)]);
   const conCambios = datos.rubro_previo !== null || datos.zona_previa !== null;
   return {
     merchant: conCambios ? {
@@ -1710,7 +1726,8 @@ async function comercianteDelMes(db, merchant, periodo) {
       zona_id: datos.zona_previa === null ? merchant.zona_id : Number(datos.zona_previa)
     } : merchant,
     cambiosTipo: datos.cambios_tipo,
-    metrosCambiaron: datos.metros_cambiaron
+    metrosCambiaron: datos.metros_cambiaron,
+    activoEnMes: activoSegun(merchant.estado, datos)
   };
 }
 
@@ -1990,7 +2007,7 @@ export async function calcularLiquidacion(db, comercianteId, periodo, { dia = nu
   const actual = await findComerciante(db, comercianteId);
   if (!actual) throw new NotFoundError('Comerciante no encontrado');
   // Un mes pasado se liquida con el rubro y la zona que tenía el día 1 de ese mes (0025).
-  const { merchant, cambiosTipo, metrosCambiaron } = await comercianteDelMes(db, actual, periodo);
+  const { merchant, cambiosTipo, metrosCambiaron, activoEnMes } = await comercianteDelMes(db, actual, periodo);
   // Los metros del día 1 solo se buscan si algún puesto del comerciante cambió de metraje después de esa fecha.
   const diaDelMes = metrosCambiaron ? `${periodo}-01` : null;
 
@@ -2020,6 +2037,8 @@ export async function calcularLiquidacion(db, comercianteId, periodo, { dia = nu
   if (merchantType === 'eventual') {
     const day = dia || todayInLima();
     if (day.slice(0, 7) !== periodo) return noDevengo('eventual');
+    // A un eventual dado de baja no se le cobra el día (0027).
+    if (actual.estado === 'inactivo') return noDevengo('dado_de_baja');
     // El eventual paga el día en que se le encuentra, con la tarifa vigente ese día.
     const tarifa = await findApplicableTariff(db, merchant, periodo, { dia: day });
     if (!tarifa) throw sinTarifaVigente();
@@ -2065,6 +2084,10 @@ export async function calcularLiquidacion(db, comercianteId, periodo, { dia = nu
     if (!asistencias.length) return noDevengo('sin_asistencia', { tarifa, metros_cuadrados: 0, dias_asistidos: 0, monto_pagado: await paidInPeriod(db, merchant.id, periodo) });
     return liquidarPorAsistencia(db, { merchant, periodo, tarifa, puesto, asistencias });
   }
+
+  // La cuota mensual no se cobra un mes en que estuvo de baja todo el mes (0027). Antes un dado de baja y
+  // reactivado debía los meses de en medio. Lo pagado ese mes se sigue mostrando.
+  if (!activoEnMes) return noDevengo('dado_de_baja', { tarifa, monto_pagado: await paidInPeriod(db, merchant.id, periodo) });
 
   const metros = Number(puesto?.metros_cuadrados || 1);
   const multiplier = periodMultiplier(periodo, tarifa.unidad_medida);

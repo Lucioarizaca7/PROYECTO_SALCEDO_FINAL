@@ -111,6 +111,8 @@ Depende de `tipo_comerciante`:
 
 **Baja:** pasar a un comerciante a `inactivo` por `PUT` (o `updateComerciante`) da de baja sus puestos y fija `fecha_baja`, igual que `DELETE`. Al reactivarlo, los puestos siguen de baja hasta reasignarlos.
 
+**Meses de baja** (migración 0027, 11/11/2026, mismo criterio que el tipo de comerciante en la 0023): la cuota mensual se cobra un mes si el comerciante estuvo activo o pendiente **algún día** de ese mes (`activoEnMes` en `comercianteDelMes`). El mes de la baja y el de la reactivación se cobran; los meses de baja enteros, no (`no_devengo`, motivo `dado_de_baja`, con lo pagado a la vista). Un eventual de baja no paga el día. Lo que se paga por día marcado no cambia, porque a un dado de baja no se le registra asistencia. Antes, dado de baja en julio y reactivado en noviembre, debía agosto, septiembre y octubre.
+
 **Lo pagado de un mes** (`paidInPeriod`): cobros confirmados con `periodo_aplicado` = ese mes, o sin él y cobrados (día de Lima) en ese mes. `registrarCobro` guarda `periodo_aplicado` = el periodo liquidado (NULL para el eventual), así un pago de hoy puede cancelar un mes anterior.
 
 **Tipo de comerciante de cada mes** (migración 0023, decisión del usuario del 11/11/2026): el cambio de tipo rige desde su día. `comerciantes_tipo_cambios` lo guarda (trigger) y `tipoEnPeriodo` decide el tipo de cada mes:
