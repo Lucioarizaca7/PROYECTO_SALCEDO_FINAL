@@ -107,7 +107,7 @@ Corregidos, con prueba en `tests/asistencia-lote.test.js`, `tests/auditoria-filt
 - **Rubro aproximado** al importar el padrón.
 - **JWT sin algoritmo fijo**, **textos del cobro sin tope** y **preferencias que se borraban** en cada cobro.
 
-Fuera de `main` quedan dos ramas viejas sin unir: `limpieza/archivos-sobrantes` (borra archivos sobrantes) y `fix/arranque-local` (del 19/10, puerto 4000 que ya no se usa).
+Ramas viejas (decisión del usuario, 11/11/2026): `limpieza/archivos-sobrantes` se unió a esta rama. `fix/arranque-local` está obsoleta (puerto 4000 y `apiService.js`, que ya no existen; `.env.example` ya estaba) y el usuario pidió borrarla del remoto.
 
 Quedan:
 - **Tamaño del papel al imprimir el recibo:** sale del alto medido en pantalla. Puede sobrar un poco de papel al final.
