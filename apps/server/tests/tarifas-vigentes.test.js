@@ -16,7 +16,7 @@ async function preparar() {
   const rubro = await db.query('INSERT INTO rubros (nombre, descripcion) VALUES ($1, $2) RETURNING id', [`Rubro vigente ${process.pid}-${correlativo += 1}-${Date.now()}`, 'Prueba']);
   return { db, rubroId: rubro.rows[0].id };
 }
-const tarifa = (db, rubroId, extra) => insertTarifa(db, { rubro_id: rubroId, tipo_tarifa: 'fija', monto_fijo: 10, monto_variable: 0, unidad_medida: 'mensual', vigencia_inicio: '2026-01-01', ...extra });
+const tarifa = (db, rubroId, extra) => insertTarifa(db, { rubro_id: rubroId, tipo_tarifa: 'fija', monto_fijo: 10, monto_variable: 0, unidad_medida: 'mensual', vigencia_inicio: '2026-01-01', ...extra }, { permitirInicioPasado: true });
 const ayer = todayInLima(new Date(Date.now() - 24 * 60 * 60 * 1000));
 
 test('el monto de una tarifa que ya rige no se edita; reenviar los mismos datos sí pasa', async () => {

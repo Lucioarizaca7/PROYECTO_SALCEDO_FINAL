@@ -133,6 +133,12 @@ Corregidos, con prueba en `tests/codigo-operacion.test.js`, `tests/tipo-via-de-c
 
 Queda: el paquete de jornada calcula dos veces el mes en curso (`calcularLiquidacion` y otra vez dentro de `calcularDeudaAcumulada`). Con un padrón mucho mayor convendrá la liquidación en lote (paso 6).
 
+## Octava revisión del 11/11/2026: tarifas en el tiempo
+
+Corregidos, con prueba en `tests/tarifa-de-cada-dia.test.js` y `tests/tarifas-http.test.js`:
+- **Crear una tarifa con fecha pasada** recalculaba meses ya cobrados. Lo mismo se había bloqueado al editar en la tercera revisión.
+- **Tarifa nueva "desde hoy"**: recién se aplicaba el mes siguiente, porque se buscaba la vigente el día 1.
+
 ## Séptima revisión del 11/11/2026: comerciantes sin tarifa vigente
 
 Corregidos, con prueba en `tests/cobro-sin-tarifa.test.js`:

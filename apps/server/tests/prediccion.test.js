@@ -31,7 +31,7 @@ test('la proyección usa los cobros reales por mes y, sin el microservicio, el r
   const db = await initializeDatabase();
   const nombre = `rubro proyección ${process.pid} ${Date.now()}`;
   const rubroId = (await db.query('INSERT INTO rubros (nombre) VALUES ($1) RETURNING id', [nombre])).rows[0].id;
-  await insertTarifa(db, { rubro_id: rubroId, tipo_tarifa: 'fija', monto_fijo: 2000, unidad_medida: 'mensual', vigencia_inicio: '2020-01-01' });
+  await insertTarifa(db, { rubro_id: rubroId, tipo_tarifa: 'fija', monto_fijo: 2000, unidad_medida: 'mensual', vigencia_inicio: '2020-01-01' }, { permitirInicioPasado: true });
   const comerciante = await insertComerciante(db, {
     dni_ruc: '20444000001', nombre: 'Comerciante Proyección', rubro_id: rubroId, zona_id: 1,
     tipo_comerciante: 'permanente', estado: 'activo', usuario_creador: 1

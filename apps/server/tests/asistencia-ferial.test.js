@@ -15,7 +15,7 @@ let documento = 20777000000;
 async function rubroConTarifaDiaria(db, monto) {
   const nombre = `rubro feria ${process.pid} ${Date.now()} ${Math.random().toString(16).slice(2, 6)}`;
   const rubroId = (await db.query('INSERT INTO rubros (nombre) VALUES ($1) RETURNING id', [nombre])).rows[0].id;
-  await insertTarifa(db, { rubro_id: rubroId, tipo_tarifa: 'fija', monto_fijo: monto, unidad_medida: 'diaria', vigencia_inicio: '2026-01-01' });
+  await insertTarifa(db, { rubro_id: rubroId, tipo_tarifa: 'fija', monto_fijo: monto, unidad_medida: 'diaria', vigencia_inicio: '2026-01-01' }, { permitirInicioPasado: true });
   return rubroId;
 }
 

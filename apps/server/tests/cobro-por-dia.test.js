@@ -49,7 +49,7 @@ test('las tarifas generales por tipo de vía existen y valen para todos los rubr
   assert.deepEqual(generales.map((item) => [item.tipo_via, Number(item.monto_fijo)]).sort(), [['asfaltada', 3], ['sin_asfaltar', 2]]);
   assert.equal(generales[0].rubro, 'Todos los rubros');
 
-  const creada = await insertTarifa(db, { rubro_id: '', tipo_tarifa: 'fija', monto_fijo: 1, unidad_medida: 'diaria', vigencia_inicio: '2030-01-01' });
+  const creada = await insertTarifa(db, { rubro_id: '', tipo_tarifa: 'fija', monto_fijo: 1, unidad_medida: 'diaria', vigencia_inicio: '2030-01-01' }, { permitirInicioPasado: true });
   assert.equal(creada.rubro_id, null, 'una tarifa sin rubro se puede registrar');
 
   // Rigen desde el mes de la migración: los meses anteriores siguen con la tarifa del rubro, así cargar el

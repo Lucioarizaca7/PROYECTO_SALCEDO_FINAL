@@ -49,7 +49,7 @@ test('una tarifa nueva desde el día 1 del mes no borra lo ya pagado', async () 
   await cobrar(merchant.id, 100);
   assert.equal((await calcularLiquidacion(pool, merchant.id)).monto_pagado, 100);
 
-  await insertTarifa(pool, { rubro_id: await idDe('rubros', 'comida'), monto_fijo: 20, unidad_medida: 'diaria', vigencia_inicio: `${currentPeriod()}-01` });
+  await insertTarifa(pool, { rubro_id: await idDe('rubros', 'comida'), monto_fijo: 20, unidad_medida: 'diaria', vigencia_inicio: `${currentPeriod()}-01` }, { permitirInicioPasado: true });
 
   const despues = await calcularLiquidacion(pool, merchant.id);
   assert.equal(Number(despues.tarifa.monto_fijo), 20, 'se aplica la tarifa nueva');

@@ -40,7 +40,7 @@ let documento = 20555000000;
 async function dosComerciantesConSaldo() {
   const nombre = `rubro recibo ${process.pid} ${Date.now()} ${Math.random().toString(16).slice(2, 6)}`;
   const rubroId = (await pool.query('INSERT INTO rubros (nombre) VALUES ($1) RETURNING id', [nombre])).rows[0].id;
-  await insertTarifa(pool, { rubro_id: rubroId, tipo_tarifa: 'fija', monto_fijo: 30, unidad_medida: 'mensual', vigencia_inicio: '2026-01-01' });
+  await insertTarifa(pool, { rubro_id: rubroId, tipo_tarifa: 'fija', monto_fijo: 30, unidad_medida: 'mensual', vigencia_inicio: '2026-01-01' }, { permitirInicioPasado: true });
   const crear = async () => {
     const comerciante = await insertComerciante(pool, {
       dni_ruc: String(documento += 1), nombre: `Comerciante Señor Ñandú ${documento}`, rubro_id: rubroId, zona_id: 1,
