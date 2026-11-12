@@ -18,10 +18,13 @@ export function useAsistenciaFerial({ isOnline, jornadaMeta }) {
   const [estado, setEstado] = useState(() => estadoDelDia(null, hoyEnLima()));
   const [enviando, setEnviando] = useState(false);
   const [mensaje, setMensaje] = useState('');
+  // Zonas del paquete de la jornada, para elegir la zona del día sin señal.
+  const [zonas, setZonas] = useState([]);
 
   useEffect(() => {
     (async () => {
       setFeriales(ferialesDelPadron(await padronStore.getAll().catch(() => [])));
+      setZonas((await jornadaStore.get('tarifas').catch(() => null))?.zonas || []);
       const cargado = estadoDelDia(await jornadaStore.get(CLAVE_ASISTENCIAS).catch(() => null), hoyEnLima());
       setEstado(cargado);
       // Lo que quedó sin subir (también de días anteriores) sale apenas hay señal.
@@ -64,10 +67,11 @@ export function useAsistenciaFerial({ isOnline, jornadaMeta }) {
 
   // observacion: { motivo, observacion } (no salió, no vendió…). Sin ella, se conserva la que ya tenía la
   // marca si sigue siendo coherente.
-  const marcar = async (puestoId, asistio, observacion) => {
+  // zonaId: la zona del día (12/11/2026); sin ella se conserva la que ya tenía la marca.
+  const marcar = async (puestoId, asistio, observacion, zonaId) => {
     const actual = estadoDelDia(estado, hoyEnLima());
     const nota = observacion ?? observacionQueSeConserva(actual.marcas[String(puestoId)], asistio);
-    const siguiente = aplicarMarca(actual, puestoId, asistio, new Date(), nota);
+    const siguiente = aplicarMarca(actual, puestoId, asistio, new Date(), { ...nota, ...(zonaId === undefined ? {} : { zonaId }) });
     await guardar(siguiente);
     if (navigator.onLine) await enviar(siguiente);
   };
@@ -77,5 +81,5 @@ export function useAsistenciaFerial({ isOnline, jornadaMeta }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOnline]);
 
-  return { feriales, estado, pendientes: marcasPendientes(estado).length, enviando, mensaje, marcar, enviar: () => enviar(estado) };
+  return { feriales, zonas, estado, pendientes: marcasPendientes(estado).length, enviando, mensaje, marcar, enviar: () => enviar(estado) };
 }

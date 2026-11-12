@@ -53,13 +53,17 @@ export function estadoDelDia(guardado, hoy) {
   return { clave: CLAVE_ASISTENCIAS, fecha: hoy, marcas: {}, anteriores };
 }
 
-export function aplicarMarca(estado, puestoId, asistio, ahora = new Date(), { motivo = null, observacion = null } = {}) {
+// zonaId: la zona del día (12/11/2026), si hoy vende en otra zona que la de su puesto; null = la de su puesto.
+// Sin zonaId nueva se conserva la que ya tenía la marca.
+export function aplicarMarca(estado, puestoId, asistio, ahora = new Date(), { motivo = null, observacion = null, zonaId } = {}) {
   const nota = String(observacion || '').trim().slice(0, 300);
+  const anterior = estado.marcas[String(puestoId)];
+  const zona = zonaId === undefined ? (anterior?.zonaId ?? null) : (zonaId ? Number(zonaId) : null);
   return {
     ...estado,
     marcas: {
       ...estado.marcas,
-      [String(puestoId)]: { asistio: Boolean(asistio), motivo: motivo || null, observacion: nota || null, enviado: false, marcadoEn: ahora.toISOString() }
+      [String(puestoId)]: { asistio: Boolean(asistio), motivo: motivo || null, observacion: nota || null, zonaId: zona, enviado: false, marcadoEn: ahora.toISOString() }
     }
   };
 }
@@ -73,13 +77,15 @@ export function marcasPendientes(estado) {
       fecha: estado.fecha,
       asistio: marca.asistio,
       ...(marca.motivo ? { motivo: marca.motivo } : {}),
-      ...(marca.observacion ? { observacion: marca.observacion } : {})
+      ...(marca.observacion ? { observacion: marca.observacion } : {}),
+      ...(marca.zonaId ? { zona_id: Number(marca.zonaId) } : {})
     }))];
 }
 
 const mismaMarca = (actual, enviada) => actual.asistio === enviada.asistio
   && (actual.motivo ?? null) === (enviada.motivo ?? null)
-  && (actual.observacion ?? null) === (enviada.observacion ?? null);
+  && (actual.observacion ?? null) === (enviada.observacion ?? null)
+  && Number(actual.zonaId ?? actual.zona_id ?? 0) === Number(enviada.zona_id ?? enviada.zonaId ?? 0);
 
 const mismoDia = (item, otra) => Number(item.puesto_id) === Number(otra.puesto_id) && item.fecha === otra.fecha;
 

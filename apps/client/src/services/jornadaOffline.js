@@ -25,6 +25,9 @@ export function normalizarComerciante(item, descargadoEn = new Date().toISOStrin
     codigoPuesto: item.codigo_puesto || null,
     rubro: item.rubro || null,
     zona: item.zona || null,
+    zonaId: item.zona_id ?? null,
+    // Zona del puesto donde se marca la asistencia: la que se propone como zona de hoy (12/11/2026).
+    zonaPuestoId: item.zona_puesto_id ?? item.zona_id ?? null,
     tipo: item.tipo_comerciante || item.categoria || null,
     periodo: item.periodo || null,
     tarifaId: item.tarifa_id ?? null,
@@ -114,6 +117,17 @@ export function aplicarCobroLocal(registro, monto, periodo = null) {
     saldo: dos(Math.max(Number(registro.saldo || 0) - value, 0)),
     montoPagado: dos(Number(registro.montoPagado || 0) + value)
   };
+}
+
+/**
+ * Monto de un día cobrado en una zona según su tipo de vía, con las tarifas generales del paquete (por día
+ * cobrado, sin rubro ni zona): S/ 3 asfaltada, S/ 2 sin asfaltar. Para la zona del día sin tickets; null si no hay.
+ */
+export function montoDiaEnZona(tarifas = [], tipoVia, dia = hoyEnLima()) {
+  if (!tipoVia) return null;
+  const tarifa = tarifas.find((item) => Number(item.estado ?? 1) === 1 && item.unidad_medida === 'semanal' && item.tipo_via === tipoVia
+    && !item.rubro_id && !item.zona_id && String(item.vigencia_inicio) <= dia && (!item.vigencia_fin || String(item.vigencia_fin) >= dia));
+  return tarifa ? Number(tarifa.monto_fijo) : null;
 }
 
 /** ¿El padrón guardado es de hoy (en Salcedo) y del periodo vigente? */

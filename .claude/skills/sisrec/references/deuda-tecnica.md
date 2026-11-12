@@ -11,7 +11,7 @@ Ordenada de más a menos grave. Antes de tomar uno de estos puntos, comprobar qu
    Con un padrón de miles sigue siendo una liquidación por comerciante en cada carga del panel. La versión en lote de "Refactor 6" vive en `claude/compassionate-hermann-e2df59`, que no está en el remoto.)
 4. (Resuelto en "Refactor 6": `calcularLiquidacionLote` reemplaza el bucle N+1 en el panel, el mapa, la jornada y el riesgo de morosidad.)
 5. (Resuelto en "Refactor 5": `App.jsx` quedó en las rutas; cada página tiene su archivo y su hook.) Queda: todos los datos compartidos se recargan juntos con `refresh()` (10 peticiones), sin caché por página.
-6. **Varios puestos:** con cobro por día paga por cada puesto marcado; con tarifa mensual o diaria de rubro, por uno solo (el principal).
+6. (Resuelto el 12/11/2026, migración 0031: paga por cada puesto desde noviembre de 2026; ver `reglas-negocio.md`.)
 7. **Detalles menores:**
    - No hay páginas de Usuarios ni de Cobradores (las de relleno se quitaron en "Refactor 5"): se administran en la base.
    - Hay dos endpoints para crear puestos.
@@ -132,6 +132,20 @@ Corregidos, con prueba en `tests/codigo-operacion.test.js`, `tests/tipo-via-de-c
 - **`POST /notificaciones`** sin auditoría ni largo máximo; **`GET /catalogos` y `GET /roles`** sin rol.
 
 Queda: el paquete de jornada calcula dos veces el mes en curso (`calcularLiquidacion` y otra vez dentro de `calcularDeudaAcumulada`). Con un padrón mucho mayor convendrá la liquidación en lote (paso 6).
+
+## Decimosexta revisión del 12/11/2026: zona del día, cobro por puesto, baja sin señal y recibo por WhatsApp
+
+Hecho, con prueba en `tests/zona-del-dia-y-por-puesto.test.js`, `tests/tickets.test.js` y `apps/client/tests/zonaDelDiaYRecibo.test.js` (migración 0031); comprobado por HTTP y en el navegador a 390 px en una copia de la demo:
+- **Zona del día:** el cobrador elige la zona donde vende hoy; el día se cobra con su tarifa y su ticket (S2 o S3), y el administrador lo ve en Observaciones.
+- **Cobro por puesto** desde noviembre de 2026, con `puestos_tenencia` para que un mes cerrado no cambie.
+- **Baja y liberación de un puesto con señal débil:** se encolan como el alta, y reenviarlas responde "ya estaba dado de baja / ya estaba libre" en vez de un rechazo.
+- **Recibo por WhatsApp** como imagen de celular; se quitó la impresión Bluetooth de la pantalla y la cola de impresión que la sondeaba cada 30 s. Los módulos `utils/bluetoothPrint.js`, `utils/offlinePrintQueue.js` y `hooks/useColaImpresion.js` se conservan sin uso por si vuelve la impresora; si no vuelve, se pueden borrar.
+
+Prioridades que cambian:
+- **Rendimiento:** el piloto es de 400 a 600 comerciantes en toda la feria (usuario, 12/11/2026). Ya se midió con 3051 y responde bien; la liquidación en lote deja de ser prioridad.
+- **Papel del recibo:** fuera de alcance, no hay impresora térmica.
+
+Queda: el tramo de cada puesto en `puestos_tenencia` empieza el 2026-11-01 para los que ya existían; lo cedido o liberado antes de la 0031 no se reconstruye (no cambia nada antes de noviembre, que sigue con un puesto).
 
 ## Decimoquinta revisión del 12/11/2026: deuda atrasada sin señal y DNI de un dado de baja
 

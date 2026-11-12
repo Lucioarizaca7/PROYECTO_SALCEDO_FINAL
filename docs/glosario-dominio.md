@@ -18,13 +18,15 @@ Los términos que usa la Municipalidad de Salcedo son los mismos en la base de d
 | **Zona** | Sector de la ciudad donde se cobra | `zonas` (`codigo`: MCEN, ZNOR…) | `/api/v1/zonas` | `getZonas`, `insertZona` | Zonas, mapa |
 | **Calle** | Vía dentro de una zona | `calles` | `/api/v1/calles` | `getCalles` | Zonas |
 | **Puesto** | Espacio físico que ocupa el comerciante | `puestos.codigo_puesto` | `/api/v1/puestos-mapa` | `insertPuesto` | mapa |
+| **Puesto cobrado** | Puesto que el comerciante tuvo algún día del mes: la cuota mensual se paga por cada uno (desde 2026-11) | `puestos_tenencia` | `cantidad_puestos` | `puestosDelMes`, `COBRO_POR_PUESTO_DESDE` | Cobro rápido ("× N puestos") |
+| **Zona del día** | Zona donde el comerciante vende un día, si no es la de su puesto; ese día se cobra con su tarifa | `asistencias_feriales.zona_id` | `zona_id` (asistencia), `zona_dia` (cobro) | `marcarAsistencias`, `marcarDiaCobrado` | "Zona de hoy" (Cobro, asistencia), Observaciones |
 | **Tarifa** | Monto que corresponde por rubro (y zona), por día, semana, mes o m² | `tarifas` | `/api/v1/tarifas` | `insertTarifa`, `updateTarifa` | Tarifas |
 | **Liquidación** | Cuánto debe un comerciante en un periodo (o día, si es eventual) y cuánto pagó | — (se calcula) | `/api/v1/liquidaciones/:codigo`, `/comerciantes/:codigo/saldo` | `calcularLiquidacion` | Cobro rápido, portal |
 | **Periodo** | Mes de cobro, `AAAA-MM`, según el calendario de Lima | — | `periodo` | `currentPeriod` | Cobro rápido |
 | **No devengo** | Periodo en que el comerciante no debe nada (ferial que no asistió, eventual fuera de su día) | — | `no_devengo` | `calcularLiquidacion` | Cobro rápido |
 | **Cobro** | Pago que recibe el cobrador | `transacciones` | `/api/v1/cobros` | `registrarCobro` | Cobro rápido |
 | **Cobro observado** | Cobro hecho sin señal que excede el saldo; lo acepta o anula el administrador | `cobros_observados` | `/api/v1/cobros/observados` | `resolveCobroObservado` | Revisión de cobros |
-| **Comprobante / recibo** | Constancia del cobro, `R-000123` (o `PROV-…` sin señal) | `comprobantes.numero_correlativo` | `comprobante` | — | recibo térmico |
+| **Comprobante / recibo** | Constancia del cobro, `R-000123` (o `PROV-…` sin señal) | `comprobantes.numero_correlativo` | `comprobante` | — | recibo por WhatsApp (imagen) o PDF |
 | **Jornada** | Día de trabajo del cobrador; el padrón se descarga al iniciarla | — | `/api/v1/jornada/paquete` | `getJornadaPackage`, `jornadaOffline.js` | Jornada sin señal |
 | **Padrón** | Lista oficial de comerciantes | `comerciantes` | `/api/v1/comerciantes/importar-padron` | `padronImport.js` | importar Excel |
 | **Plantilla del padrón** | Excel oficial con los encabezados que reconoce la importación y listas de zonas, rubros, tipos y estado | — | `/api/v1/comerciantes/plantilla-padron` | `padronPlantilla.js` | Descargar plantilla oficial (Comerciantes) |

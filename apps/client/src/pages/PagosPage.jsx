@@ -2,9 +2,9 @@ import { useSisrec } from '../app/SisrecContext';
 import { AsistenciaFerialPanel } from '../features/offline/AsistenciaFerialPanel';
 import { FieldWorkPanel } from '../features/offline/FieldWorkPanel';
 import { QrScanner } from '../features/payments/QrScanner';
-import { printThermalReceipt, shareViaWhatsApp } from '../features/payments/recibo';
+import { imprimirReciboEnNavegador, lineasRecibo, shareViaWhatsApp } from '../features/payments/recibo';
 import { usePagos } from '../hooks/usePagos';
-import { fechaHoraEnLima, textoMetodo, textoTarifa } from '../lib/formato';
+import { textoMetodo, textoTarifa } from '../lib/formato';
 import { textoTicket } from '../services/ticketsOffline';
 import '../features/payments/pagos.css';
 
@@ -83,34 +83,38 @@ function AvisoPocosTickets({ tickets }) {
   );
 }
 
-function ReceiptCard({ receipt, printStatus, setPrintStatus }) {
-  const shareText = () => (navigator.share
-    ? navigator.share({ title: `Recibo ${receipt.comprobante}`, text: `Recibo ${receipt.comprobante} por S/ ${receipt.monto.toFixed(2)}` })
-    : navigator.clipboard?.writeText(`Recibo ${receipt.comprobante} - S/ ${receipt.monto.toFixed(2)}`));
+// Zona del día (12/11/2026): si hoy vende en otra zona porque faltaron otros, se cobra con la tarifa de esa zona.
+// Queda en la auditoría y el administrador la ve en Observaciones.
+function ZonaDelDia({ pagos, merchant }) {
+  const via = (zona) => (zona.tipo_via === 'asfaltada' ? 'asfaltada' : zona.tipo_via === 'sin_asfaltar' ? 'sin asfaltar' : 'sin tipo de vía');
+  return (
+    <label className="zona-del-dia">
+      <span>Zona de hoy</span>
+      <select aria-label="Zona de hoy" value={pagos.zonaDia} onChange={(event) => pagos.setZonaDia(event.target.value)}>
+        <option value="">Sin cambio: la ya marcada hoy o la de su puesto{merchant?.zona ? ` (${merchant.zona})` : ''}</option>
+        {pagos.zonas.map((zona) => <option key={zona.id} value={zona.id}>{zona.nombre} · {via(zona)}</option>)}
+      </select>
+      {pagos.zonaDia && <small>Hoy se cobra con la tarifa de esa zona. Queda registrado para la oficina.</small>}
+    </label>
+  );
+}
+
+// El recibo en pantalla, con las mismas filas que la imagen que se manda por WhatsApp (lineasRecibo).
+function ReceiptCard({ receipt }) {
+  const recibo = lineasRecibo(receipt);
   return (
     <div className="receipt-card" id="receiptCard">
-      <div className="receipt-header"><strong>SISREC SALCEDO</strong><span>RECIBO DE PAGO</span></div>
-      <div className="receipt-number">{receipt.comprobante}</div>
-      {receipt.provisional && <div className="receipt-provisional">Recibo provisional: el número oficial se asigna al sincronizar.</div>}
+      <div className="receipt-header"><strong>{recibo.titulo}</strong><span>{recibo.subtitulo}</span></div>
+      <div className="receipt-number">{recibo.numero}</div>
+      {recibo.aviso && <div className="receipt-provisional">{recibo.aviso}</div>}
       <div className="receipt-lines">
-        <div><span>Comerciante</span><strong>{receipt.comerciante}</strong></div>
-        {/* La fecha del cobro, no la de cada vez que se vuelve a pintar la pantalla. */}
-        <div><span>Fecha</span><strong>{fechaHoraEnLima(receipt.fecha_cobro || receipt.fecha) || fechaHoraEnLima(new Date())}</strong></div>
-        <div><span>Concepto</span><strong>{receipt.concepto}</strong></div>
-        {receipt.periodo_aplicado && <div><span>Mes pagado</span><strong>{receipt.periodo_aplicado}</strong></div>}
-        <div><span>Método</span><strong>{textoMetodo(receipt.metodo_pago)}</strong></div>
-        <div><span>Cobrador</span><strong>{receipt.cobrador}</strong></div>
-        {/* En efectivo no hay número de operación: el servidor guarda un código interno que no se muestra. */}
-        <div><span>Operación</span><strong>{receipt.metodo_pago !== 'efectivo' && receipt.codigo_operacion ? receipt.codigo_operacion : 'No aplica'}</strong></div>
-        {receipt.tickets?.length > 0 && <div><span>Tickets</span><strong>{receipt.tickets.map((ticket) => ticket.texto || textoTicket(ticket.serie, ticket.numero)).join(', ')}</strong></div>}
-        {receipt.observaciones && <div><span>Nota</span><strong>{receipt.observaciones}</strong></div>}
-        <div><span>Hash</span><strong>{receipt.hash_idempotencia || 'N/A'}</strong></div>
-        <div className="receipt-total"><span>Total pagado</span><strong>S/ {receipt.monto.toFixed(2)}</strong></div>
+        {recibo.filas.map(([etiqueta, valor]) => <div key={etiqueta}><span>{etiqueta}</span><strong>{valor}</strong></div>)}
+        <div className="receipt-total"><span>Total pagado</span><strong>{recibo.total}</strong></div>
       </div>
       <div className="receipt-actions">
-        <button className="secondary-button" type="button" onClick={() => printThermalReceipt(receipt, setPrintStatus)}>{printStatus.isPrinting ? 'Imprimiendo...' : 'Imprimir térmica / PDF'}</button>
-        <button className="secondary-button" type="button" onClick={() => shareViaWhatsApp(receipt)}>WhatsApp</button>
-        <button className="secondary-button" type="button" onClick={shareText}>Compartir</button>
+        {/* Sin impresora térmica (12/11/2026): el recibo se manda por WhatsApp como imagen o se guarda en PDF. */}
+        <button className="primary-button" type="button" onClick={() => shareViaWhatsApp(receipt)}>Enviar por WhatsApp</button>
+        <button className="secondary-button" type="button" onClick={imprimirReciboEnNavegador}>Guardar PDF</button>
       </div>
     </div>
   );
@@ -183,6 +187,7 @@ export function PagosPage() {
           <UnpaidMonths balance={balance} onSelect={pagos.elegirPeriodo} />
           <DebtBreakdown balance={balance} />
           <div className="step-label">03 · Confirmar cobro</div>
+          {pagos.muestraZonaDia && <ZonaDelDia pagos={pagos} merchant={merchant} />}
           {pagos.usaTickets && <TicketsDelCobro pagos={pagos} />}
           <div className="payment-fields">
             <input required min="0.01" max={balance?.saldo || undefined} step="0.01" type="number" placeholder="Monto a cobrar" aria-label="Monto a cobrar" readOnly={pagos.usaTickets} title={pagos.usaTickets ? 'El monto es lo que valen los tickets a entregar' : undefined} value={form.monto} onChange={(event) => setForm({ ...form, monto: event.target.value })} />
@@ -192,7 +197,7 @@ export function PagosPage() {
           <input placeholder="Observaciones (opcional)" maxLength={500} value={form.observaciones} onChange={(event) => setForm({ ...form, observaciones: event.target.value })} />
           {pagos.message && <div className="form-message">{pagos.message}</div>}
           <button className="primary-button payment-submit" disabled={!merchant || !balance || balance.saldo <= 0} type="submit">Confirmar y emitir comprobante</button>
-          {pagos.receipt && <ReceiptCard receipt={pagos.receipt} printStatus={pagos.printStatus} setPrintStatus={pagos.setPrintStatus} />}
+          {pagos.receipt && <ReceiptCard receipt={pagos.receipt} />}
         </form>
         <div className="payment-side">
           <FieldWorkPanel isOnline={isOnline} jornada={jornada} queue={offlineQueue} />
