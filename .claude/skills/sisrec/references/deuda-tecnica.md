@@ -15,7 +15,7 @@ Ordenada de más a menos grave. Antes de tomar uno de estos puntos, comprobar qu
 7. **Detalles menores:**
    - No hay páginas de Usuarios ni de Cobradores (las de relleno se quitaron en "Refactor 5"): se administran en la base.
    - Hay dos endpoints para crear puestos.
-   - El botón "Exportar CSV" de Reportes es un enlace sin token (`<a href=…/reportes?formato=csv>`): la API responde 401. Debe descargarse con `authFetch` y un Blob.
+   - (Resuelto: el botón "Exportar CSV" de Reportes descarga con `authFetch` y un Blob, `useReportes.js`. Antes era un enlace sin token y la API respondía 401.)
    - (Resuelto en "Refactor 2": cada error responde con el código HTTP de su causa.)
 
 ## Errores de lógica (revisión del 2026-10-16)
@@ -133,6 +133,12 @@ Corregidos, con prueba en `tests/codigo-operacion.test.js`, `tests/tipo-via-de-c
 
 Queda: el paquete de jornada calcula dos veces el mes en curso (`calcularLiquidacion` y otra vez dentro de `calcularDeudaAcumulada`). Con un padrón mucho mayor convendrá la liquidación en lote (paso 6).
 
+## Decimotercera revisión del 12/11/2026: reactivaciones del padrón
+
+Corregido, con prueba en `tests/reactivacion-del-padron.test.js` (migración 0029): la importación del padrón reactivaba sin un registro por comerciante en la auditoría, la 0027 no pudo reconstruir esas reactivaciones y se cobraban sus meses de baja (en la copia de la demo, un reactivado tras una baja de julio debía S/ 990 en vez de S/ 900). La 0029 busca los huecos de la historia (una baja seguida de algo que no es baja) y fija la reactivación según la decisión del usuario (`reglas-negocio.md`). `ESTADO_EN_MES_SQL` ordena ahora por `desde, registrado_en, id`, porque una reactivación reparada puede caer el mismo día que el cambio siguiente con un id mayor.
+
+Queda: una baja que no pasó por la API ni por el trigger (SQL a mano con el trigger desactivado) no se detecta; ningún camino de la aplicación da de baja sin registrarlo.
+
 ## Duodécima revisión del 11/11/2026: la recaudación cerrada no se mueve de zona
 
 Corregido, con prueba en `tests/zona-rubro-de-cada-cobro.test.js` (migración 0028): el panel, los reportes y la proyección agrupaban cada cobro con la zona y el rubro de HOY; mover a un comerciante de zona pasaba su recaudación ya cerrada a la zona nueva y el filtro del reporte dejaba de traer sus cobros. Ahora cada cobro guarda esa foto en su fila. De paso, el conteo de comerciantes por zona del panel ya no incluye a los dados de baja.
@@ -143,7 +149,7 @@ Rendimiento (24 000 cobros, 3051 comerciantes): panel +9 %, reporte y proyecció
 
 Corregido, con prueba en `tests/baja-de-cada-mes.test.js` (migración 0027): la cuota mensual se cobraba también los meses en que el comerciante estaba de baja. Dado de baja en julio y reactivado en noviembre, debía S/ 180 en vez de S/ 90; y uno de baja desde antes de este mes mostraba la cuota del mes. Los cambios de estado anteriores se reconstruyen de la auditoría (`ACTUALIZAR`, `DAR_DE_BAJA` y el alta que reactiva); un dado de baja sin rastro en la auditoría toma su `fecha_baja`.
 
-Queda: un comerciante reactivado por la importación del padrón antes de esta migración no tiene la reactivación en la auditoría; sus meses de baja se siguen cobrando hasta que se corrija a mano.
+(Resuelto el 12/11/2026 en la decimotercera revisión, migración 0029.) Antes: un comerciante reactivado por la importación del padrón antes de esta migración no tenía la reactivación en la auditoría; sus meses de baja se seguían cobrando.
 
 ## Décima revisión del 11/11/2026: revisión de un cobro anulado
 

@@ -1732,10 +1732,11 @@ async function findMerchantPost(db, merchantId, fecha = null) {
 //
 // activoEnMes (migración 0027): si estuvo activo o pendiente algún día del mes. Un mes de baja entero no paga la
 // cuota mensual; el de la baja y el de la reactivación, sí (como el tipo en 0023). En el mes en curso solo se
-// consulta si hoy está de baja.
+// consulta si hoy está de baja. El orden va por registrado_en antes que por id: la 0029 inserta reactivaciones
+// del padrón del mismo día que un cambio posterior, con un id mayor.
 const ESTADO_EN_MES_SQL = `
   (SELECT estado_anterior FROM comerciantes_estado_cambios
-    WHERE comerciante_id = $1 AND desde >= $2::date ORDER BY desde, id LIMIT 1) AS estado_inicio,
+    WHERE comerciante_id = $1 AND desde >= $2::date ORDER BY desde, registrado_en, id LIMIT 1) AS estado_inicio,
   EXISTS (SELECT 1 FROM comerciantes_estado_cambios
            WHERE comerciante_id = $1 AND desde BETWEEN $2::date AND $3::date AND estado_nuevo <> 'inactivo') AS reactivado_en_mes`;
 const activoSegun = (estadoActual, datos) => (datos.estado_inicio ?? estadoActual) !== 'inactivo' || Boolean(datos.reactivado_en_mes);
