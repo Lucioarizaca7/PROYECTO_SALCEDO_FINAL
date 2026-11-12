@@ -5,7 +5,7 @@ import test, { after, before } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { startServer } from '../src/index.ts';
-import { closeDatabase, insertComerciante, insertPuesto, insertTarifa, registrarCobro, anularCobro } from '../src/db.js';
+import { closeDatabase, createUser, insertComerciante, insertPuesto, insertTarifa, registrarCobro, anularCobro } from '../src/db.js';
 import { emitirCarnets } from '../src/portalAcceso.js';
 import { tokenVerificacion, tokenDescarga, leerTokenDescarga, buscarRecibo, generarReciboPdf } from '../src/reciboPdf.js';
 import { pool } from '../src/pg.js';
@@ -115,4 +115,35 @@ test('el recibo trae los tickets entregados con el cobro', async () => {
   assert.deepEqual(recibo.tickets, [{ serie: 'S3', numero: 12 }]);
   const pdf = await generarReciboPdf(recibo);
   assert.equal(pdf.subarray(0, 5).toString('latin1'), '%PDF-');
+});
+
+// Ronda 19 (12/11/2026): el recibo oficial se vuelve a compartir, y cada cobrador solo ve los suyos.
+const ingresar = async (email, password) => (await api('/auth/login', { method: 'POST', body: { email, password, device_id: `pc-${email}` } })).body.token;
+
+test('el cobrador trae su recibo oficial para reenviarlo; el de otro cobrador no existe para él', async () => {
+  const periodo = '2031-07';
+  const [merchant] = await dosComerciantesConSaldo();
+  const cobro = await cobrar(merchant, periodo);
+  const dueno = await ingresar('cobrador@salcedo.gob.pe', 'cobro123');
+  const clave = `clave-otro-${process.pid}`;
+  const otroEmail = `otro-cobrador-${process.pid}-${Date.now()}@prueba.pe`;
+  await createUser({ nombre: 'Otro cobrador', email: otroEmail, password: clave, rol: 'cobrador' });
+  const otro = await ingresar(otroEmail, clave);
+  const admin = await ingresar('admin@salcedo.gob.pe', 'admin123');
+
+  const propio = await api(`/comprobantes/${cobro.comprobante}/recibo`, { token: dueno });
+  assert.equal(propio.status, 200);
+  assert.equal(propio.body.data.comprobante, cobro.comprobante);
+  assert.equal(propio.body.data.fecha_cobro, `${periodo}-15T15:00:00Z`, 'la fecha del cobro, no la de ahora');
+  const token = decodeURIComponent(propio.body.data.url_verificacion.split('/verificar/')[1]);
+  assert.equal((await api(`/publico/verificar/${encodeURIComponent(token)}`)).body.data.numero, cobro.comprobante);
+  assert.match(propio.body.data.qr_verificacion, /^data:image\/png;base64,/);
+
+  for (const ruta of ['recibo', 'pdf']) {
+    assert.equal((await api(`/comprobantes/${cobro.comprobante}/${ruta}`, { token: otro })).status, 404, `antes otro cobrador bajaba el ${ruta}`);
+    assert.equal((await api(`/comprobantes/${cobro.comprobante}/${ruta}`, { token: admin })).status, 200);
+  }
+
+  await anularCobro(pool, cobro.id, { motivo: 'Prueba de recibo anulado', usuarioId: 1 });
+  assert.equal((await api(`/comprobantes/${cobro.comprobante}/recibo`, { token: dueno })).body.data.estado, 'anulado');
 });

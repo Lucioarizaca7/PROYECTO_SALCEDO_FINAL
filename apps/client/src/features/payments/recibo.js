@@ -64,14 +64,16 @@ export function lineasRecibo(receipt) {
     ['Operación', receipt.metodo_pago !== 'efectivo' && receipt.codigo_operacion ? receipt.codigo_operacion : 'No aplica'],
     ...(receipt.tickets?.length ? [['Tickets', receipt.tickets.map((ticket) => ticket.texto || textoTicket(ticket.serie, ticket.numero)).join(', ')]] : []),
     ...(receipt.observaciones ? [['Nota', receipt.observaciones]] : []),
-    // Huella interna del cobro; la verificación pública es el QR y el enlace.
-    ['Huella', receipt.hash_idempotencia || 'N/A']
+    // Huella interna del cobro, si la hay; la verificación pública es el QR y el enlace.
+    ...(receipt.hash_idempotencia ? [['Huella', receipt.hash_idempotencia]] : [])
   ];
   return {
     titulo: 'SISREC SALCEDO',
     subtitulo: 'RECIBO DE PAGO',
     numero: receipt.comprobante,
-    aviso: receipt.provisional ? 'Recibo provisional: el número oficial se asigna al sincronizar.' : null,
+    aviso: receipt.estado === 'anulado'
+      ? `RECIBO ANULADO${receipt.motivo_anulacion ? `: ${receipt.motivo_anulacion}` : ''}`
+      : receipt.provisional ? 'Recibo provisional: el número oficial se asigna al sincronizar.' : null,
     filas,
     total: `S/ ${Number(receipt.monto || 0).toFixed(2)}`,
     // Enlace y QR de verificación (12/11/2026): cualquiera comprueba número, monto y estado (y si se anuló). El

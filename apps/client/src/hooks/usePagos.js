@@ -3,6 +3,7 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import { useSisrec } from '../app/SisrecContext';
 import { formatPEN } from '../lib/formato';
 import { createReceiptHash } from '../features/payments/recibo';
+import { enviarReciboOficial } from '../features/payments/reciboOficial';
 import { buildExpressSuggestion } from '../features/payments/sugerenciaExpress';
 import { aComercianteDePantalla, aSaldoDePantalla, montoDiaEnZona, periodoEnLima } from '../services/jornadaOffline';
 import { crearHashCobro } from '../services/offlineQueue';
@@ -423,8 +424,17 @@ export function usePagos() {
     }
   };
 
+  // Reenvía el recibo oficial (con QR) de un cobro ya registrado.
+  const enviarRecibo = async (comprobante) => {
+    try {
+      await enviarReciboOficial(comprobante);
+    } catch (error) {
+      setMessage(error.message);
+    }
+  };
+
   return {
-    anularCobro, puedeAnular: user?.rol === 'super_admin',
+    anularCobro, enviarRecibo, puedeAnular: user?.rol === 'super_admin',
     form, setForm, merchant, balance, suggestion, message, showQrScanner, setShowQrScanner, receipt,
     findMerchant, scanQr, applySuggestion, submit, elegirPeriodo,
     tickets, usaTickets, requeridos, entrega, cambiarTickets, anularTicket,

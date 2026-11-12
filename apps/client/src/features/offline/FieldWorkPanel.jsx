@@ -1,3 +1,7 @@
+import { useState } from 'react';
+
+import { enviarReciboOficial } from '../payments/reciboOficial';
+
 const formatPEN = (value) => new Intl.NumberFormat('es-PE', { style: 'currency', currency: 'PEN' }).format(Number(value) || 0);
 const formatTime = (value) => (value ? new Date(value).toLocaleString('es-PE', { dateStyle: 'short', timeStyle: 'short' }) : '—');
 
@@ -26,6 +30,7 @@ export function FieldWorkPanel({ isOnline, jornada, queue }) {
   const { meta, vigente, downloading, error, download } = jornada;
   const { items, counts, syncing, lastResult, sync, retry } = queue;
   const visible = items.filter((item) => item.estado !== 'sincronizado').concat(items.filter((item) => item.estado === 'sincronizado').slice(0, 5));
+  const [avisoRecibo, setAvisoRecibo] = useState('');
 
   return (
     <div className="panel field-panel">
@@ -57,6 +62,7 @@ export function FieldWorkPanel({ isOnline, jornada, queue }) {
         </button>
       </div>
       {lastResult && <div className="form-message">{syncSummary(lastResult)}</div>}
+      {avisoRecibo && <div className="form-message">{avisoRecibo}</div>}
 
       <ul className="field-queue" aria-label="Cola de cobros offline">
         {visible.map((item) => (
@@ -73,6 +79,11 @@ export function FieldWorkPanel({ isOnline, jornada, queue }) {
               <span className={`status ${STATE_CLASS[item.estado] || 'neutral'}`}>{STATE_LABEL[item.estado] || item.estado}</span>
               {item.estado === 'error' && (
                 <button type="button" className="table-action" disabled={!isOnline} onClick={() => retry(item.hashTransaccion)}>Reintentar</button>
+              )}
+              {/* Ya sincronizado: el recibo oficial (con número R- y QR) reemplaza al provisional (12/11/2026). */}
+              {item.estado === 'sincronizado' && item.comprobante && (
+                <button type="button" className="table-action" disabled={!isOnline} title={isOnline ? undefined : 'Necesita señal para traer el recibo oficial'}
+                  onClick={() => enviarReciboOficial(item.comprobante).catch((error) => setAvisoRecibo(error.message))}>Enviar recibo oficial</button>
               )}
             </div>
           </li>
