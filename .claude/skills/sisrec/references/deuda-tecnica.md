@@ -133,6 +133,12 @@ Corregidos, con prueba en `tests/codigo-operacion.test.js`, `tests/tipo-via-de-c
 
 Queda: el paquete de jornada calcula dos veces el mes en curso (`calcularLiquidacion` y otra vez dentro de `calcularDeudaAcumulada`). Con un padrón mucho mayor convendrá la liquidación en lote (paso 6).
 
+## Duodécima revisión del 11/11/2026: la recaudación cerrada no se mueve de zona
+
+Corregido, con prueba en `tests/zona-rubro-de-cada-cobro.test.js` (migración 0028): el panel, los reportes y la proyección agrupaban cada cobro con la zona y el rubro de HOY; mover a un comerciante de zona pasaba su recaudación ya cerrada a la zona nueva y el filtro del reporte dejaba de traer sus cobros. Ahora cada cobro guarda esa foto en su fila. De paso, el conteo de comerciantes por zona del panel ya no incluye a los dados de baja.
+
+Rendimiento (24 000 cobros, 3051 comerciantes): panel +9 %, reporte y proyección iguales dentro del ruido. Se probaron y midieron dos formas sin columna (función SQL por fila: proyección ×50; LATERAL con UNION: ×2) antes de elegir la foto en la fila, que es además el registro honesto de dónde se cobró.
+
 ## Undécima revisión del 11/11/2026: meses de baja
 
 Corregido, con prueba en `tests/baja-de-cada-mes.test.js` (migración 0027): la cuota mensual se cobraba también los meses en que el comerciante estaba de baja. Dado de baja en julio y reactivado en noviembre, debía S/ 180 en vez de S/ 90; y uno de baja desde antes de este mes mostraba la cuota del mes. Los cambios de estado anteriores se reconstruyen de la auditoría (`ACTUALIZAR`, `DAR_DE_BAJA` y el alta que reactiva); un dado de baja sin rastro en la auditoría toma su `fecha_baja`.

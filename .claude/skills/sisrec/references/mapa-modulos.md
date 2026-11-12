@@ -110,3 +110,4 @@ Para ver los roles exactos de una ruta: `grep -rn "'/api/v1/<ruta>" apps/server/
 - **0025:** `comerciantes_datos_cambios` (rubro y zona), `puestos_metros_cambios` y `metros_de_puesto()`: un mes pasado se liquida con los datos de su día 1.
 - **0026:** cierra como anuladas las revisiones pendientes (`cobros_observados`) de cobros ya anulados.
 - **0027:** `comerciantes_estado_cambios` (trigger en `comerciantes.estado`): un mes de baja entero no paga la cuota mensual.
+- **0028:** `transacciones.zona_cobro_id` y `rubro_cobro_id`: cada cobro guarda la zona y el rubro del día del cobro; los existentes se rellenan con la historia de la 0025.

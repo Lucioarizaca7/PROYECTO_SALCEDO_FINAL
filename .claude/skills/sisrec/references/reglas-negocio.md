@@ -191,6 +191,7 @@ Antes pasar a un ferial a eventual borraba su deuda atrasada entera, y pasar un 
   - El cobrador ve solo sus cobros, como en `GET /cobros`. Excepción: con `comerciante_id` ve el historial de ese comerciante, que la pantalla de cobro usa para sugerir monto y método.
   - El total de la pantalla suma solo los cobros confirmados.
   - El super_admin anula desde el reporte. Antes solo podía desde los 6 cobros más recientes.
+  - **Zona y rubro del día del cobro** (migración 0028, 11/11/2026, misma decisión "rige desde el cambio"): cada cobro guarda en su fila la zona y el rubro que tenía el comerciante ese día (`zona_cobro_id`, `rubro_cobro_id`; un cobro sin señal fechado días atrás toma el valor de ese día). El panel (`porZona`, `porRubro`), las columnas y filtros de `/reportes` y las series de la proyección agrupan con esa foto: corregir el padrón ya no cambia la recaudación cerrada de los meses pasados. Una fila sin foto (escrita fuera de la API) cae al valor actual. Los días marcados por zona de la proyección usan la zona del comerciante el día de la marca (`CAMBIO_POSTERIOR`). El conteo "comerciantes" por zona del panel sí es el padrón de hoy, sin dados de baja (antes los contaba).
 
 ### Tickets preimpresos (migración 0014, `routes/tickets.ts`)
 
