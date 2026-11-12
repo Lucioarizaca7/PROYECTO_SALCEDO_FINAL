@@ -130,3 +130,29 @@ test('reenviar la baja o la liberación de un puesto no es un error', async () =
   await deactivatePuesto(pool, puestos[1].id);
   assert.equal((await deactivatePuesto(pool, puestos[1].id)).ya_dado_de_baja, true);
 });
+
+// Ronda 17 (12/11/2026): los tickets de hoy son lo que se le cobra hoy.
+const comercianteDe = async (id) => (await pool.query('SELECT * FROM comerciantes WHERE id = $1', [id])).rows[0];
+const ticketsDeHoy = (series) => series.reduce((total, item) => total + Number(item.puestos_hoy || 0), 0);
+
+test('tickets de hoy: el puesto marcado "faltó" no suma ticket', async () => {
+  const { comerciante, puesto } = await ferialAsfaltado();
+  await marcarAsistencias(pool, [{ puesto_id: puesto.id, fecha: todayInLima(), asistio: false, motivo: 'no_salio' }], { usuarioId: 1 });
+  assert.equal(ticketsDeHoy(await seriesDelComerciante(pool, await comercianteDe(comerciante.id))), 0, 'antes sugería S/ 3 a quien no salió');
+});
+
+test('tickets de hoy: con dos puestos sin marcar, uno (el que marca el cobro)', async () => {
+  const { asfaltada, comerciante } = await ferialAsfaltado();
+  await insertPuesto(pool, { zona_id: asfaltada.id, metros_cuadrados: 4, direccion: `Segundo ${unico()}`, comerciante_id: comerciante.id });
+  assert.equal(ticketsDeHoy(await seriesDelComerciante(pool, await comercianteDe(comerciante.id))), 1,
+    'antes eran 2 y el cobro de S/ 6 se rechazaba: el cobro marca un solo puesto');
+});
+
+test('sin marca de hoy se puede cobrar: el cobro marca el día', async () => {
+  const { comerciante, puesto } = await ferialAsfaltado();
+  const cobrador = await nuevoCobrador();
+  assert.equal((await calcularLiquidacion(pool, comerciante.id)).saldo, 0, 'antes de cobrar no debe nada');
+  const cobro = await registrarCobro(pool, { comerciante_id: comerciante.id, cobrador_id: cobrador.id, monto: 3, metodo_pago: 'efectivo' });
+  assert.equal(cobro.estado, 'confirmado');
+  assert.equal(await zonaDeLaMarca(puesto.id), Number((await pool.query('SELECT zona_id FROM puestos WHERE id = $1', [puesto.id])).rows[0].zona_id));
+});

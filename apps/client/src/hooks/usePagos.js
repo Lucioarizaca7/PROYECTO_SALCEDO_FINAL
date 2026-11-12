@@ -428,6 +428,9 @@ export function usePagos() {
     form, setForm, merchant, balance, suggestion, message, showQrScanner, setShowQrScanner, receipt,
     findMerchant, scanQr, applySuggestion, submit, elegirPeriodo,
     tickets, usaTickets, requeridos, entrega, cambiarTickets, anularTicket,
-    zonas, zonaDia, setZonaDia, muestraZonaDia
+    zonas, zonaDia, setZonaDia, muestraZonaDia,
+    // Quien paga por día cobrado se puede cobrar en el mes en curso aunque el día no esté marcado: el cobro lo
+    // marca y el servidor valida el monto (12/11/2026). Antes "Confirmar" quedaba deshabilitado con saldo 0.
+    cobraHoy: muestraZonaDia
   };
 }

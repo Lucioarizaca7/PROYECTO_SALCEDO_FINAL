@@ -133,6 +133,13 @@ Corregidos, con prueba en `tests/codigo-operacion.test.js`, `tests/tipo-via-de-c
 
 Queda: el paquete de jornada calcula dos veces el mes en curso (`calcularLiquidacion` y otra vez dentro de `calcularDeudaAcumulada`). Con un padrón mucho mayor convendrá la liquidación en lote (paso 6).
 
+## Decimoséptima revisión del 12/11/2026: tickets de hoy y cobrar sin marca previa
+
+Corregidos, con prueba en `tests/zona-del-dia-y-por-puesto.test.js` y `apps/client/tests/zonaDelDiaYRecibo.test.js`; comprobado en el navegador a 390 px en una copia de la demo:
+- **Tickets de hoy de más** (de la ronda 16): `puestos_hoy` contaba también el puesto marcado "faltó" y todos los puestos sin marca; se pedía S/ 3 a quien no salió, y a quien tiene 2 puestos se le sugerían 2 tickets que el servidor rechazaba porque el cobro marca un solo puesto. Ahora es lo que se cobra hoy; el cliente ya no vuelve a "uno por puesto" cuando da 0.
+- **No se podía cobrar a quien paga por día sin el día marcado:** "Confirmar" se deshabilitaba con saldo 0 y el monto tenía tope en el saldo, aunque el servidor marca el día al cobrar. Ahora, en el mes en curso, se puede; el servidor valida.
+- **"× N puestos" sin señal:** el paquete de jornada no traía `cantidad_puestos`.
+
 ## Decimosexta revisión del 12/11/2026: zona del día, cobro por puesto, baja sin señal y recibo por WhatsApp
 
 Hecho, con prueba en `tests/zona-del-dia-y-por-puesto.test.js`, `tests/tickets.test.js` y `apps/client/tests/zonaDelDiaYRecibo.test.js` (migración 0031); comprobado por HTTP y en el navegador a 390 px en una copia de la demo:

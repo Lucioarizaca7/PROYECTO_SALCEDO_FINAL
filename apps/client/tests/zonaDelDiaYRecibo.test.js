@@ -11,7 +11,7 @@ import assert from 'node:assert/strict';
 import { lineasRecibo, textoRecibo } from '../src/features/payments/recibo.js';
 import { textoTarifa } from '../src/lib/formato.js';
 import { aplicarMarca, estadoDelDia, marcarEnviadas, marcasPendientes } from '../src/services/asistenciaOffline.js';
-import { montoDiaEnZona } from '../src/services/jornadaOffline.js';
+import { aSaldoDePantalla, montoDiaEnZona, normalizarComerciante } from '../src/services/jornadaOffline.js';
 import { aPayloadServidor } from '../src/services/offlineQueue.js';
 import { desdeServidor, requeridosEnZona, requeridosPorDefecto, serieDeTipoVia } from '../src/services/ticketsOffline.js';
 
@@ -42,6 +42,8 @@ test('tickets de hoy: puestos_hoy manda y la zona del día pasa todo a su serie'
   const series = [{ serie: 'S3', valor: 3, puestos: 1, puestos_hoy: 0 }, { serie: 'S2', valor: 2, puestos: 1, puestos_hoy: 1 }];
   assert.deepEqual(requeridosPorDefecto(series).map((item) => [item.serie, item.cantidad]), [['S3', 0], ['S2', 1]],
     'antes pedía S3 + S2 (S/ 5) a quien hoy está solo en la zona sin asfaltar');
+  // Marcado "faltó" hoy: no se sugiere ticket (antes volvía a uno por puesto).
+  assert.deepEqual(requeridosPorDefecto([{ serie: 'S3', valor: 3, puestos: 1, puestos_hoy: 0 }]).map((item) => item.cantidad), [0]);
   // Sin puestos_hoy (un mes atrasado), uno por puesto como antes.
   assert.deepEqual(requeridosPorDefecto([{ serie: 'S3', valor: 3, puestos: 2 }]).map((item) => item.cantidad), [2]);
 
@@ -62,8 +64,10 @@ test('sin tickets, el día en otra zona vale lo de su tipo de vía', () => {
   assert.equal(montoDiaEnZona(tarifas, null, hoy), null);
 });
 
-test('la cuota por puesto se ve en la línea de tarifa', () => {
+test('la cuota por puesto se ve en la línea de tarifa, también sin señal', () => {
   assert.equal(textoTarifa({ tarifa: { monto_fijo: 30 }, cantidad_puestos: 2 }), 'S/ 30 × 2 puestos');
+  const registro = normalizarComerciante({ id: 9, nombre: 'Dos puestos', periodo: '2026-11', tarifa_id: 1, tarifa_monto_fijo: 90, monto_total: 180, saldo: 180, cantidad_puestos: 2 });
+  assert.equal(textoTarifa(aSaldoDePantalla(registro)), 'S/ 90 × 2 puestos', 'antes el celular decía S/ 90 con saldo de S/ 180');
   assert.equal(textoTarifa({ tarifa: { monto_fijo: 30 }, cantidad_puestos: 1 }), 'S/ 30');
 });
 

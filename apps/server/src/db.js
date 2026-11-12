@@ -3290,16 +3290,24 @@ export async function seriesDelComerciante(db, merchant, periodo = currentPeriod
     const serie = await serieDe(zonaId, tipoVia);
     if (serie) entrada(serie).puestos += puestos;
   }
-  // puestos_hoy: los tickets de hoy. Por cada puesto, la zona de su marca de hoy (la zona del día, 12/11/2026) o,
-  // sin marca, la de su puesto. Así por omisión se entrega S2 a quien hoy vende en una zona sin asfaltar, y no
-  // S3 + S2 porque su puesto es de una zona asfaltada.
+  // puestos_hoy: los tickets de hoy, es decir lo que se le cobra hoy (12/11/2026). Con marcas de hoy, cada puesto
+  // marcado "asistió" en la zona de su marca (la zona del día); uno marcado "faltó" no cuenta. Sin ninguna marca,
+  // solo el puesto principal, que es el que marca el cobro (marcarDiaCobrado). Antes contaba todos los puestos y
+  // también al que faltó: se sugerían tickets que el servidor luego rechazaba por exceder el saldo.
   if (enCurso) {
     for (const fila of await rows(db, `
-      SELECT COALESCE(a.zona_id, p.zona_id) AS zona_id, COALESCE(a.tipo_via, z.tipo_via) AS tipo_via, COUNT(*)::int AS puestos
-      FROM puestos p JOIN zonas z ON z.id = p.zona_id
-      LEFT JOIN asistencias_feriales a ON a.puesto_id = p.id AND a.fecha = $2::date AND a.sesion = '' AND a.asistio
-      WHERE p.comerciante_id = $1 AND p.estado <> 'inactivo'
-      GROUP BY 1, 2`, [merchant.id, diaTarifa])) {
+      WITH marcas_hoy AS (
+        SELECT a.zona_id, a.tipo_via, a.asistio FROM asistencias_feriales a
+        WHERE a.comerciante_id = $1 AND a.fecha = $2::date AND a.sesion = ''
+      ), principal AS (
+        SELECT p.zona_id, z.tipo_via FROM puestos p JOIN zonas z ON z.id = p.zona_id
+        WHERE p.comerciante_id = $1 AND p.estado <> 'inactivo' ORDER BY p.id LIMIT 1
+      )
+      SELECT zona_id, tipo_via, COUNT(*)::int AS puestos FROM (
+        SELECT zona_id, tipo_via FROM marcas_hoy WHERE asistio
+        UNION ALL
+        SELECT zona_id, tipo_via FROM principal WHERE NOT EXISTS (SELECT 1 FROM marcas_hoy)
+      ) hoy GROUP BY zona_id, tipo_via`, [merchant.id, diaTarifa])) {
       const serie = await serieDe(fila.zona_id, fila.tipo_via);
       if (serie) entrada(serie).puestos_hoy += fila.puestos;
     }
@@ -3782,6 +3790,8 @@ export async function getJornadaPackage(db, { periodo = currentPeriod() } = {}) 
       puesto_ferial_id: merchant.puesto_ferial_id && (merchant.tipo_comerciante === 'ferial' || deuda.tarifa?.unidad_medida === 'semanal')
         ? Number(merchant.puesto_ferial_id) : null,
       zona_puesto_id: merchant.zona_puesto_id === null || merchant.zona_puesto_id === undefined ? null : Number(merchant.zona_puesto_id),
+      // Cuota por puesto (12/11/2026): sin señal la pantalla también dice "× N puestos".
+      cantidad_puestos: Number(deuda.cantidad_puestos || 1),
       dias_asistidos: deuda.dias_asistidos ?? null,
       // Series de ticket con las que se le cobra (un ticket por puesto y día cobrado); vacía = sin ticket.
       series_cobro: await seriesDelComerciante(db, merchant, periodo)

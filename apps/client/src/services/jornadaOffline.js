@@ -26,6 +26,8 @@ export function normalizarComerciante(item, descargadoEn = new Date().toISOStrin
     rubro: item.rubro || null,
     zona: item.zona || null,
     zonaId: item.zona_id ?? null,
+    // Cuota por puesto (12/11/2026): "× N puestos" también sin señal.
+    cantidadPuestos: Number(item.cantidad_puestos || 1),
     // Zona del puesto donde se marca la asistencia: la que se propone como zona de hoy (12/11/2026).
     zonaPuestoId: item.zona_puesto_id ?? item.zona_id ?? null,
     tipo: item.tipo_comerciante || item.categoria || null,
@@ -194,6 +196,7 @@ export function aSaldoDePantalla(registro, periodo = null) {
     saldo: Number(registro.saldo || 0),
     tarifa: registro.tarifaMontoFijo === null || registro.tarifaMontoFijo === undefined ? null : { id: registro.tarifaId, monto_fijo: registro.tarifaMontoFijo },
     no_devengo: registro.noDevengo,
+    cantidad_puestos: Number(registro.cantidadPuestos || 1),
     cobro_diario: Boolean(registro.cobroDiario),
     dia: registro.dia || null,
     series_cobro: registro.seriesCobro || [],
