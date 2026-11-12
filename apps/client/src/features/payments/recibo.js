@@ -1,4 +1,6 @@
-// Recibo del cobro: huella corta, impresión térmica por Bluetooth (o print del navegador) y WhatsApp.
+// Recibo del cobro: huella corta, PDF con la impresión del navegador y envío por WhatsApp.
+import { fechaHoraEnLima, textoMetodo } from '../../lib/formato.js';
+import { textoTicket } from '../../services/ticketsOffline.js';
 
 export async function createReceiptHash(payload) {
   const encoder = new TextEncoder();
@@ -45,43 +47,153 @@ export function imprimirReciboEnNavegador() {
   setTimeout(() => { if (document.body.contains(contenedor)) limpiar(); }, 60000);
 }
 
-// Sin impresora Bluetooth (o si falla) se usa la impresión del navegador; el recibo queda en la cola de impresión.
-export async function printThermalReceipt(receipt, setPrintStatus = () => {}) {
-  if (!receipt) return;
+// Recibo por WhatsApp (decisión del usuario, 12/11/2026): no se usa la impresora térmica. El recibo se comparte
+// como imagen con ancho de celular; si el celular no puede compartir imágenes, va el texto completo por wa.me.
+// El recibo no lleva el DNI (Ley 29733), igual que el de la pantalla.
 
-  if (!('bluetooth' in navigator)) {
-    imprimirReciboEnNavegador();
-    return;
-  }
-
-  setPrintStatus({ isPrinting: true, error: null });
-
-  try {
-    const { getBluetoothPrinter } = await import('../../utils/bluetoothPrint');
-    const printer = getBluetoothPrinter();
-
-    // Primero con la impresora ya emparejada; si no hay, se pide elegir una.
-    if (!(await printer.initialize())) await printer.requestDevice();
-    await printer.printReceiptWithQueue(receipt);
-
-    setTimeout(() => setPrintStatus({ isPrinting: false, error: null }), 1500);
-  } catch (error) {
-    console.warn('Bluetooth printing failed:', error);
-    setPrintStatus({ isPrinting: false, error: error.message });
-    imprimirReciboEnNavegador();
-  }
+/** Encabezado, filas (etiqueta, valor) y total del recibo: lo mismo que muestra la pantalla. */
+export function lineasRecibo(receipt) {
+  const filas = [
+    ['Comerciante', receipt.comerciante || 'Comerciante'],
+    ['Fecha', fechaHoraEnLima(receipt.fecha_cobro || receipt.fecha) || fechaHoraEnLima(new Date())],
+    ['Concepto', receipt.concepto || 'Liquidación de deuda'],
+    ...(receipt.periodo_aplicado ? [['Mes pagado', receipt.periodo_aplicado]] : []),
+    ['Método', textoMetodo(receipt.metodo_pago)],
+    ['Cobrador', receipt.cobrador || 'Cobrador'],
+    // En efectivo no hay número de operación: el servidor guarda un código interno que no se muestra.
+    ['Operación', receipt.metodo_pago !== 'efectivo' && receipt.codigo_operacion ? receipt.codigo_operacion : 'No aplica'],
+    ...(receipt.tickets?.length ? [['Tickets', receipt.tickets.map((ticket) => ticket.texto || textoTicket(ticket.serie, ticket.numero)).join(', ')]] : []),
+    ...(receipt.observaciones ? [['Nota', receipt.observaciones]] : []),
+    ['Verificación', receipt.hash_idempotencia || 'N/A']
+  ];
+  return {
+    titulo: 'SISREC SALCEDO',
+    subtitulo: 'RECIBO DE PAGO',
+    numero: receipt.comprobante,
+    aviso: receipt.provisional ? 'Recibo provisional: el número oficial se asigna al sincronizar.' : null,
+    filas,
+    total: `S/ ${Number(receipt.monto || 0).toFixed(2)}`
+  };
 }
 
-// Web Share API si existe; si no, o si falla, wa.me.
-export function shareViaWhatsApp(receipt) {
-  if (!receipt) return;
+/** El recibo en texto para WhatsApp (negritas con *). */
+export function textoRecibo(receipt) {
+  const recibo = lineasRecibo(receipt);
+  return [
+    `*${recibo.titulo}*`,
+    `${recibo.subtitulo} *${recibo.numero}*`,
+    ...(recibo.aviso ? [`_${recibo.aviso}_`] : []),
+    '',
+    ...recibo.filas.map(([etiqueta, valor]) => `${etiqueta}: ${valor}`),
+    '',
+    `*Total pagado: ${recibo.total}*`
+  ].join('\n');
+}
 
-  const mensaje = `Recibo ${receipt.comprobante} SISREC Salcedo - S/ ${receipt.monto.toFixed(2)}`;
-  const openWhatsApp = () => window.open(`https://wa.me/?text=${encodeURIComponent(mensaje)}`, '_blank');
-
-  if (navigator.share) {
-    navigator.share({ title: `Recibo ${receipt.comprobante}`, text: mensaje }).catch(openWhatsApp);
-  } else {
-    openWhatsApp();
+// Parte un texto en renglones que caben en el ancho (medido con el contexto del canvas).
+function renglones(contexto, texto, ancho) {
+  const palabras = String(texto).split(/\s+/);
+  const salida = [];
+  let actual = '';
+  for (const palabra of palabras) {
+    const prueba = actual ? `${actual} ${palabra}` : palabra;
+    if (contexto.measureText(prueba).width <= ancho || !actual) actual = prueba;
+    else { salida.push(actual); actual = palabra; }
   }
+  if (actual) salida.push(actual);
+  return salida;
+}
+
+/**
+ * Imagen PNG del recibo con ancho de celular: 360 px de pantalla, dibujada al doble para que se lea nítida en
+ * WhatsApp. Sin librerías: un canvas con el mismo contenido que lineasRecibo.
+ */
+export async function reciboComoImagen(receipt, { ancho = 360, escala = 2 } = {}) {
+  const recibo = lineasRecibo(receipt);
+  const margen = 20;
+  const util = ancho - margen * 2;
+  const lienzo = document.createElement('canvas');
+  const contexto = lienzo.getContext('2d');
+  const fuente = (peso, tamano) => `${peso} ${tamano}px system-ui, -apple-system, "Segoe UI", Roboto, sans-serif`;
+
+  // Primero se mide (para el alto), luego se dibuja.
+  contexto.font = fuente(400, 15);
+  const filas = recibo.filas.map(([etiqueta, valor]) => ({ etiqueta, valor: renglones(contexto, valor, util * 0.6) }));
+  const aviso = recibo.aviso ? renglones(contexto, recibo.aviso, util) : [];
+  // Encabezado (120) + aviso + cada fila (20 de separación + 20 por renglón) + recuadro del total (10 + 46 + 24).
+  const alto = 120 + aviso.length * 20 + filas.reduce((total, fila) => total + 20 + Math.max(fila.valor.length, 1) * 20, 0) + 80;
+
+  lienzo.width = ancho * escala;
+  lienzo.height = alto * escala;
+  contexto.scale(escala, escala);
+  contexto.fillStyle = '#ffffff';
+  contexto.fillRect(0, 0, ancho, alto);
+  contexto.fillStyle = '#0f3d2e';
+  contexto.fillRect(0, 0, ancho, 6);
+
+  let y = 40;
+  contexto.textAlign = 'center';
+  contexto.fillStyle = '#0f3d2e';
+  contexto.font = fuente(700, 20);
+  contexto.fillText(recibo.titulo, ancho / 2, y);
+  y += 24;
+  contexto.fillStyle = '#4b5563';
+  contexto.font = fuente(600, 13);
+  contexto.fillText(recibo.subtitulo, ancho / 2, y);
+  y += 34;
+  contexto.fillStyle = '#111827';
+  contexto.font = fuente(700, 24);
+  contexto.fillText(recibo.numero || '', ancho / 2, y);
+  y += 22;
+  contexto.font = fuente(400, 13);
+  contexto.fillStyle = '#b45309';
+  for (const renglon of aviso) { contexto.fillText(renglon, ancho / 2, y); y += 20; }
+
+  contexto.textAlign = 'left';
+  for (const fila of filas) {
+    contexto.strokeStyle = '#e5e7eb';
+    contexto.beginPath(); contexto.moveTo(margen, y); contexto.lineTo(ancho - margen, y); contexto.stroke();
+    y += 20;
+    contexto.fillStyle = '#6b7280';
+    contexto.font = fuente(400, 14);
+    contexto.fillText(fila.etiqueta, margen, y);
+    contexto.fillStyle = '#111827';
+    contexto.font = fuente(600, 15);
+    contexto.textAlign = 'right';
+    fila.valor.forEach((renglon, indice) => contexto.fillText(renglon, ancho - margen, y + indice * 20));
+    contexto.textAlign = 'left';
+    y += Math.max(fila.valor.length, 1) * 20;
+  }
+
+  y += 10;
+  contexto.fillStyle = '#ecfdf5';
+  contexto.fillRect(margen, y, util, 46);
+  contexto.fillStyle = '#0f3d2e';
+  contexto.font = fuente(700, 16);
+  contexto.fillText('Total pagado', margen + 12, y + 29);
+  contexto.textAlign = 'right';
+  contexto.font = fuente(800, 20);
+  contexto.fillText(recibo.total, ancho - margen - 12, y + 30);
+
+  return new Promise((resolve, reject) => lienzo.toBlob((blob) => (blob ? resolve(blob) : reject(new Error('No se pudo crear la imagen del recibo'))), 'image/png'));
+}
+
+/**
+ * Comparte el recibo: como imagen si el celular puede compartir archivos (WhatsApp lo recibe como foto), y si no,
+ * el texto completo por wa.me. Cancelar la hoja de compartir no abre nada más.
+ */
+export async function shareViaWhatsApp(receipt) {
+  if (!receipt) return 'nada';
+  const abrirTexto = () => { window.open(`https://wa.me/?text=${encodeURIComponent(textoRecibo(receipt))}`, '_blank'); return 'texto'; };
+  try {
+    const blob = await reciboComoImagen(receipt);
+    const archivo = new File([blob], `recibo-${receipt.comprobante || 'sisrec'}.png`, { type: 'image/png' });
+    if (navigator.canShare?.({ files: [archivo] })) {
+      await navigator.share({ files: [archivo], title: `Recibo ${receipt.comprobante}`, text: `Recibo ${receipt.comprobante} · S/ ${Number(receipt.monto || 0).toFixed(2)}` });
+      return 'imagen';
+    }
+  } catch (error) {
+    if (error?.name === 'AbortError') return 'cancelado';
+  }
+  return abrirTexto();
 }

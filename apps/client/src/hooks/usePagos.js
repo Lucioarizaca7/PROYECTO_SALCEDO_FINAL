@@ -4,9 +4,10 @@ import { useSisrec } from '../app/SisrecContext';
 import { formatPEN } from '../lib/formato';
 import { createReceiptHash } from '../features/payments/recibo';
 import { buildExpressSuggestion } from '../features/payments/sugerenciaExpress';
-import { aComercianteDePantalla, aSaldoDePantalla, periodoEnLima } from '../services/jornadaOffline';
+import { aComercianteDePantalla, aSaldoDePantalla, montoDiaEnZona, periodoEnLima } from '../services/jornadaOffline';
 import { crearHashCobro } from '../services/offlineQueue';
-import { montoDeRequeridos, proximosTickets, requeridosPorDefecto, textoTicket } from '../services/ticketsOffline';
+import { storeFor } from '../services/offlineStore';
+import { montoDeRequeridos, proximosTickets, requeridosEnZona, requeridosPorDefecto, serieDeTipoVia, textoTicket } from '../services/ticketsOffline';
 import { useTicketsCobrador } from '../features/offline/useTicketsCobrador';
 import { apiBase, authFetch } from '../services/session';
 
@@ -20,7 +21,7 @@ const sameMerchant = (merchant) => (item) => (
 // Página Pagos: localizar al comerciante (en línea o en el padrón del celular), revisar su deuda,
 // registrar el cobro (o guardarlo en la cola sin señal) y emitir el recibo.
 export function usePagos() {
-  const { user, cobros, jornada, offlineQueue, refresh, isOnline } = useSisrec();
+  const { user, cobros, jornada, offlineQueue, refresh, isOnline, catalogos, tariffRecords } = useSisrec();
   const location = useLocation();
   const navigate = useNavigate();
   const [form, setForm] = useState({ search: '', comercianteId: '', periodo: periodoEnLima(), monto: '', metodo_pago: 'efectivo', codigo_operacion: '', observaciones: '' });
@@ -30,7 +31,6 @@ export function usePagos() {
   const [message, setMessage] = useState('');
   const [showQrScanner, setShowQrScanner] = useState(false);
   const [receipt, setReceipt] = useState(null);
-  const [printStatus, setPrintStatus] = useState({ isPrinting: false, error: null });
   // Hora en que se empezó a atender al comerciante (búsqueda, QR o llegada desde el mapa).
   const inicioAtencion = useRef(null);
   const empezarAtencion = () => { inicioAtencion.current = new Date().toISOString(); };
@@ -39,7 +39,32 @@ export function usePagos() {
   // uno por puesto; el cobrador suma tickets si paga días adeudados. El monto es lo que valen los tickets.
   const tickets = useTicketsCobrador({ isOnline, jornadaMeta: jornada.meta });
   const [requeridos, setRequeridos] = useState([]);
-  useEffect(() => { setRequeridos(requeridosPorDefecto(balance?.series_cobro)); }, [balance?.series_cobro]);
+
+  // Zona del día (decisión del usuario, 12/11/2026): si hoy vende en otra zona porque faltaron otros, el cobrador
+  // la elige y el día se cobra con su tarifa (asfaltada S/ 3, sin asfaltar S/ 2). '' = la zona de su puesto.
+  // Las zonas y tarifas salen del paquete de la jornada (sirven sin señal) o, si no hay, de los catálogos.
+  const [zonaDia, setZonaDia] = useState('');
+  const [datosJornada, setDatosJornada] = useState({ zonas: [], tarifas: [] });
+  useEffect(() => {
+    storeFor('jornada').get('tarifas').then((guardado) => {
+      if (guardado) setDatosJornada({ zonas: guardado.zonas || [], tarifas: guardado.tarifas || [] });
+    }).catch(() => null);
+  }, [jornada.meta?.descargadoEn]);
+  const zonas = datosJornada.zonas.length ? datosJornada.zonas : (catalogos?.zonas || []);
+  const tarifasDia = datosJornada.tarifas.length ? datosJornada.tarifas : (tariffRecords || []);
+  const zonaElegida = zonas.find((zona) => String(zona.id) === String(zonaDia)) || null;
+  // Solo quien paga por día cobrado y en el mes en curso: la zona del día es la de hoy.
+  const cobraPorDia = Boolean(balance && (balance.series_cobro?.length || balance.dias_asistidos !== undefined
+    || ['ferial_sin_asistencia', 'sin_asistencia'].includes(balance.motivo)));
+  const muestraZonaDia = cobraPorDia && (form.periodo || periodoEnLima()) === periodoEnLima();
+  // Cada comerciante empieza en la zona de su puesto.
+  useEffect(() => { setZonaDia(''); }, [merchant?.id]);
+
+  useEffect(() => {
+    const serieZona = zonaElegida ? serieDeTipoVia(tickets.estado, zonaElegida.tipo_via) : null;
+    setRequeridos(serieZona ? requeridosEnZona(balance?.series_cobro, serieZona) : requeridosPorDefecto(balance?.series_cobro));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [balance?.series_cobro, zonaDia]);
   const usaTickets = requeridos.length > 0 && requeridos.some((item) => tickets.estado.series[item.serie]);
   const entrega = usaTickets ? proximosTickets(tickets.estado, requeridos.filter((item) => item.cantidad > 0)) : null;
   const montoTickets = usaTickets ? montoDeRequeridos(requeridos) : null;
@@ -49,6 +74,14 @@ export function usePagos() {
     if (montoTickets !== null) setForm((current) => ({ ...current, monto: montoTickets > 0 ? String(montoTickets) : '' }));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [requeridos, usaTickets, balance]);
+  // Sin tickets, la zona del día cambia el monto del día: el de la tarifa de su tipo de vía por cada puesto de hoy.
+  useEffect(() => {
+    if (!zonaElegida || usaTickets) return;
+    const montoDia = montoDiaEnZona(tarifasDia, zonaElegida.tipo_via);
+    const puestosHoy = (balance?.series_cobro || []).reduce((total, item) => total + Number(item.puestos_hoy ?? item.puestos ?? 0), 0) || 1;
+    if (montoDia !== null) setForm((current) => ({ ...current, monto: String(Number((montoDia * puestosHoy).toFixed(2))) }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [zonaDia, usaTickets]);
   const cambiarTickets = (serie, delta) => setRequeridos((current) => current.map((item) => (
     item.serie === serie ? { ...item, cantidad: Math.max(0, Math.min(60, item.cantidad + delta)) } : item
   )));
@@ -268,6 +301,8 @@ export function usePagos() {
       periodo: form.periodo || periodoEnLima(),
       inicio_atencion: inicioAtencion.current || undefined,
       tickets: ticketsEntregados.length ? ticketsEntregados : undefined,
+      // La zona del día: la marca de asistencia del cobro va en esa zona (o corrige la de hoy).
+      zona_dia: muestraZonaDia && zonaDia ? Number(zonaDia) : undefined,
       // El mismo hash viaja en línea y, si la red falla, en la cola: el servidor nunca lo registra dos veces.
       hash_transaccion: await crearHashCobro({ cobradorId: user?.id, comercianteId: form.comercianteId, monto: form.monto, fechaCobro, salt: `${Date.now()}-${Math.random()}` })
     };
@@ -390,8 +425,9 @@ export function usePagos() {
 
   return {
     anularCobro, puedeAnular: user?.rol === 'super_admin',
-    form, setForm, merchant, balance, suggestion, message, showQrScanner, setShowQrScanner, receipt, printStatus, setPrintStatus,
+    form, setForm, merchant, balance, suggestion, message, showQrScanner, setShowQrScanner, receipt,
     findMerchant, scanQr, applySuggestion, submit, elegirPeriodo,
-    tickets, usaTickets, requeridos, entrega, cambiarTickets, anularTicket
+    tickets, usaTickets, requeridos, entrega, cambiarTickets, anularTicket,
+    zonas, zonaDia, setZonaDia, muestraZonaDia
   };
 }

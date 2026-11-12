@@ -86,7 +86,8 @@ router.post('/api/v1/puestos/:id/liberar',
     serializeResponse: (body) => body?.data ?? body
   }),
   async (req, res) => {
-    return res.json({ data: await liberarPuesto(db, req.params.id), message: 'Puesto liberado: queda disponible para otro comerciante' });
+    const data = await liberarPuesto(db, req.params.id);
+    return res.json({ data, message: data.ya_libre ? 'El puesto ya estaba libre' : 'Puesto liberado: queda disponible para otro comerciante' });
   }
 );
 
@@ -101,7 +102,8 @@ router.delete('/api/v1/puestos-mapa/:id',
     serializeResponse: (body) => body?.data ?? body
   }),
   async (req, res) => {
-    return res.json({ data: await deactivatePuesto(db, req.params.id), message: 'Puesto dado de baja lógicamente' });
+    const data = await deactivatePuesto(db, req.params.id);
+    return res.json({ data, message: data.ya_dado_de_baja ? 'El puesto ya estaba dado de baja' : 'Puesto dado de baja lógicamente' });
   }
 );
 

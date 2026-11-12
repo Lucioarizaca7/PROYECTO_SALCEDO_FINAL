@@ -67,7 +67,9 @@ export function textoTarifa(balance = {}) {
   const dias = Number(balance.dias_asistidos || 0);
   // Sin días cobrados no hay tarifa que aplicar: "S/ 0" parecía una tarifa gratis.
   if (!dias && balance.no_devengo) return 'Sin días cobrados en el mes';
-  if (!dias) return `S/ ${balance.tarifa?.monto_fijo ?? 0}`;
+  // Cuota por puesto (desde noviembre de 2026): S/ 30 × 2 puestos.
+  const cantidad = Number(balance.cantidad_puestos || 1);
+  if (!dias) return `S/ ${balance.tarifa?.monto_fijo ?? 0}${cantidad > 1 ? ` × ${cantidad} puestos` : ''}`;
   // Un puesto que cambió de zona en el mes trae una fila por zona: se cuentan puestos, no filas.
   const totalPuestos = new Set(puestos.map((item) => item.puesto_id)).size;
   const enPuestos = totalPuestos > 1 ? ` en ${totalPuestos} puestos` : '';

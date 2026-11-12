@@ -127,7 +127,8 @@ test('en línea: un ticket por día cobrado y la suma es el monto', async () => 
   const segundo = await insertPuesto(db, { zona_id: tierra.id, metros_cuadrados: 4, direccion: `Tickets ${unico()}`, comerciante_id: mixto.merchant.id });
   await marcarAsistencias(db, [mixto.puesto.id, segundo.id].map((puesto_id) => ({ puesto_id, fecha: hoy(), asistio: true })), { usuarioId: cobrador.id });
   const paquete = (await getJornadaPackage(db)).comerciantes.find((item) => item.id === mixto.merchant.id);
-  assert.deepEqual(paquete.series_cobro, [{ serie: 'S3', valor: 3, puestos: 1 }, { serie: 'S2', valor: 2, puestos: 1 }]);
+  // puestos_hoy (12/11/2026): los tickets que tocan hoy; aquí, uno de cada serie porque cada puesto está en su zona.
+  assert.deepEqual(paquete.series_cobro, [{ serie: 'S3', valor: 3, puestos: 1, puestos_hoy: 1 }, { serie: 'S2', valor: 2, puestos: 1, puestos_hoy: 1 }]);
   const ambos = await cobro(db, cobrador.id, mixto.merchant.id, 5, [{ serie: 'S3', numero: 3004 }, { serie: 'S2', numero: 3001 }]);
   assert.equal(ambos.estado, 'confirmado');
 

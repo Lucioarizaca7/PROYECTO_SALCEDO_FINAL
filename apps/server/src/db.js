@@ -1540,16 +1540,21 @@ export async function updatePuesto(db, id, payload, { devolver = true, puedeCamb
 // Deja el puesto físico sin titular para asignarlo a otro comerciante; los cobros pasados no cambian.
 export async function liberarPuesto(db, id) {
   const puestoId = Number(id);
-  const current = await first(db, 'SELECT estado FROM puestos WHERE id = $1', [puestoId]);
+  const current = await first(db, 'SELECT estado, comerciante_id FROM puestos WHERE id = $1', [puestoId]);
   if (!current) throw new NotFoundError('Puesto no encontrado');
   if (current.estado === 'inactivo') throw new ValidationError('El puesto está dado de baja');
+  // Reenviar la liberación (la cola del mapa con señal débil, 12/11/2026) no es un error: ya está libre.
+  if (current.estado === 'disponible' && current.comerciante_id === null) return { ...(await findPuesto(db, puestoId)), ya_libre: true };
   await db.query(`UPDATE puestos SET comerciante_id = NULL, estado = 'disponible' WHERE id = $1`, [puestoId]);
   return findPuesto(db, puestoId);
 }
 
 export async function deactivatePuesto(db, id) {
   const puestoId = Number(id);
-  if (!(await first(db, 'SELECT id FROM puestos WHERE id = $1', [puestoId]))) throw new NotFoundError('Puesto no encontrado');
+  const current = await first(db, 'SELECT estado FROM puestos WHERE id = $1', [puestoId]);
+  if (!current) throw new NotFoundError('Puesto no encontrado');
+  // Reenviar la baja (la cola del mapa con señal débil, 12/11/2026) no es un error: ya estaba dado de baja.
+  if (current.estado === 'inactivo') return { ...(await findPuesto(db, puestoId)), ya_dado_de_baja: true };
   await db.query(`UPDATE puestos SET estado = 'inactivo' WHERE id = $1`, [puestoId]);
   return findPuesto(db, puestoId);
 }
@@ -1722,6 +1727,25 @@ function periodMultiplier(periodo, unidad) {
 }
 
 // fecha: los metros que tenía el puesto ese día (0025, para un mes pasado); sin ella, los de hoy.
+// La cuota mensual o diaria por rubro (y el día del eventual) se paga por cada puesto desde noviembre de 2026
+// (decisión del usuario, 12/11/2026). Antes se cobraba por uno solo, el principal; los meses anteriores no cambian.
+export const COBRO_POR_PUESTO_DESDE = '2026-11';
+
+// Puestos que tuvo el comerciante algún día del mes (puestos_tenencia, 0031), con sus metros (los del día 1 si
+// cambiaron). Así un mes cerrado no cambia si después cede o libera un puesto.
+async function puestosDelMes(db, merchantId, periodo, fecha = null) {
+  return rows(db, `
+    SELECT p.id, ${fecha ? 'metros_de_puesto(p.id, $4::date)' : 'p.metros_cuadrados'} AS metros_cuadrados FROM puestos p
+    WHERE EXISTS (SELECT 1 FROM puestos_tenencia t
+                  WHERE t.puesto_id = p.id AND t.comerciante_id = $1
+                    AND t.desde <= $3::date AND (t.hasta IS NULL OR t.hasta >= $2::date))
+    ORDER BY p.id`, fecha ? [merchantId, `${periodo}-01`, finDeMes(periodo), fecha] : [merchantId, `${periodo}-01`, finDeMes(periodo)]);
+}
+const finDeMes = (periodo) => {
+  const [anio, mes] = periodo.split('-').map(Number);
+  return `${periodo}-${String(new Date(Date.UTC(anio, mes, 0)).getUTCDate()).padStart(2, '0')}`;
+};
+
 async function findMerchantPost(db, merchantId, fecha = null) {
   return first(db, `
     SELECT id, ${fecha ? 'metros_de_puesto(id, $2::date)' : 'metros_cuadrados'} AS metros_cuadrados, estado FROM puestos
@@ -2089,7 +2113,9 @@ export async function calcularLiquidacion(db, comercianteId, periodo, { dia = nu
     // El eventual paga el día en que se le encuentra, con la tarifa vigente ese día.
     const tarifa = await findApplicableTariff(db, merchant, periodo, { dia: day });
     if (!tarifa) throw sinTarifaVigente();
-    const montoDia = dailyTariffAmount(tarifa, day, Number(puesto?.metros_cuadrados || 1));
+    // Desde COBRO_POR_PUESTO_DESDE, un día por cada puesto que tenga; sin puesto, un día.
+    const puestosEventual = periodo >= COBRO_POR_PUESTO_DESDE ? Math.max((await puestosDelMes(db, merchant.id, periodo)).length, 1) : 1;
+    const montoDia = Number((dailyTariffAmount(tarifa, day, Number(puesto?.metros_cuadrados || 1)) * puestosEventual).toFixed(2));
     const paidToday = await first(db, `
       SELECT COALESCE(SUM(monto), 0) AS pagado FROM transacciones
       WHERE comerciante_id = $1 AND estado = 'confirmado'
@@ -2102,6 +2128,7 @@ export async function calcularLiquidacion(db, comercianteId, periodo, { dia = nu
       periodo,
       dia: day,
       cobro_diario: true,
+      cantidad_puestos: puestosEventual,
       metros_cuadrados: Number(puesto?.metros_cuadrados || 1),
       monto_total: montoDia,
       monto_pagado: pagadoDia,
@@ -2138,9 +2165,13 @@ export async function calcularLiquidacion(db, comercianteId, periodo, { dia = nu
 
   const metros = Number(puesto?.metros_cuadrados || 1);
   const multiplier = periodMultiplier(periodo, tarifa.unidad_medida);
-  const base = Number(tarifa.monto_fijo) * multiplier;
-  const variable = Number(tarifa.monto_variable) * (tarifa.unidad_medida === 'metro_cuadrado' ? metros : 1) * multiplier;
-  const montoTotal = Number((base + variable).toFixed(2));
+  // Desde COBRO_POR_PUESTO_DESDE la cuota es por cada puesto del mes (por m², con los metros de cada uno). Antes de
+  // esa fecha, o sin ningún puesto, se cobra una sola vez con el puesto principal, como antes.
+  const delMes = periodo >= COBRO_POR_PUESTO_DESDE ? await puestosDelMes(db, merchant.id, periodo, diaDelMes) : [];
+  const cobrados = delMes.length ? delMes.map((item) => Number(item.metros_cuadrados || 1)) : [metros];
+  const montoTotal = Number(cobrados.reduce((total, metrosPuesto) => total
+    + Number(tarifa.monto_fijo) * multiplier
+    + Number(tarifa.monto_variable) * (tarifa.unidad_medida === 'metro_cuadrado' ? metrosPuesto : 1) * multiplier, 0).toFixed(2));
   const montoPagado = await paidInPeriod(db, merchant.id, periodo);
   const saldo = Number(Math.max(montoTotal - montoPagado, 0).toFixed(2));
 
@@ -2149,6 +2180,7 @@ export async function calcularLiquidacion(db, comercianteId, periodo, { dia = nu
     tarifa,
     periodo,
     metros_cuadrados: metros,
+    cantidad_puestos: cobrados.length,
     monto_total: montoTotal,
     monto_pagado: montoPagado,
     saldo,
@@ -2288,6 +2320,16 @@ function parseMarcaAsistencia(marca) {
 //   tarde desde un celular sin señal les generaba deuda.
 // `parcial`: un lote (lo guardado sin señal) responde marca por marca, { guardadas, rechazadas }. Antes una
 // sola marca inválida rechazaba todo el lote y el celular lo reintentaba sin fin.
+// La zona del día que eligió el cobrador, o null si no eligió (la marca toma la de su puesto).
+async function zonaDelDia(db, valor) {
+  if (valor === undefined || valor === null || valor === '') return null;
+  const zonaId = Number(valor);
+  if (!Number.isInteger(zonaId) || zonaId <= 0 || !(await first(db, 'SELECT id FROM zonas WHERE id = $1', [zonaId]))) {
+    throw new ValidationError('La zona del día no existe');
+  }
+  return zonaId;
+}
+
 export async function marcarAsistencias(_db, marcas, { usuarioId = null, audit = null, rol = 'super_admin', parcial = false } = {}) {
   const lista = Array.isArray(marcas) ? marcas : [marcas];
   if (!lista.length || lista.length > 500) throw new ValidationError('Envíe entre 1 y 500 marcas de asistencia');
@@ -2307,9 +2349,12 @@ export async function marcarAsistencias(_db, marcas, { usuarioId = null, audit =
           throw new ValidationError(`La asistencia del ${fecha} tiene más de ${DIAS_COBRO_SIN_SENAL} días: la registra el administrador`);
         }
         const { asistio, motivo, observacion } = parseMarcaAsistencia(marca);
+        // Zona del día (decisión del usuario, 12/11/2026): si ese día vende en otra zona, el cobrador la elige y el
+        // día se cobra con la tarifa de esa zona. Sin ella, la del puesto (trigger de la 0019).
+        const zonaDia = await zonaDelDia(client, marca?.zona_id ?? marca?.zonaId);
 
         const puesto = await first(client, `
-          SELECT p.id, p.estado AS estado_puesto, c.id AS comerciante_id, c.nombre, c.estado, c.tipo_comerciante, c.rubro_id, c.zona_id
+          SELECT p.id, p.estado AS estado_puesto, p.zona_id AS zona_puesto, c.id AS comerciante_id, c.nombre, c.estado, c.tipo_comerciante, c.rubro_id, c.zona_id
           FROM puestos p JOIN comerciantes c ON c.id = p.comerciante_id WHERE p.id = $1`, [puestoId]);
         if (!puesto) throw new NotFoundError(`El puesto ${puestoId} no existe o no tiene titular`);
         if (puesto.estado === 'inactivo') throw new ValidationError(`${puesto.nombre} está dado de baja: no se registra su asistencia`);
@@ -2320,14 +2365,18 @@ export async function marcarAsistencias(_db, marcas, { usuarioId = null, audit =
 
         // Corregir una marca no cambia de quién es: el titular queda el de la primera marca de ese día.
         const fila = await first(client, `
-          INSERT INTO asistencias_feriales (puesto_id, fecha, sesion, marca, fuente, registrado_por, motivo, observacion, comerciante_id)
-          VALUES ($1, $2, '', $3, 'app', $4, $5, $6, $7)
+          INSERT INTO asistencias_feriales (puesto_id, fecha, sesion, marca, fuente, registrado_por, motivo, observacion, comerciante_id, zona_id)
+          VALUES ($1, $2, '', $3, 'app', $4, $5, $6, $7, $8)
           ON CONFLICT (puesto_id, fecha, sesion) DO UPDATE
             SET marca = EXCLUDED.marca, fuente = EXCLUDED.fuente, registrado_por = EXCLUDED.registrado_por, registrado_en = now(),
-                motivo = EXCLUDED.motivo, observacion = EXCLUDED.observacion
-          RETURNING id, puesto_id, comerciante_id, ${DAY('fecha')} AS fecha, marca, asistio, motivo, observacion`,
-        [puestoId, fecha, asistio ? 'P' : 'F', usuarioId ? Number(usuarioId) : null, motivo, observacion, Number(puesto.comerciante_id)]);
-        guardadas.push({ ...fila, id: Number(fila.id), puesto_id: Number(fila.puesto_id), comerciante_id: Number(fila.comerciante_id) });
+                motivo = EXCLUDED.motivo, observacion = EXCLUDED.observacion,
+                zona_id = COALESCE($8::int, asistencias_feriales.zona_id)
+          RETURNING id, puesto_id, comerciante_id, ${DAY('fecha')} AS fecha, marca, asistio, motivo, observacion, zona_id`,
+        [puestoId, fecha, asistio ? 'P' : 'F', usuarioId ? Number(usuarioId) : null, motivo, observacion, Number(puesto.comerciante_id), zonaDia]);
+        guardadas.push({
+          ...fila, id: Number(fila.id), puesto_id: Number(fila.puesto_id), comerciante_id: Number(fila.comerciante_id), zona_id: Number(fila.zona_id),
+          en_otra_zona: Number(fila.zona_id) !== Number(puesto.zona_puesto)
+        });
       } catch (error) {
         // Solo los errores del dato se reportan por marca; uno de la base corta la transacción.
         if (!parcial || !(error instanceof ValidationError || error instanceof NotFoundError)) throw error;
@@ -2339,7 +2388,7 @@ export async function marcarAsistencias(_db, marcas, { usuarioId = null, audit =
         ...audit,
         usuarioId: audit.usuarioId ?? usuarioId,
         entidad: 'asistencias_feriales',
-        detalle: `${guardadas.length} marca(s) de asistencia: ${guardadas.filter((g) => g.asistio).length} asistió, ${guardadas.filter((g) => !g.asistio).length} faltó, ${guardadas.filter((g) => g.motivo || g.observacion).length} con observación${rechazadas.length ? `; ${rechazadas.length} rechazada(s)` : ''}`,
+        detalle: `${guardadas.length} marca(s) de asistencia: ${guardadas.filter((g) => g.asistio).length} asistió, ${guardadas.filter((g) => !g.asistio).length} faltó, ${guardadas.filter((g) => g.motivo || g.observacion).length} con observación${guardadas.some((g) => g.en_otra_zona) ? `, ${guardadas.filter((g) => g.en_otra_zona).length} en otra zona` : ''}${rechazadas.length ? `; ${rechazadas.length} rechazada(s)` : ''}`,
         recursoId: guardadas[0]?.id ?? null,
         payloadNuevo: guardadas
       });
@@ -2381,16 +2430,24 @@ export async function getObservacionesCobro(db, { desde, hasta, comercianteId, c
       AND (${LOCAL('co.fecha_cobro_cliente')})::date BETWEEN $1::date AND $2::date${filtrosCobro}
     ORDER BY co.fecha_cobro_cliente DESC, co.id DESC LIMIT 500`, params);
   const data = await rows(db, `
-    SELECT a.id, ${DAY('a.fecha')} AS fecha, a.asistio, a.motivo, a.observacion,
+    SELECT a.id, ${DAY('a.fecha')} AS fecha, a.asistio, a.motivo,
+           -- Zona del día (12/11/2026): un día cobrado en otra zona que la de su puesto sale aquí, para que el
+           -- administrador lo vea (sin asfaltar se cobra S/ 1 menos).
+           COALESCE(a.observacion, CASE WHEN a.en_otra_zona THEN 'Cobrado en otra zona: ' || zd.nombre || ' (su puesto es de ' || zp.nombre || ')' END) AS observacion,
+           a.en_otra_zona, zd.nombre AS zona_del_dia,
            p.id AS puesto_id, p.codigo_puesto, c.id AS comerciante_id, c.nombre AS comerciante, c.codigo AS comerciante_codigo,
            z.nombre AS zona, u.nombre AS registrado_por, ${TS('a.registrado_en')} AS registrado_en
-    FROM asistencias_feriales a
+    FROM (SELECT a.*, a.zona_id IS DISTINCT FROM zona_de_asistencia(a.puesto_id, a.fecha) AS en_otra_zona,
+                 zona_de_asistencia(a.puesto_id, a.fecha) AS zona_puesto_id
+          FROM asistencias_feriales a WHERE a.fecha BETWEEN $1::date AND $2::date) a
     JOIN puestos p ON p.id = a.puesto_id
     -- El comerciante de la observación es el de la marca, aunque el puesto ya tenga otro titular.
     JOIN comerciantes c ON c.id = a.comerciante_id
     LEFT JOIN zonas z ON z.id = p.zona_id
+    LEFT JOIN zonas zd ON zd.id = a.zona_id
+    LEFT JOIN zonas zp ON zp.id = a.zona_puesto_id
     LEFT JOIN usuarios u ON u.id = a.registrado_por
-    WHERE (a.motivo IS NOT NULL OR a.observacion IS NOT NULL) AND a.fecha BETWEEN $1::date AND $2::date${filtros}
+    WHERE (a.motivo IS NOT NULL OR a.observacion IS NOT NULL OR (a.en_otra_zona AND a.asistio))${filtros}
     ORDER BY a.fecha DESC, a.id DESC LIMIT 500`, params);
   return {
     desde: inicio,
@@ -2765,7 +2822,15 @@ export async function registrarCobro(db, payload, { audit = null, allowExcess = 
   // Una fecha que no es creíble no marca el día (revisión del 12/11/2026): el cobro queda observado y ese día no
   // se vuelve día cobrado. Antes un celular con la hora mal marcaba un día futuro o de hace semanas y creaba deuda
   // en otro mes, saltándose la ventana de DIAS_COBRO_SIN_SENAL de las marcas de la app (decisión del 22/10/2026).
-  if (!fechaDudosa) await marcarDiaCobrado(db, comercianteId, cobradorId, todayInLima(clientDate), payload.periodo);
+  // Zona del día elegida al cobrar (12/11/2026). Sin señal una zona que ya no existe no rechaza el cobro: marca con
+  // la del puesto, porque el dinero ya se recibió.
+  let zonaDia = null;
+  try {
+    zonaDia = await zonaDelDia(db, payload.zona_dia ?? payload.zonaDia);
+  } catch (error) {
+    if (!allowExcess) throw error;
+  }
+  if (!fechaDudosa) await marcarDiaCobrado(db, comercianteId, cobradorId, todayInLima(clientDate), payload.periodo, zonaDia);
   // Sin señal el dinero ya se recibió: un comerciante sin tarifa vigente no rechaza el cobro, lo deja observado
   // (migración 0024). En línea se sigue rechazando.
   let liquidation;
@@ -2892,19 +2957,28 @@ export async function registrarCobro(db, payload, { audit = null, allowExcess = 
 // antes que la marca no termina en revisión, y en línea no hace falta marcar antes de cobrar.
 // No pisa una marca de la app (si dice "no salió", el cobro queda observado) y no marca nada cuando se
 // paga un mes anterior. Va dentro de la transacción del cobro: si el cobro se rechaza, la marca no queda.
-async function marcarDiaCobrado(db, comercianteId, cobradorId, dia, periodo) {
+async function marcarDiaCobrado(db, comercianteId, cobradorId, dia, periodo, zonaDia = null) {
   if (periodo && periodo !== dia.slice(0, 7)) return;
   const merchant = await findComerciante(db, comercianteId);
   if (!merchant || !(await cobraPorAsistencia(db, merchant, dia.slice(0, 7)))) return;
   const marcado = await first(db, `
     SELECT 1 AS ok FROM asistencias_feriales a
     WHERE a.comerciante_id = $1 AND a.fecha = $2::date AND a.sesion = '' LIMIT 1`, [comercianteId, dia]);
-  if (marcado) return;
+  if (marcado) {
+    // Ya marcado: si al cobrar se eligió la zona del día, sus marcas de asistencia de ese día pasan a esa zona
+    // (el comerciante se movió entero; el tipo de vía lo pone el trigger de la 0021).
+    if (zonaDia) {
+      await db.query(`
+        UPDATE asistencias_feriales SET zona_id = $3
+        WHERE comerciante_id = $1 AND fecha = $2::date AND sesion = '' AND asistio AND zona_id IS DISTINCT FROM $3`, [comercianteId, dia, zonaDia]);
+    }
+    return;
+  }
   await db.query(`
-    INSERT INTO asistencias_feriales (puesto_id, fecha, sesion, marca, fuente, registrado_por)
-    SELECT p.id, $2::date, '', 'P', 'cobro', $3 FROM puestos p
+    INSERT INTO asistencias_feriales (puesto_id, fecha, sesion, marca, fuente, registrado_por, zona_id)
+    SELECT p.id, $2::date, '', 'P', 'cobro', $3, $4 FROM puestos p
     WHERE p.comerciante_id = $1 AND p.estado <> 'inactivo' ORDER BY p.id LIMIT 1
-    ON CONFLICT (puesto_id, fecha, sesion) DO NOTHING`, [comercianteId, dia, cobradorId]);
+    ON CONFLICT (puesto_id, fecha, sesion) DO NOTHING`, [comercianteId, dia, cobradorId, zonaDia]);
 }
 
 async function logSyncQueue({ deviceId, hash, payload, estado, error }) {
@@ -3197,18 +3271,38 @@ export async function seriesDelComerciante(db, merchant, periodo = currentPeriod
     const zona = await first(db, 'SELECT tipo_via FROM zonas WHERE id = $1', [Number(merchant.zona_id)]);
     agregar(merchant.zona_id, zona?.tipo_via, 1);
   }
-  const series = new Map();
-  for (const { zonaId, tipoVia, puestos } of tramos.values()) {
-    // En el mes en curso, la tarifa de hoy: si entró una nueva con otro monto, los tickets de la serie vieja ya no
-    // sirven desde ese día (cada día se cobra con su tarifa).
-    const diaTarifa = periodo === currentPeriod() ? todayInLima() : `${periodo}-01`;
+  // En el mes en curso, la tarifa de hoy: si entró una nueva con otro monto, los tickets de la serie vieja ya no
+  // sirven desde ese día (cada día se cobra con su tarifa).
+  const enCurso = periodo === currentPeriod();
+  const diaTarifa = enCurso ? todayInLima() : `${periodo}-01`;
+  const serieDe = async (zonaId, tipoVia) => {
     const tarifa = await findApplicableTariff(db, { ...merchant, zona_id: zonaId }, periodo, { tipoVia, dia: diaTarifa });
-    if (tarifa?.unidad_medida !== 'semanal' || !tarifa.tipo_via) continue;
+    if (tarifa?.unidad_medida !== 'semanal' || !tarifa.tipo_via) return null;
     const serie = await first(db, 'SELECT codigo, valor FROM ticket_series WHERE tipo_via = $1 AND activa', [tarifa.tipo_via]);
-    if (!serie || Number(serie.valor) !== dailyTariffAmount(tarifa, diaTarifa)) continue;
-    const actual = series.get(serie.codigo) || { serie: serie.codigo, valor: Number(serie.valor), puestos: 0 };
-    actual.puestos += puestos;
-    series.set(serie.codigo, actual);
+    return serie && Number(serie.valor) === dailyTariffAmount(tarifa, diaTarifa) ? serie : null;
+  };
+  const series = new Map();
+  const entrada = (serie) => {
+    if (!series.has(serie.codigo)) series.set(serie.codigo, { serie: serie.codigo, valor: Number(serie.valor), puestos: 0, ...(enCurso ? { puestos_hoy: 0 } : {}) });
+    return series.get(serie.codigo);
+  };
+  for (const { zonaId, tipoVia, puestos } of tramos.values()) {
+    const serie = await serieDe(zonaId, tipoVia);
+    if (serie) entrada(serie).puestos += puestos;
+  }
+  // puestos_hoy: los tickets de hoy. Por cada puesto, la zona de su marca de hoy (la zona del día, 12/11/2026) o,
+  // sin marca, la de su puesto. Así por omisión se entrega S2 a quien hoy vende en una zona sin asfaltar, y no
+  // S3 + S2 porque su puesto es de una zona asfaltada.
+  if (enCurso) {
+    for (const fila of await rows(db, `
+      SELECT COALESCE(a.zona_id, p.zona_id) AS zona_id, COALESCE(a.tipo_via, z.tipo_via) AS tipo_via, COUNT(*)::int AS puestos
+      FROM puestos p JOIN zonas z ON z.id = p.zona_id
+      LEFT JOIN asistencias_feriales a ON a.puesto_id = p.id AND a.fecha = $2::date AND a.sesion = '' AND a.asistio
+      WHERE p.comerciante_id = $1 AND p.estado <> 'inactivo'
+      GROUP BY 1, 2`, [merchant.id, diaTarifa])) {
+      const serie = await serieDe(fila.zona_id, fila.tipo_via);
+      if (serie) entrada(serie).puestos_hoy += fila.puestos;
+    }
   }
   return [...series.values()];
 }
@@ -3650,7 +3744,10 @@ export async function getJornadaPackage(db, { periodo = currentPeriod() } = {}) 
            -- Puesto donde el cobrador marca la asistencia (también el que conserva como ausente). Solo se
            -- entrega a quien cobra por día cobrado: el ferial y el permanente con tarifa por día (más abajo).
            CASE WHEN c.tipo_comerciante <> 'eventual' THEN (SELECT p.id FROM puestos p
-             WHERE p.comerciante_id = c.id AND p.estado <> 'inactivo' ORDER BY p.id LIMIT 1) END AS puesto_ferial_id
+             WHERE p.comerciante_id = c.id AND p.estado <> 'inactivo' ORDER BY p.id LIMIT 1) END AS puesto_ferial_id,
+           -- Zona de ese puesto: es la que el celular propone como "zona de hoy" (la zona del día, 12/11/2026).
+           (SELECT p.zona_id FROM puestos p
+             WHERE p.comerciante_id = c.id AND p.estado <> 'inactivo' ORDER BY p.id LIMIT 1) AS zona_puesto_id
     FROM comerciantes c JOIN rubros r ON r.id = c.rubro_id JOIN zonas z ON z.id = c.zona_id
     WHERE c.estado IN ${ESTADOS_QUE_PAGAN_SQL} ORDER BY c.nombre`);
 
@@ -3684,6 +3781,7 @@ export async function getJornadaPackage(db, { periodo = currentPeriod() } = {}) 
         .map((item) => ({ periodo: item.periodo, saldo: Number(item.saldo) })),
       puesto_ferial_id: merchant.puesto_ferial_id && (merchant.tipo_comerciante === 'ferial' || deuda.tarifa?.unidad_medida === 'semanal')
         ? Number(merchant.puesto_ferial_id) : null,
+      zona_puesto_id: merchant.zona_puesto_id === null || merchant.zona_puesto_id === undefined ? null : Number(merchant.zona_puesto_id),
       dias_asistidos: deuda.dias_asistidos ?? null,
       // Series de ticket con las que se le cobra (un ticket por puesto y día cobrado); vacía = sin ticket.
       series_cobro: await seriesDelComerciante(db, merchant, periodo)

@@ -127,7 +127,11 @@ Antes pasar a un ferial a eventual borraba su deuda atrasada entera, y pasar un 
 
 **Deuda acumulada** (`calcularDeudaAcumulada`): recorre los meses desde `max(mes de alta, parametros_sistema.inicio_cobro)` hasta el actual llamando a `calcularLiquidacion` en cada uno (no hay otra fórmula). El eventual no acumula, pero solo los meses en que fue eventual (ver abajo). Devuelve `periodos`, `meses_impagos`, `periodo_mas_antiguo` (el que se cobra primero), `deuda_vencida`, `deuda_mes` y `deuda_total`. Va en `/comerciantes/:id/saldo`, `/liquidaciones/:id`, el portal y el paquete de jornada.
 
-**Varios puestos:** con cobro por día (tarifa `semanal` o ferial) paga por cada puesto marcado. Con tarifa mensual o diaria de rubro sigue pagando por uno solo, el principal.
+**Varios puestos** (decisión del usuario, 12/11/2026): **paga por cada puesto**. Con cobro por día (tarifa `semanal` o ferial) ya pagaba por cada puesto marcado. Con tarifa mensual o diaria de rubro (y el día del eventual), desde **noviembre de 2026** (`COBRO_POR_PUESTO_DESDE = '2026-11'`, este mes incluido) la cuota se multiplica por los puestos que tuvo algún día del mes (`puestos_tenencia`, migración 0031: ceder o liberar un puesto después no cambia un mes cerrado); por m², con los metros de cada puesto. Los meses anteriores siguen con un solo puesto. Sin ningún puesto, una vez. La respuesta lleva `cantidad_puestos` y la pantalla dice "S/ 30 × 2 puestos". El mapa muestra la deuda en el puesto principal y "su cuota se cobra junto con la del puesto…" en los demás.
+
+**Zona del día** (decisión del usuario, 12/11/2026): cuando faltan otros comerciantes, uno puede vender en otra zona; ese día se le cobra con la tarifa de esa zona (asfaltada S/ 3, sin asfaltar S/ 2). **La elige el cobrador en campo**: en el panel de asistencia ("Hoy en …") o al cobrar ("Zona de hoy"); funciona sin señal con las zonas del paquete de jornada. La marca guarda esa zona (`asistencias_feriales.zona_id`; `marcarAsistencias` acepta `zona_id`, `registrarCobro` acepta `zona_dia` y corrige la zona de las marcas de ese día ya hechas). Los tickets de hoy salen de esa zona (`series_cobro[].puestos_hoy`). Cambiar después la zona del puesto no pisa una zona del día elegida (0031). Queda en la auditoría y el administrador la ve en Observaciones: "Cobrado en otra zona: X (su puesto es de Y)".
+
+**Cambio de rubro** (recomendación aceptada, 12/11/2026): se edita el rubro del mismo comerciante. No se crea otro registro con el mismo DNI (es único en la base) ni se da de baja el anterior: desde la 0025 el rubro nuevo rige desde el día del cambio y los meses pasados conservan el anterior, con su deuda y sus pagos en un solo historial.
 
 ## Importación del padrón (`padronImport.js`, 2026-10-27)
 
@@ -241,6 +245,10 @@ Antes pasar a un ferial a eventual borraba su deuda atrasada entera, y pasar un 
   - `services/ticketsOffline.js` (estado en el store `jornada`, clave `tickets`) y `useTicketsCobrador`;
   - los consumidos y las anulaciones pendientes no vuelven a estar disponibles al refrescar.
 - **Límite conocido:** el cobro marca la asistencia solo en el puesto principal (`marcarDiaCobrado`). Para cobrar dos puestos el mismo día, el cobrador debe marcar los dos en el panel de asistencia.
+
+## Recibo (12/11/2026)
+
+No se usa la impresora térmica en el piloto. El recibo se envía por WhatsApp **como imagen con ancho de celular** (`reciboComoImagen`, un canvas sin librerías) con la hoja de compartir del celular; si el celular no puede compartir imágenes, se abre WhatsApp con el texto completo (`textoRecibo`). "Guardar PDF" usa la impresión del navegador. La pantalla, la imagen y el texto salen de las mismas filas (`lineasRecibo`). No lleva el DNI (Ley 29733).
 
 ## Offline (cliente)
 

@@ -49,6 +49,8 @@ export function aPayloadServidor(item) {
     periodo: item.periodo,
     fecha_cobro: item.fechaCobro,
     inicio_atencion: item.inicioAtencion || undefined,
+    // Zona del día elegida al cobrar (12/11/2026): la marca de asistencia del cobro va en esa zona.
+    zona_dia: item.zonaDia || undefined,
     // Tickets preimpresos entregados: el servidor valida que sean del lote del cobrador y que la suma cuadre.
     tickets: item.tickets?.length ? item.tickets.map(({ serie, numero }) => ({ serie, numero: Number(numero) })) : undefined
   };
@@ -95,6 +97,7 @@ export function crearColaOffline({ store, enviarLote, ahora = () => new Date(), 
       fechaCobro,
       // Hora en que el cobrador abrió al comerciante: mide el tiempo de cada cobro (indicador de −50 %).
       inicioAtencion: payload.inicio_atencion || payload.inicioAtencion || null,
+      zonaDia: payload.zona_dia ? Number(payload.zona_dia) : null,
       tickets: Array.isArray(payload.tickets) && payload.tickets.length ? payload.tickets : null,
       creadoEn,
       actualizadoEn: creadoEn

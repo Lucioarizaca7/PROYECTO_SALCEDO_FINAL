@@ -69,7 +69,9 @@ export function useSitios() {
       offline: ['delete', { id: site.id }],
       offlineMessage: 'Baja guardada localmente; pendiente de sincronización.',
       request: [`${apiBase}/puestos-mapa/${site.id}`, { method: 'DELETE' }],
-      failMessage: 'No se pudo dar de baja el puesto'
+      failMessage: 'No se pudo dar de baja el puesto',
+      // Con señal débil se encola como el alta (12/11/2026): reenviar una baja ya hecha responde "ya estaba".
+      encolarSiFalla: true
     });
   };
 
@@ -92,7 +94,8 @@ export function useSitios() {
       offline: ['update', { id: site.id, comerciante_id: null }],
       offlineMessage: 'Liberación guardada localmente; pendiente de sincronización.',
       request: [`${apiBase}/puestos/${site.id}/liberar`, { method: 'POST' }],
-      failMessage: 'No se pudo liberar el puesto'
+      failMessage: 'No se pudo liberar el puesto',
+      encolarSiFalla: true
     });
   };
 

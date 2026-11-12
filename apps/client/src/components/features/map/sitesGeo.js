@@ -64,7 +64,8 @@ export function paymentStatusText(site) {
   switch (site.estado_pago) {
     case 'pendiente': return `${site.cobro_diario ? 'Saldo de hoy' : 'Saldo del mes'}: ${saldo}`;
     case 'pagado': return site.cobro_diario ? 'Pagado hoy' : 'Mes pagado';
-    case 'incluido': return `Su deuda se cobra en el puesto ${site.puesto_principal}`;
+    // Cada puesto paga su cuota (12/11/2026), pero se cobra junta en el puesto principal.
+    case 'incluido': return `Su cuota se cobra junto con la del puesto ${site.puesto_principal}`;
     case 'no_devenga': return NO_DEVENGO_TEXT[site.motivo] || 'No devenga este mes';
     case 'ausente': return 'Ferial ausente: no devenga';
     case 'libre': return 'Puesto libre, sin titular';
