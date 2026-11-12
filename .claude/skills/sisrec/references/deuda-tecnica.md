@@ -133,6 +133,15 @@ Corregidos, con prueba en `tests/codigo-operacion.test.js`, `tests/tipo-via-de-c
 
 Queda: el paquete de jornada calcula dos veces el mes en curso (`calcularLiquidacion` y otra vez dentro de `calcularDeudaAcumulada`). Con un padrón mucho mayor convendrá la liquidación en lote (paso 6).
 
+## Vigesimoprimera revisión del 12/11/2026: el monto del cobro en céntimos
+
+Corregido, con prueba en `tests/monto-en-centimos.test.js`. La base guarda el dinero exacto en `NUMERIC(12,2)`, pero `pg.js` lo entrega como número JS y `registrarCobro` / `syncOfflineCobro` aceptaban el monto tal cual llegaba:
+- S/ 0.004 pasaba la validación, la base lo redondeaba a 0.00 y su CHECK (`monto > 0`) respondía con un error interno; ahora es "monto positivo" (400) y, sin señal, un cobro incompleto.
+- S/ 3.004 se rechazaba por exceder un saldo de S/ 3.00 aunque se guardaría S/ 3.00.
+- Una suma con error de coma flotante (0.1 + 0.2) volvía en la respuesta y en el recibo como 0.30000000000000004.
+Ahora el monto se lleva a céntimos con `dinero()` (`db.js`, junto a `initializeDatabase`) antes de validar. Las sumas de la liquidación, la deuda acumulada y la caja ya redondeaban con `toFixed(2)`.
+Queda: `pg.js` sigue entregando NUMERIC como número JS; toda suma nueva de dinero en JS debe pasar por `dinero()`.
+
 ## Vigésima revisión del 12/11/2026: sin señal, los tickets de hoy siguen la marca del celular
 
 Corregido, con prueba en `apps/client/tests/zonaDelDiaYRecibo.test.js`; comprobado en el navegador sin conexión (`context.setOffline`) en una copia de la demo: las correcciones de las rondas 16 y 17 no llegaban al trabajo sin señal.
