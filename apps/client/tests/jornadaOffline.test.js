@@ -119,4 +119,9 @@ test('sin señal se ve la deuda atrasada y se cobra primero el mes más antiguo'
   assert.equal(cobrado.saldo, 6, 'el mes en curso no cambia');
   assert.equal(cobrado.deudaVencida, 8);
   assert.equal(aSaldoDePantalla(cobrado).periodo, '2026-10', 'ya pagado septiembre, sigue octubre');
+
+  // Pagar septiembre (debe S/ 4) con S/ 10: el exceso no paga octubre, que sigue debiéndose.
+  const conExceso = aplicarCobroLocal(registro, 10, '2026-09');
+  assert.equal(conExceso.deudaVencida, 8, 'antes bajaba a S/ 2, como si octubre se hubiera pagado');
+  assert.equal(aSaldoDePantalla(conExceso).saldo, 8, 'octubre sigue con su saldo');
 });

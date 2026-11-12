@@ -97,9 +97,13 @@ export function mesesAtrasados(registro) {
 export function aplicarCobroLocal(registro, monto, periodo = null) {
   const value = Number(monto) || 0;
   if (periodo && registro.periodo && periodo !== registro.periodo) {
+    // Lo que excede el saldo de ese mes no paga otros meses (el servidor lo aplica entero a ese mes y lo deja
+    // observado): la deuda vencida baja solo lo que se debía del mes. Antes bajaba el monto entero (12/11/2026).
+    const mes = (registro.periodosImpagos || []).find((item) => item.periodo === periodo);
+    const aplicado = mes && mes.saldo !== null ? Math.min(value, Number(mes.saldo)) : value;
     return {
       ...registro,
-      deudaVencida: dos(Math.max(Number(registro.deudaVencida || 0) - value, 0)),
+      deudaVencida: dos(Math.max(Number(registro.deudaVencida || 0) - aplicado, 0)),
       periodosImpagos: (registro.periodosImpagos || []).map((item) => (
         item.periodo === periodo && item.saldo !== null ? { ...item, saldo: dos(Math.max(item.saldo - value, 0)) } : item
       ))

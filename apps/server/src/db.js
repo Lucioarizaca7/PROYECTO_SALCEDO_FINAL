@@ -1267,6 +1267,12 @@ export async function updateComerciante(db, id, payload) {
   if (!ESTADOS_COMERCIANTE.includes(estado)) throw new ValidationError('Estado de comerciante no válido');
 
   await ensureUniqueActiveDocument(db, dniRuc, Number(id));
+  // El documento es único en la base aunque su dueño esté dado de baja: antes el UPDATE chocaba con el UNIQUE y la
+  // pantalla decía solo "El registro ya existe" (12/11/2026). Se dice de quién es, para reactivarlo en vez de duplicarlo.
+  if (!sameDocument) {
+    const dueno = await first(db, `SELECT codigo FROM comerciantes WHERE dni_ruc = $1 AND id <> $2`, [dniRuc, Number(id)]);
+    if (dueno) throw new ConflictError(`Ese DNI/RUC es del comerciante dado de baja ${dueno.codigo}: reactívelo en lugar de registrar el documento en otro comerciante`);
+  }
 
   await db.query(`
     UPDATE comerciantes
