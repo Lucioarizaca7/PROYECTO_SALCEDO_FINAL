@@ -111,6 +111,12 @@ function ReceiptCard({ receipt }) {
         {recibo.filas.map(([etiqueta, valor]) => <div key={etiqueta}><span>{etiqueta}</span><strong>{valor}</strong></div>)}
         <div className="receipt-total"><span>Total pagado</span><strong>{recibo.total}</strong></div>
       </div>
+      {recibo.qr && (
+        <div className="receipt-verify">
+          <img src={recibo.qr} alt={`QR para verificar el recibo ${recibo.numero}`} width="120" height="120" />
+          <a href={recibo.verificacion} target="_blank" rel="noreferrer">Verificar recibo</a>
+        </div>
+      )}
       <div className="receipt-actions">
         {/* Sin impresora térmica (12/11/2026): el recibo se manda por WhatsApp como imagen o se guarda en PDF. */}
         <button className="primary-button" type="button" onClick={() => shareViaWhatsApp(receipt)}>Enviar por WhatsApp</button>

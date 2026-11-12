@@ -88,4 +88,12 @@ test('el recibo para WhatsApp: mismas filas que la pantalla, con tickets y total
   assert.match(texto, /Total pagado: S\/ 2\.00/);
   assert.ok(!texto.includes('40123456'), 'Ley 29733: el recibo no lleva el DNI');
   assert.match(textoRecibo({ ...receipt, provisional: true, comprobante: 'PROV-1' }), /Recibo provisional/);
+
+  // Se puede verificar (12/11/2026): el enlace va en el texto y el QR en la imagen; el provisional no los lleva.
+  const verificable = { ...receipt, url_verificacion: 'https://sisrec.example/verificar/R-000123.abc', qr_verificacion: 'data:image/png;base64,AAAA' };
+  assert.match(textoRecibo(verificable), /Verifique este recibo: https:\/\/sisrec\.example\/verificar\/R-000123\.abc/);
+  assert.equal(lineasRecibo(verificable).qr, 'data:image/png;base64,AAAA');
+  const provisional = { ...verificable, provisional: true };
+  assert.doesNotMatch(textoRecibo(provisional), /Verifique/);
+  assert.equal(lineasRecibo(provisional).qr, null);
 });

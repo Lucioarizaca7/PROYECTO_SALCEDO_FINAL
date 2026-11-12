@@ -206,6 +206,12 @@ test('POST /cobros usa el cobrador del token, rechaza "manual" y audita en la mi
   const body = await response.json();
   assert.equal(response.status, 201, body.message);
   assert.equal(body.data.cobrador_id, Number(cobrador.id));
+  // El recibo de WhatsApp se puede verificar (12/11/2026): el enlace abre número, monto y estado; el QR es una imagen.
+  const token = decodeURIComponent(body.data.url_verificacion.split('/verificar/')[1]);
+  const verificado = await (await fetch(`${baseUrl}/api/v1/publico/verificar/${encodeURIComponent(token)}`)).json();
+  assert.equal(verificado.data.numero, body.data.comprobante);
+  assert.equal(verificado.data.estado, 'confirmado');
+  assert.match(body.data.qr_verificacion, /^data:image\/png;base64,/);
 
   const audit = await getAuditTrail(pool, { entidad: 'cobros' });
   const entry = audit.find((item) => item.accion === 'REGISTRAR_COBRO' && item.detalle.includes(body.data.comprobante));
