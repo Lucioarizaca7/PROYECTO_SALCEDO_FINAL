@@ -5,7 +5,8 @@ import { requireAuth, requireRoles } from '../auth.js';
 import { handleValidationErrors, validateCobro } from '../validation.js';
 import { staffOnly, auditContext } from '../http/comunes.js';
 import { pool as db } from '../pg.js';
-import { buscarRecibo, generarReciboPdf } from '../reciboPdf.js';
+import QRCode from 'qrcode';
+import { buscarRecibo, generarReciboPdf, urlVerificacion } from '../reciboPdf.js';
 
 export const router = express.Router();
 
@@ -131,6 +132,10 @@ router.post('/api/v1/cobros',
     // en una sola transacción.
     const payload = { ...(req.body || {}), cobrador_id: req.user.id, fecha_cobro: fechaCobroEnLinea(req.body?.fecha_cobro) };
     const data = await registrarCobro(db, payload, { audit: auditContext(req, 'REGISTRAR_COBRO') });
-    return res.status(201).json({ data, message: 'Cobro registrado correctamente' });
+    // El recibo que se manda por WhatsApp es una imagen: el enlace y el QR de verificación (los mismos del PDF del
+    // portal) permiten comprobar número, monto y estado, y ver si se anuló (12/11/2026). Sin datos personales.
+    const url = urlVerificacion({ numero: data.comprobante, monto: data.monto });
+    const qr = await QRCode.toDataURL(url, { margin: 1, width: 240 });
+    return res.status(201).json({ data: { ...data, url_verificacion: url, qr_verificacion: qr }, message: 'Cobro registrado correctamente' });
   }
 );

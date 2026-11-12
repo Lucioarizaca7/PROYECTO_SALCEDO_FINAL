@@ -133,6 +133,12 @@ Corregidos, con prueba en `tests/codigo-operacion.test.js`, `tests/tipo-via-de-c
 
 Queda: el paquete de jornada calcula dos veces el mes en curso (`calcularLiquidacion` y otra vez dentro de `calcularDeudaAcumulada`). Con un padrón mucho mayor convendrá la liquidación en lote (paso 6).
 
+## Decimoctava revisión del 12/11/2026: el recibo de WhatsApp se puede verificar
+
+Corregido, con prueba en `tests/api-seguridad.test.js` y `apps/client/tests/zonaDelDiaYRecibo.test.js`; comprobado en el navegador en una copia de la demo (el QR se lee desde la imagen con `html5-qrcode` y abre la página de verificación; tras anular el cobro dice "Recibo anulado"): el recibo que se manda por WhatsApp (ronda 16) no traía nada para comprobar que era auténtico, y una imagen se edita y se reenvía. Ahora lleva el QR y el enlace de verificación del PDF del portal. La fila de la huella interna se llama "Huella" para no confundirla con la verificación.
+
+Queda: el recibo provisional sin señal no se puede verificar hasta sincronizar; el cobrador no tiene cómo reenviar el recibo oficial después (no hay "reenviar recibo" en la lista de cobros).
+
 ## Decimoséptima revisión del 12/11/2026: tickets de hoy y cobrar sin marca previa
 
 Corregidos, con prueba en `tests/zona-del-dia-y-por-puesto.test.js` y `apps/client/tests/zonaDelDiaYRecibo.test.js`; comprobado en el navegador a 390 px en una copia de la demo:

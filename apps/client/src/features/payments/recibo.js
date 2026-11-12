@@ -64,7 +64,8 @@ export function lineasRecibo(receipt) {
     ['Operación', receipt.metodo_pago !== 'efectivo' && receipt.codigo_operacion ? receipt.codigo_operacion : 'No aplica'],
     ...(receipt.tickets?.length ? [['Tickets', receipt.tickets.map((ticket) => ticket.texto || textoTicket(ticket.serie, ticket.numero)).join(', ')]] : []),
     ...(receipt.observaciones ? [['Nota', receipt.observaciones]] : []),
-    ['Verificación', receipt.hash_idempotencia || 'N/A']
+    // Huella interna del cobro; la verificación pública es el QR y el enlace.
+    ['Huella', receipt.hash_idempotencia || 'N/A']
   ];
   return {
     titulo: 'SISREC SALCEDO',
@@ -72,7 +73,11 @@ export function lineasRecibo(receipt) {
     numero: receipt.comprobante,
     aviso: receipt.provisional ? 'Recibo provisional: el número oficial se asigna al sincronizar.' : null,
     filas,
-    total: `S/ ${Number(receipt.monto || 0).toFixed(2)}`
+    total: `S/ ${Number(receipt.monto || 0).toFixed(2)}`,
+    // Enlace y QR de verificación (12/11/2026): cualquiera comprueba número, monto y estado (y si se anuló). El
+    // provisional sin señal no los tiene: el número oficial existe recién al sincronizar.
+    verificacion: !receipt.provisional && receipt.url_verificacion ? receipt.url_verificacion : null,
+    qr: !receipt.provisional && receipt.qr_verificacion ? receipt.qr_verificacion : null
   };
 }
 
@@ -86,7 +91,8 @@ export function textoRecibo(receipt) {
     '',
     ...recibo.filas.map(([etiqueta, valor]) => `${etiqueta}: ${valor}`),
     '',
-    `*Total pagado: ${recibo.total}*`
+    `*Total pagado: ${recibo.total}*`,
+    ...(recibo.verificacion ? ['', `Verifique este recibo: ${recibo.verificacion}`] : [])
   ].join('\n');
 }
 
@@ -120,8 +126,18 @@ export async function reciboComoImagen(receipt, { ancho = 360, escala = 2 } = {}
   contexto.font = fuente(400, 15);
   const filas = recibo.filas.map(([etiqueta, valor]) => ({ etiqueta, valor: renglones(contexto, valor, util * 0.6) }));
   const aviso = recibo.aviso ? renglones(contexto, recibo.aviso, util) : [];
-  // Encabezado (120) + aviso + cada fila (20 de separación + 20 por renglón) + recuadro del total (10 + 46 + 24).
-  const alto = 120 + aviso.length * 20 + filas.reduce((total, fila) => total + 20 + Math.max(fila.valor.length, 1) * 20, 0) + 80;
+  // El QR de verificación, si lo hay, se carga antes de medir.
+  const qr = recibo.qr ? await new Promise((resolve) => {
+    const imagen = new Image();
+    imagen.onload = () => resolve(imagen);
+    imagen.onerror = () => resolve(null);
+    imagen.src = recibo.qr;
+  }) : null;
+  const LADO_QR = 120;
+  // Encabezado (120) + aviso + cada fila (20 de separación + 20 por renglón) + recuadro del total (10 + 46 + 24)
+  // + el QR con su leyenda.
+  const alto = 120 + aviso.length * 20 + filas.reduce((total, fila) => total + 20 + Math.max(fila.valor.length, 1) * 20, 0) + 80
+    + (qr ? LADO_QR + 40 : 0);
 
   lienzo.width = ancho * escala;
   lienzo.height = alto * escala;
@@ -174,6 +190,17 @@ export async function reciboComoImagen(receipt, { ancho = 360, escala = 2 } = {}
   contexto.textAlign = 'right';
   contexto.font = fuente(800, 20);
   contexto.fillText(recibo.total, ancho - margen - 12, y + 30);
+
+  if (qr) {
+    const yQr = y + 46 + 20;
+    // Sin suavizado: los módulos del QR quedan nítidos y la cámara lo lee mejor.
+    contexto.imageSmoothingEnabled = false;
+    contexto.drawImage(qr, (ancho - LADO_QR) / 2, yQr, LADO_QR, LADO_QR);
+    contexto.textAlign = 'center';
+    contexto.fillStyle = '#4b5563';
+    contexto.font = fuente(400, 12);
+    contexto.fillText('Escanee para verificar el recibo', ancho / 2, yQr + LADO_QR + 18);
+  }
 
   return new Promise((resolve, reject) => lienzo.toBlob((blob) => (blob ? resolve(blob) : reject(new Error('No se pudo crear la imagen del recibo'))), 'image/png'));
 }
