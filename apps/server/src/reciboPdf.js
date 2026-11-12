@@ -43,7 +43,9 @@ export function leerTokenDescarga(token, ahora = Date.now()) {
 
 const SELECT_RECIBO = `
   SELECT co.id, cp.numero_correlativo AS numero, co.monto, co.metodo_pago, co.concepto, co.codigo_operacion, co.estado, co.tickets,
-         co.motivo_anulacion, co.periodo_aplicado, co.comerciante_id,
+         co.motivo_anulacion, co.periodo_aplicado, co.comerciante_id, co.cobrador_id,
+         -- La fecha ISO para el recibo que se vuelve a compartir (12/11/2026); el PDF usa la de texto.
+         to_char(co.fecha_cobro_cliente AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS fecha_cobro,
          to_char(co.fecha_cobro_cliente AT TIME ZONE '${config.timeZone}', 'DD/MM/YYYY HH24:MI') AS fecha,
          to_char(co.fecha_cobro_cliente AT TIME ZONE '${config.timeZone}', 'YYYY-MM-DD') AS dia,
          c.nombre AS comerciante, c.codigo AS comerciante_codigo, r.nombre AS rubro, z.nombre AS zona, u.nombre AS cobrador
@@ -59,7 +61,7 @@ export async function buscarRecibo(db, referencia) {
   const valor = String(referencia || '').trim();
   const porId = /^\d+$/.test(valor);
   const { rows: [fila] } = await db.query(`${SELECT_RECIBO} WHERE ${porId ? 'co.id = $1' : 'cp.numero_correlativo = $1'}`, [porId ? Number(valor) : valor]);
-  return fila ? { ...fila, id: Number(fila.id), comerciante_id: Number(fila.comerciante_id), monto: Number(fila.monto) } : null;
+  return fila ? { ...fila, id: Number(fila.id), comerciante_id: Number(fila.comerciante_id), cobrador_id: Number(fila.cobrador_id), monto: Number(fila.monto) } : null;
 }
 
 /** Verificación pública: solo número, fecha, monto y estado. null si el token no corresponde. */

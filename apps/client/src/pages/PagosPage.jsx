@@ -3,6 +3,7 @@ import { AsistenciaFerialPanel } from '../features/offline/AsistenciaFerialPanel
 import { FieldWorkPanel } from '../features/offline/FieldWorkPanel';
 import { QrScanner } from '../features/payments/QrScanner';
 import { imprimirReciboEnNavegador, lineasRecibo, shareViaWhatsApp } from '../features/payments/recibo';
+import { enviarReciboOficial } from '../features/payments/reciboOficial';
 import { usePagos } from '../hooks/usePagos';
 import { textoMetodo, textoTarifa } from '../lib/formato';
 import { textoTicket } from '../services/ticketsOffline';
@@ -126,7 +127,7 @@ function ReceiptCard({ receipt }) {
   );
 }
 
-function RecentPayments({ cobros, puedeAnular, onAnular }) {
+function RecentPayments({ cobros, puedeAnular, onAnular, onEnviarRecibo }) {
   return (
     <div className="panel payment-history">
       <div className="panel-heading"><div><div className="panel-title">Cobros recientes</div><div className="panel-subtitle">Estado actualizado al instante</div></div></div>
@@ -137,6 +138,8 @@ function RecentPayments({ cobros, puedeAnular, onAnular }) {
           {item.observaciones && <small className="payment-note">Nota del cobrador: {item.observaciones}</small>}
           {item.estado === 'observado' && item.observacion && <small className="payment-note">En revisión: {item.observacion}</small>}
           {item.estado === 'anulado' && item.motivo_anulacion && <small className="payment-void-reason">Anulado{item.anulado_por ? ` por ${item.anulado_por}` : ''}: {item.motivo_anulacion}</small>}
+          {/* El recibo oficial con su QR, para volver a mandarlo por WhatsApp (12/11/2026). */}
+          {item.comprobante && <button className="secondary-button compact payment-resend" type="button" onClick={() => onEnviarRecibo(item.comprobante)}>Enviar recibo por WhatsApp</button>}
           {puedeAnular && item.estado === 'confirmado' && <button className="secondary-button payment-void" type="button" onClick={() => onAnular(item)}>Anular</button>}
         </div>
       ))}
@@ -208,7 +211,7 @@ export function PagosPage() {
         <div className="payment-side">
           <FieldWorkPanel isOnline={isOnline} jornada={jornada} queue={offlineQueue} />
           <AsistenciaFerialPanel isOnline={isOnline} jornada={jornada} />
-          <RecentPayments cobros={cobros} puedeAnular={pagos.puedeAnular} onAnular={pagos.anularCobro} />
+          <RecentPayments cobros={cobros} puedeAnular={pagos.puedeAnular} onAnular={pagos.anularCobro} onEnviarRecibo={pagos.enviarRecibo} />
         </div>
       </div>
       {pagos.showQrScanner && <QrScanner onScan={pagos.scanQr} onClose={() => pagos.setShowQrScanner(false)} />}

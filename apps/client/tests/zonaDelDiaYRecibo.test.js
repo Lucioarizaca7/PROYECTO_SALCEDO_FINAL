@@ -97,3 +97,15 @@ test('el recibo para WhatsApp: mismas filas que la pantalla, con tickets y total
   assert.doesNotMatch(textoRecibo(provisional), /Verifique/);
   assert.equal(lineasRecibo(provisional).qr, null);
 });
+
+test('el recibo oficial reenviado: dice si está anulado, sin huella vacía y con la fecha del cobro', () => {
+  const oficial = {
+    comprobante: 'R-000200', monto: 3, metodo_pago: 'efectivo', comerciante: 'Elena Choque', concepto: 'Liquidación de deuda',
+    cobrador: 'Cobrador demo', fecha_cobro: '2026-11-10T15:00:00Z', estado: 'anulado', motivo_anulacion: 'Comerciante equivocado'
+  };
+  const recibo = lineasRecibo(oficial);
+  assert.equal(recibo.aviso, 'RECIBO ANULADO: Comerciante equivocado');
+  assert.ok(!recibo.filas.some(([etiqueta]) => etiqueta === 'Huella'), 'antes salía "Huella: N/A"');
+  assert.match(Object.fromEntries(recibo.filas).Fecha, /10\/11\/2026/, 'la fecha del cobro, no la de hoy');
+  assert.equal(lineasRecibo({ ...oficial, estado: 'confirmado' }).aviso, null);
+});

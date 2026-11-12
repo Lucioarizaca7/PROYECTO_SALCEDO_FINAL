@@ -73,7 +73,7 @@ Roles: `super_admin`, `cobrador`, `auditor`, `comerciante`. `staffOnly` = los tr
 | Parámetros | `GET /parametros`, `PUT /parametros/inicio_cobro` | super_admin |
 | Caja (`routes/caja.ts`) | `GET /caja/resumen`, `POST /caja/cierre`, `GET /caja/cierres` | cobrador ve solo la suya; cierres: super_admin, auditor |
 | Tickets (`routes/tickets.ts`) | `GET /tickets/series`, `/tickets/lotes`, `/tickets/cobradores`, `/tickets/mios`; `POST /tickets/lotes`, `/tickets/lotes/:id/reasignar`, `/tickets/lotes/:id/devolver`, `/tickets/anulaciones` | lotes: solo super_admin (auditor consulta); mios y anulaciones: cobrador, super_admin |
-| Recibo | `GET /comprobantes/:id/pdf` (personal), `GET /portal/recibos/:token/pdf` (enlace firmado de 30 min), `GET /publico/verificar/:token` (QR) | `src/reciboPdf.js` |
+| Recibo | `GET /comprobantes/:id/pdf` y `GET /comprobantes/:id/recibo` (el recibo oficial con QR para reenviarlo por WhatsApp; el cobrador solo los suyos), `GET /portal/recibos/:token/pdf` (enlace firmado de 30 min), `GET /publico/verificar/:token` (QR) | `src/reciboPdf.js` |
 | Jornada | `GET /jornada/paquete` | cobrador |
 | Auditoría | `GET /auditoria`, `/auditoria/verificacion` | lectura |
 | Autenticación | `POST /auth/login`, `/auth/refresh`, `/auth/logout`, `GET/DELETE /auth/sesiones` | — |

@@ -133,11 +133,19 @@ Corregidos, con prueba en `tests/codigo-operacion.test.js`, `tests/tipo-via-de-c
 
 Queda: el paquete de jornada calcula dos veces el mes en curso (`calcularLiquidacion` y otra vez dentro de `calcularDeudaAcumulada`). Con un padrón mucho mayor convendrá la liquidación en lote (paso 6).
 
+## Decimonovena revisión del 12/11/2026: reenviar el recibo oficial y recibos ajenos
+
+Corregido, con prueba en `tests/recibo-pdf.test.js` y `apps/client/tests/zonaDelDiaYRecibo.test.js`; comprobado en el navegador a 390 px en una copia de la demo:
+- **No había cómo reenviar el recibo oficial** (con número R- y QR) después de un cobro sin señal, que entregó uno provisional, o si se perdió el WhatsApp. Ahora hay botón en Cobros recientes y en la cola sin señal (`GET /comprobantes/:id/recibo`).
+- **Un cobrador bajaba recibos de cobros ajenos** por `GET /comprobantes/:id/pdf` (`staffOnly`, por número correlativo que se puede recorrer). Ahora solo los suyos, con 404.
+- **El recibo armado de nuevo** decía "Huella: N/A", no avisaba si estaba anulado y no traía la fecha ISO del cobro (`buscarRecibo` solo daba `DD/MM/YYYY HH24:MI`, que el cliente no puede leer).
+- **Cobros recientes en el celular:** las notas largas quedaban en una columna angosta de una palabra por línea; ahora van en su propio renglón con el botón debajo.
+
 ## Decimoctava revisión del 12/11/2026: el recibo de WhatsApp se puede verificar
 
 Corregido, con prueba en `tests/api-seguridad.test.js` y `apps/client/tests/zonaDelDiaYRecibo.test.js`; comprobado en el navegador en una copia de la demo (el QR se lee desde la imagen con `html5-qrcode` y abre la página de verificación; tras anular el cobro dice "Recibo anulado"): el recibo que se manda por WhatsApp (ronda 16) no traía nada para comprobar que era auténtico, y una imagen se edita y se reenvía. Ahora lleva el QR y el enlace de verificación del PDF del portal. La fila de la huella interna se llama "Huella" para no confundirla con la verificación.
 
-Queda: el recibo provisional sin señal no se puede verificar hasta sincronizar; el cobrador no tiene cómo reenviar el recibo oficial después (no hay "reenviar recibo" en la lista de cobros).
+(Resuelto en la decimonovena revisión: se reenvía el recibo oficial desde Cobros recientes y desde la cola sin señal.)
 
 ## Decimoséptima revisión del 12/11/2026: tickets de hoy y cobrar sin marca previa
 

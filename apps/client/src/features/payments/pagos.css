@@ -65,3 +65,8 @@
   height: 120px;
   image-rendering: pixelated;
 }
+
+/* Cobros recientes: las notas y el botón "Enviar recibo" van en su propio renglón, debajo del cobro (12/11/2026);
+   antes, sin wrap, las notas largas quedaban en una columna angosta de una palabra por línea. */
+.payment-history .payment-row { flex-wrap: wrap; }
+.payment-row .payment-resend { flex-basis: 100%; justify-self: start; width: fit-content; }

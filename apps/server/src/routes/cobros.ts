@@ -1,6 +1,6 @@
 // Cobros, sincronización offline, revisión de observados, jornada y comprobantes.
 import express from 'express';
-import { currentPeriod, getCobros, registrarCobro, syncOfflineCobro, syncOfflineBatch, getCobrosObservados, resolveCobroObservado, getSyncErrors, getJornadaPackage, anularCobro, getTiemposCobro, ticketsDelCobrador, fechaCobroEnLinea } from '../db.js';
+import { currentPeriod, textoTicket, getCobros, registrarCobro, syncOfflineCobro, syncOfflineBatch, getCobrosObservados, resolveCobroObservado, getSyncErrors, getJornadaPackage, anularCobro, getTiemposCobro, ticketsDelCobrador, fechaCobroEnLinea } from '../db.js';
 import { requireAuth, requireRoles } from '../auth.js';
 import { handleValidationErrors, validateCobro } from '../validation.js';
 import { staffOnly, auditContext } from '../http/comunes.js';
@@ -10,14 +10,55 @@ import { buscarRecibo, generarReciboPdf, urlVerificacion } from '../reciboPdf.js
 
 export const router = express.Router();
 
+// Enlace y QR de verificación del recibo (los del PDF del portal): número, monto y estado, sin datos personales.
+async function verificacionDelRecibo(numero: string, monto: number) {
+  const url = urlVerificacion({ numero, monto });
+  return { url_verificacion: url, qr_verificacion: await QRCode.toDataURL(url, { margin: 1, width: 240 }) };
+}
+
+// El cobrador solo ve sus recibos, como en GET /cobros (12/11/2026). Antes bajaba cualquiera recorriendo los
+// números R-000001, R-000002…: el mismo 404 que si no existe, para no confirmar el número.
+async function reciboVisible(req: express.Request) {
+  const recibo = await buscarRecibo(db, String(req.params.id));
+  if (!recibo) return null;
+  if (req.user?.rol === 'cobrador' && Number(recibo.cobrador_id) !== Number(req.user.id)) return null;
+  return recibo;
+}
+
 // Recibo en PDF para el personal (por id de cobro o número R-000123). El comerciante lo baja desde el portal.
 router.get('/api/v1/comprobantes/:id/pdf', ...staffOnly, async (req, res) => {
-  const recibo = await buscarRecibo(db, req.params.id);
+  const recibo = await reciboVisible(req);
   if (!recibo) return res.status(404).json({ message: 'Comprobante no encontrado' });
   const pdf = await generarReciboPdf(recibo);
   res.setHeader('Content-Type', 'application/pdf');
   res.setHeader('Content-Disposition', `attachment; filename="recibo-${recibo.numero}.pdf"`);
   return res.send(pdf);
+});
+
+// El recibo oficial para volver a compartirlo por WhatsApp (12/11/2026): después de sincronizar un cobro sin señal,
+// que entregó un recibo provisional, o si se perdió el mensaje. Con el QR de verificación.
+router.get('/api/v1/comprobantes/:id/recibo', ...staffOnly, async (req, res) => {
+  const recibo = await reciboVisible(req);
+  if (!recibo) return res.status(404).json({ message: 'Comprobante no encontrado' });
+  const tickets = Array.isArray(recibo.tickets) ? recibo.tickets : [];
+  return res.json({
+    data: {
+      id: recibo.id,
+      comprobante: recibo.numero,
+      monto: recibo.monto,
+      metodo_pago: recibo.metodo_pago,
+      codigo_operacion: recibo.codigo_operacion,
+      concepto: recibo.concepto,
+      periodo_aplicado: recibo.periodo_aplicado,
+      estado: recibo.estado,
+      motivo_anulacion: recibo.motivo_anulacion,
+      tickets: tickets.map((item: { serie: string; numero: number }) => ({ ...item, texto: textoTicket(item.serie, item.numero) })),
+      fecha_cobro: recibo.fecha_cobro,
+      comerciante: recibo.comerciante,
+      cobrador: recibo.cobrador,
+      ...(await verificacionDelRecibo(recibo.numero, recibo.monto))
+    }
+  });
 });
 
 // Los más recientes (tope MAX_COBROS_LISTADO). El cobrador ve solo los suyos; administrador y auditor, todos.
@@ -134,8 +175,6 @@ router.post('/api/v1/cobros',
     const data = await registrarCobro(db, payload, { audit: auditContext(req, 'REGISTRAR_COBRO') });
     // El recibo que se manda por WhatsApp es una imagen: el enlace y el QR de verificación (los mismos del PDF del
     // portal) permiten comprobar número, monto y estado, y ver si se anuló (12/11/2026). Sin datos personales.
-    const url = urlVerificacion({ numero: data.comprobante, monto: data.monto });
-    const qr = await QRCode.toDataURL(url, { margin: 1, width: 240 });
-    return res.status(201).json({ data: { ...data, url_verificacion: url, qr_verificacion: qr }, message: 'Cobro registrado correctamente' });
+    return res.status(201).json({ data: { ...data, ...(await verificacionDelRecibo(data.comprobante, data.monto)) }, message: 'Cobro registrado correctamente' });
   }
 );

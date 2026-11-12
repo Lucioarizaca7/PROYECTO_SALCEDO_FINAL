@@ -252,6 +252,8 @@ No se usa la impresora térmica en el piloto. El recibo se envía por WhatsApp *
 
 **Verificación del recibo** (12/11/2026): como una imagen se falsifica fácil, el recibo en pantalla, la imagen de WhatsApp y el texto llevan el QR y el enlace de verificación, los mismos del PDF del portal (`urlVerificacion`, token HMAC por número y monto). El enlace abre `/verificar/:token`, que muestra solo número, fecha, monto y estado, y dice "Recibo anulado" si se anuló. `POST /cobros` los devuelve (`url_verificacion`, `qr_verificacion`). El recibo provisional sin señal no los lleva: el número oficial existe al sincronizar.
 
+**Reenviar el recibo oficial** (12/11/2026): "Enviar recibo por WhatsApp" en Cobros recientes y "Enviar recibo oficial" en la cola sin señal (ya sincronizado) traen el recibo oficial con su QR (`GET /comprobantes/:id/recibo`) y lo comparten; así el comerciante cambia el provisional por uno verificable. Un recibo anulado lo dice ("RECIBO ANULADO: motivo"). El cobrador solo trae sus recibos.
+
 ## Offline (cliente)
 
 - `GET /jornada/paquete` (`getJornadaPackage`) entrega al cobrador los comerciantes y saldos del periodo. Se guarda en IndexedDB (`offlineStore.js`).
