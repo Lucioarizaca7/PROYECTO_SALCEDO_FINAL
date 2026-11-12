@@ -64,12 +64,12 @@ export function seriesConPocos(estado) {
 }
 
 /**
- * Lo que se cobra por defecto: los tickets de hoy (puestos_hoy, 12/11/2026: por cada puesto, la zona donde vende
- * hoy) o, si el servidor no los manda (un mes atrasado, un padrón viejo), un ticket por puesto de cada serie.
+ * Lo que se cobra por defecto: los tickets de hoy (puestos_hoy, 12/11/2026: lo que se le cobra hoy, en la zona
+ * donde vende) o, si el servidor no los manda (un mes atrasado, un padrón viejo), un ticket por puesto de cada
+ * serie. Si hoy no corresponde ninguno (marcado "faltó") se sugieren 0: antes se volvía a uno por puesto.
  */
 export function requeridosPorDefecto(seriesCobro = []) {
-  const conHoy = seriesCobro.some((item) => item.puestos_hoy !== undefined && item.puestos_hoy !== null)
-    && seriesCobro.reduce((total, item) => total + Number(item.puestos_hoy || 0), 0) > 0;
+  const conHoy = seriesCobro.some((item) => item.puestos_hoy !== undefined && item.puestos_hoy !== null);
   return seriesCobro.map((item) => ({
     serie: item.serie, valor: Number(item.valor), cantidad: conHoy ? Number(item.puestos_hoy || 0) : Number(item.puestos) || 1
   }));
