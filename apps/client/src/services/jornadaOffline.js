@@ -48,7 +48,12 @@ export function normalizarComerciante(item, descargadoEn = new Date().toISOStrin
     periodosImpagos: Array.isArray(item.periodos_impagos)
       ? item.periodos_impagos.map((fila) => ({ periodo: fila.periodo, saldo: Number(fila.saldo || 0) }))
       : (Array.isArray(item.meses_impagos) ? item.meses_impagos.map((periodo) => ({ periodo, saldo: null })) : []),
-    seriesCobro: Array.isArray(item.series_cobro) ? item.series_cobro.map((serie) => ({ serie: serie.serie, valor: Number(serie.valor), puestos: Number(serie.puestos) || 1 })) : [],
+    // puestos_hoy (12/11/2026): los tickets de hoy según el servidor. Antes se perdía y sin señal se volvía a sugerir
+    // un ticket por puesto, aunque el cobro marca uno solo.
+    seriesCobro: Array.isArray(item.series_cobro) ? item.series_cobro.map((serie) => ({
+      serie: serie.serie, valor: Number(serie.valor), puestos: Number(serie.puestos) || 1,
+      ...(serie.puestos_hoy === undefined || serie.puestos_hoy === null ? {} : { puestos_hoy: Number(serie.puestos_hoy) })
+    })) : [],
     actualizadoEn: descargadoEn
   };
 }

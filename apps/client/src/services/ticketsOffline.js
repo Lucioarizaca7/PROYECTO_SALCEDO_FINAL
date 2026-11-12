@@ -89,6 +89,15 @@ export function requeridosEnZona(seriesCobro = [], serieZona) {
   ];
 }
 
+/**
+ * Sin señal, la marca de hoy del celular manda sobre lo que trajo el padrón (12/11/2026): marcado "faltó", hoy no
+ * se le cobra ningún ticket. La zona del día de la marca la elige la pantalla de cobro (requeridosEnZona).
+ */
+export function seriesConMarcaDeHoy(seriesCobro = [], marca = null) {
+  if (!marca || marca.asistio !== false) return seriesCobro;
+  return seriesCobro.map((item) => ({ ...item, puestos_hoy: 0 }));
+}
+
 /** La serie del cobrador para un tipo de vía ({ serie, valor }), o null si no tiene tickets de ese tipo. */
 export function serieDeTipoVia(estado, tipoVia) {
   if (!tipoVia) return null;
