@@ -133,6 +133,12 @@ Corregidos, con prueba en `tests/codigo-operacion.test.js`, `tests/tipo-via-de-c
 
 Queda: el paquete de jornada calcula dos veces el mes en curso (`calcularLiquidacion` y otra vez dentro de `calcularDeudaAcumulada`). Con un padrón mucho mayor convendrá la liquidación en lote (paso 6).
 
+## Vigésima revisión del 12/11/2026: sin señal, los tickets de hoy siguen la marca del celular
+
+Corregido, con prueba en `apps/client/tests/zonaDelDiaYRecibo.test.js`; comprobado en el navegador sin conexión (`context.setOffline`) en una copia de la demo: las correcciones de las rondas 16 y 17 no llegaban al trabajo sin señal.
+- `normalizarComerciante` perdía `puestos_hoy`: sin señal se volvía a sugerir un ticket por puesto.
+- La pantalla de cobro sin señal no leía la marca de hoy del celular: a quien estaba marcado "faltó" le sugería un ticket, y a quien estaba marcado en otra zona le sugería la serie de su puesto (S3 en vez de S2) sin mandar `zona_dia`; al sincronizar el cobro quedaba observado. Ahora un ferial marcado en Zona Norte se cobra S/ 2 con un S2 y sincroniza confirmado.
+
 ## Decimonovena revisión del 12/11/2026: reenviar el recibo oficial y recibos ajenos
 
 Corregido, con prueba en `tests/recibo-pdf.test.js` y `apps/client/tests/zonaDelDiaYRecibo.test.js`; comprobado en el navegador a 390 px en una copia de la demo:

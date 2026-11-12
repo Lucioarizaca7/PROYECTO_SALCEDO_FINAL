@@ -109,3 +109,13 @@ test('el recibo oficial reenviado: dice si está anulado, sin huella vacía y co
   assert.match(Object.fromEntries(recibo.filas).Fecha, /10\/11\/2026/, 'la fecha del cobro, no la de hoy');
   assert.equal(lineasRecibo({ ...oficial, estado: 'confirmado' }).aviso, null);
 });
+
+test('sin señal: el padrón conserva los tickets de hoy y la marca "faltó" del celular no sugiere ticket', async () => {
+  const { normalizarComerciante: normalizar } = await import('../src/services/jornadaOffline.js');
+  const { seriesConMarcaDeHoy } = await import('../src/services/ticketsOffline.js');
+  const registro = normalizar({ id: 5, nombre: 'Dos puestos', periodo: '2026-11', series_cobro: [{ serie: 'S3', valor: 3, puestos: 2, puestos_hoy: 1 }] });
+  assert.deepEqual(requeridosPorDefecto(registro.seriesCobro).map((item) => item.cantidad), [1], 'antes eran 2 y el cobro quedaba observado');
+  assert.deepEqual(requeridosPorDefecto(seriesConMarcaDeHoy(registro.seriesCobro, { asistio: false })).map((item) => item.cantidad), [0]);
+  assert.equal(seriesConMarcaDeHoy(registro.seriesCobro, { asistio: true }), registro.seriesCobro);
+  assert.equal(seriesConMarcaDeHoy(registro.seriesCobro, null), registro.seriesCobro);
+});

@@ -5,10 +5,11 @@ import { formatPEN } from '../lib/formato';
 import { createReceiptHash } from '../features/payments/recibo';
 import { enviarReciboOficial } from '../features/payments/reciboOficial';
 import { buildExpressSuggestion } from '../features/payments/sugerenciaExpress';
-import { aComercianteDePantalla, aSaldoDePantalla, montoDiaEnZona, periodoEnLima } from '../services/jornadaOffline';
+import { aComercianteDePantalla, aSaldoDePantalla, hoyEnLima, montoDiaEnZona, periodoEnLima } from '../services/jornadaOffline';
+import { CLAVE_ASISTENCIAS, estadoDelDia } from '../services/asistenciaOffline';
 import { crearHashCobro } from '../services/offlineQueue';
 import { storeFor } from '../services/offlineStore';
-import { montoDeRequeridos, proximosTickets, requeridosEnZona, requeridosPorDefecto, serieDeTipoVia, textoTicket } from '../services/ticketsOffline';
+import { montoDeRequeridos, proximosTickets, requeridosEnZona, requeridosPorDefecto, serieDeTipoVia, seriesConMarcaDeHoy, textoTicket } from '../services/ticketsOffline';
 import { useTicketsCobrador } from '../features/offline/useTicketsCobrador';
 import { apiBase, authFetch } from '../services/session';
 
@@ -58,8 +59,13 @@ export function usePagos() {
   const cobraPorDia = Boolean(balance && (balance.series_cobro?.length || balance.dias_asistidos !== undefined
     || ['ferial_sin_asistencia', 'sin_asistencia'].includes(balance.motivo)));
   const muestraZonaDia = cobraPorDia && (form.periodo || periodoEnLima()) === periodoEnLima();
-  // Cada comerciante empieza en la zona de su puesto.
+  // Cada comerciante empieza en la zona de su puesto, o en la de su marca de hoy si se cobra sin señal. La marca se lee
+  // del celular después de mostrarlo: va atada al id, así nunca se aplica a otro comerciante.
+  const [zonaMarcada, setZonaMarcada] = useState({ id: null, zona: '' });
   useEffect(() => { setZonaDia(''); }, [merchant?.id]);
+  useEffect(() => {
+    if (zonaMarcada.id !== null && String(zonaMarcada.id) === String(merchant?.id)) setZonaDia(zonaMarcada.zona);
+  }, [zonaMarcada, merchant?.id]);
 
   useEffect(() => {
     const serieZona = zonaElegida ? serieDeTipoVia(tickets.estado, zonaElegida.tipo_via) : null;
@@ -179,7 +185,20 @@ export function usePagos() {
     setBalance(offlineBalance);
     setSuggestion(buildExpressSuggestion(offlineMerchant, offlineBalance, []));
     setForm((current) => ({ ...current, comercianteId: String(offlineMerchant.id), periodo: offlineBalance.periodo || current.periodo, monto: offlineBalance.saldo > 0 ? String(offlineBalance.saldo) : '', codigo_operacion: '', observaciones: '' }));
+    aplicarMarcaDeHoy(localMerchant);
     return offlineBalance;
+  };
+
+  // Sin señal, la marca de hoy del celular manda sobre el padrón (12/11/2026): "faltó" no sugiere ticket y la zona
+  // marcada en el panel de asistencia queda como zona del día (sus tickets y el zona_dia del cobro). Antes se
+  // sugería S3 a quien estaba marcado en una zona sin asfaltar, y el cobro quedaba observado al sincronizar.
+  const aplicarMarcaDeHoy = async (registro) => {
+    if (!registro?.puestoFerialId) return;
+    const guardado = await storeFor('jornada').get(CLAVE_ASISTENCIAS).catch(() => null);
+    const marca = estadoDelDia(guardado, hoyEnLima()).marcas[String(registro.puestoFerialId)];
+    if (!marca) return;
+    setBalance((actual) => (actual && actual.series_cobro ? { ...actual, series_cobro: seriesConMarcaDeHoy(actual.series_cobro, marca) } : actual));
+    if (marca.asistio && marca.zonaId) setZonaMarcada({ id: registro.id, zona: String(marca.zonaId) });
   };
 
   const findMerchant = async (queryOverride) => {
