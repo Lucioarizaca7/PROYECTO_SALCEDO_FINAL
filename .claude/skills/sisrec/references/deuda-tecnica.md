@@ -133,13 +133,19 @@ Corregidos, con prueba en `tests/codigo-operacion.test.js`, `tests/tipo-via-de-c
 
 Queda: el paquete de jornada calcula dos veces el mes en curso (`calcularLiquidacion` y otra vez dentro de `calcularDeudaAcumulada`). Con un padrón mucho mayor convendrá la liquidación en lote (paso 6).
 
+## Decimoquinta revisión del 12/11/2026: deuda atrasada sin señal y DNI de un dado de baja
+
+Corregidos:
+- **Deuda atrasada sin señal** (prueba en `apps/client/tests/jornadaOffline.test.js`): `aplicarCobroLocal` bajaba la deuda vencida local en el monto entero del cobro de un mes atrasado. Pagar con S/ 10 un mes que debía S/ 4 dejaba la deuda en S/ 2, como si el mes siguiente también se hubiera pagado, hasta sincronizar. Ahora baja solo lo que se debía de ese mes; el exceso queda en ese mes, como en el servidor (que lo deja observado).
+- **DNI de un dado de baja** (prueba en `tests/dni-de-dado-de-baja.test.js`): registrar en un comerciante el DNI/RUC de otro dado de baja respondía solo "El registro ya existe" (el UNIQUE de la base). Ahora `updateComerciante` responde 409 con el código del dado de baja (con el DNI oculto) para reactivarlo en vez de duplicar a la persona. Comprobado por HTTP en una copia de la demo.
+
+Revisado sin hallazgos: la revisión de cobros observados, el estado de pago de los puestos en el mapa, la cola de cobros sin señal del celular y la edición de tarifas.
+
 ## Decimocuarta revisión del 12/11/2026: cobro sin señal con la hora mal
 
 Corregido, con prueba en `tests/cobro-fecha-dudosa.test.js` (migración 0030): un cobro sin señal con la fecha del celular fuera de rango (futura o de más de 3 días) quedaba observado, pero `registrarCobro` marcaba igual la asistencia de ese día: un día cobrado de S/ 3 en un mes que no era, saltándose la ventana de 3 días de las marcas de la app. Comprobado por HTTP en una copia de la demo: un cobro fechado el 22/12 dejaba una marca futura; ahora no.
 
-Quedan (vistos en esta revisión, sin arreglar):
-- `aplicarCobroLocal` (cliente, sin señal): al pagar un mes atrasado con más que su saldo, la deuda vencida local baja el monto entero y no solo el saldo de ese mes.
-- Cambiar el DNI de un comerciante por el de uno dado de baja responde solo "El registro ya existe" (la base lo impide, `dni_ruc` es único); no dice que el documento es de un dado de baja que se puede reactivar.
+Vistos en esta revisión y resueltos en la decimoquinta: la deuda vencida local al pagar de más un mes atrasado y el mensaje del DNI de un dado de baja.
 
 ## Decimotercera revisión del 12/11/2026: reactivaciones del padrón
 
