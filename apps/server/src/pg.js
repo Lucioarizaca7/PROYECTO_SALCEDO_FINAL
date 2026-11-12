@@ -22,7 +22,17 @@ const connectionString = config.databaseUrl;
 const sessionOptions = ['-c timezone=UTC'];
 if (testSchema) sessionOptions.push(`-c search_path=${testSchema},public`);
 
-export const pool = new pg.Pool({ connectionString, max: 10, options: sessionOptions.join(' ') });
+// Espera máxima para conseguir una conexión. Sin ella (0 = para siempre), si el servidor de la base no contesta,
+// cada petición queda colgada y el celular nunca recibe el error que lo pasa a guardar el cobro sin señal.
+const ESPERA_CONEXION_MS = 5000;
+
+export const pool = new pg.Pool({ connectionString, max: 10, options: sessionOptions.join(' '), connectionTimeoutMillis: ESPERA_CONEXION_MS });
+
+// Una conexión inactiva que se corta (PostgreSQL se reinicia, la red parpadea) emite 'error' en el pool. Sin este
+// listener Node lo lanza como excepción y la API entera se cae; con él, el pool descarta esa conexión y abre otra.
+pool.on('error', (error) => {
+  console.error('Conexión a PostgreSQL perdida (el pool abrirá otra):', error.message);
+});
 
 export const query = (text, params) => pool.query(text, params);
 

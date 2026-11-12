@@ -170,6 +170,7 @@ Antes pasar a un ferial a eventual borraba su deuda atrasada entera, y pasar un 
 
 - `registrarCobro(db, payload, { audit, allowExcess })`:
   - Si recibe el pool, abre su propia transacción. Si recibe un cliente, usa la transacción que ya está abierta.
+  - **el servidor no respondió bien** (12/11/2026): si el cobro en línea recibe un 5xx o una respuesta que no es JSON (el proxy con la API caída), se guarda en el celular con el **mismo hash** y recibo provisional, como sin señal; si el servidor sí lo había registrado, la sincronización lo da por repetido y no se duplica.
   - el **monto se lleva a céntimos** antes de validarlo (`dinero()`, 12/11/2026), porque así lo guarda la base: S/ 3.004 se cobra como S/ 3.00 y un monto que en céntimos es cero (S/ 0.004) se rechaza como "monto positivo"; sin señal, queda como cobro incompleto.
   - el **hash** (`hash_transaccion`, el mismo en línea y en la cola del celular) evita que el mismo cobro se registre dos veces;
   - el `codigo_operacion` es único **por método** (`uq_transacciones_operacion`): un Yape y un POS con el mismo número no chocan. Otro cobro con un número ya usado en el mismo método responde 409 con el recibo donde se usó (11/11/2026).
