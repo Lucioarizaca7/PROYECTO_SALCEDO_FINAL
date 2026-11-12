@@ -184,6 +184,10 @@ async function ensureDemoAdmin() {
     ON CONFLICT (email) DO NOTHING`, [bcrypt.hashSync('sisrec2026', config.bcryptSaltRounds)]);
 }
 
+// Dinero en céntimos, como NUMERIC(12,2): la base guarda exacto y pg lo entrega como número JS (pg.js), así que
+// toda suma o monto de entrada se redondea a 2 decimales antes de compararlo o escribirlo.
+const dinero = (value) => Number(Number(value || 0).toFixed(2));
+
 export async function initializeDatabase({ seed = true } = {}) {
   await runMigrations();
   await seedCatalogs();
@@ -2465,7 +2469,6 @@ export async function getObservacionesCobro(db, { desde, hasta, comercianteId, c
 
 const METODOS_CAJA = ['efectivo', 'yape', 'plin', 'pos'];
 const FECHA_RE = /^\d{4}-\d{2}-\d{2}$/;
-const dinero = (value) => Number(Number(value || 0).toFixed(2));
 
 const CIERRE_SELECT = `
   SELECT cc.id, cc.cobrador_id, u.nombre AS cobrador, ${DAY('cc.fecha')} AS fecha, cc.cobros,
@@ -2770,7 +2773,10 @@ export async function registrarCobro(db, payload, { audit = null, allowExcess = 
 
   const comercianteId = Number(payload.comerciante_id);
   const cobradorId = Number(payload.cobrador_id);
-  const monto = Number(payload.monto);
+  // El monto se lleva a céntimos aquí, como lo guarda NUMERIC(12,2): antes 0.004 llegaba a la base y su CHECK
+  // (monto > 0) respondía con un error interno, 3.004 se rechazaba por exceder un saldo de S/ 3.00 aunque se
+  // guardaría S/ 3.00, y una suma del celular como 0.1 + 0.2 volvía en la respuesta como 0.30000000000000004.
+  const monto = dinero(payload.monto);
   const metodoPago = String(payload.metodo_pago || '').trim();
   // Textos libres con tope (antes sin largo máximo, auditoría del 22/10/2026). Se recortan en vez de rechazar:
   // un cobro sin señal ya tiene el dinero recibido y no se pierde por una nota larga.
@@ -3009,7 +3015,7 @@ export async function syncOfflineCobro(_db, payload, { audit = null } = {}) {
     ...payload,
     comerciante_id: Number(payload.comerciante_id ?? payload.comercianteId ?? 0),
     cobrador_id: Number(payload.cobrador_id ?? payload.cobradorId ?? 0),
-    monto: Number(payload.monto ?? 0),
+    monto: dinero(payload.monto),
     metodo_pago: String(payload.metodo_pago ?? payload.metodoPago ?? 'efectivo').trim(),
     concepto: String(payload.concepto || 'Liquidación de deuda').trim(),
     codigo_operacion: codigoOperacionDelPago(payload, String(payload.metodo_pago ?? payload.metodoPago ?? 'efectivo').trim()),
