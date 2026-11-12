@@ -133,6 +133,15 @@ Corregidos, con prueba en `tests/codigo-operacion.test.js`, `tests/tipo-via-de-c
 
 Queda: el paquete de jornada calcula dos veces el mes en curso (`calcularLiquidacion` y otra vez dentro de `calcularDeudaAcumulada`). Con un padrón mucho mayor convendrá la liquidación en lote (paso 6).
 
+## Vigesimosegunda revisión del 12/11/2026: caídas y fallos de pantalla
+
+Corregido, con prueba en `tests/conexion-perdida.test.js` (servidor) y `apps/client/tests/servidorNoDisponible.test.js`. Cada fallo se reprodujo con el código anterior en una copia de la demo y se comprobó corregido:
+- **La API se caía entera** si PostgreSQL cortaba una conexión inactiva (reinicio, red): el pool (`pg.js`) no escuchaba su evento `error` y Node terminaba el proceso. Reproducido con `pg_terminate_backend`: antes la API dejó de responder; ahora registra "Conexión a PostgreSQL perdida" y sigue (health 200).
+- **La API podía quedar colgada** sin la base: el pool no tenía espera máxima (`connectionTimeoutMillis` 0). Ahora `ESPERA_CONEXION_MS = 5000`.
+- **Pantalla en blanco:** sin `ErrorBoundary`, un error al dibujar dejaba la app vacía. Ahora `app/ErrorBoundary.jsx` muestra "Algo falló en esta pantalla", con "Volver a intentar" e "Ir al inicio"; el detalle solo va a la consola.
+- **Un cobro se perdía con un 502/503/504:** la página HTML del proxy rompía `response.json()` ("Unexpected token") y el cobro no se guardaba (reproducido: 0 cobros). Si el servidor sí lo había registrado (un 504 tardío), reintentar creaba otro hash y lo duplicaba. Ahora un 5xx o una respuesta que no es JSON guarda el cobro en el celular con el mismo hash (`servidorNoDisponible` en `offlineQueue.js`); se sincroniza una sola vez. La búsqueda pasa al padrón del celular en el mismo caso.
+- **Glitch: el comerciante equivocado en pantalla:** con señal débil, buscar a A y luego a B dejaba a A si su respuesta llegaba última (reproducido). Ahora cada búsqueda, llegada o cambio de mes toma un turno (`atencionActual` en `usePagos`) y una respuesta vieja no pisa la pantalla.
+
 ## Vigesimoprimera revisión del 12/11/2026: el monto del cobro en céntimos
 
 Corregido, con prueba en `tests/monto-en-centimos.test.js`. La base guarda el dinero exacto en `NUMERIC(12,2)`, pero `pg.js` lo entrega como número JS y `registrarCobro` / `syncOfflineCobro` aceptaban el monto tal cual llegaba:

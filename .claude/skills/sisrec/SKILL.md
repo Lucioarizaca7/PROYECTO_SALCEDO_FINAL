@@ -88,6 +88,7 @@ grep -rn "nombreFuncion(" apps/server/src apps/client/src
 - **Las migraciones solo se agregan**: `migrations/000N_nombre.sql` (la siguiente es la 0032), con `BEGIN; … COMMIT;`, comentarios en español, la corrección de los datos existentes y su prueba. Nunca se edita una que ya se aplicó.
 - **La regla también va en la base**: CHECK, FK, UNIQUE (parcial si hace falta). El JS valida para dar un buen mensaje; la base impide el dato malo aunque entre por otro camino. Ejemplos: `puestos_ocupado_con_titular`, `tarifas_zona_o_tipo_via`, `UNIQUE (serie, numero)` de tickets.
 - Dinero en `NUMERIC(12,2)`; se redondea solo al mostrar. En JS llega como número (`pg.js`): todo monto de entrada y toda suma de dinero pasa por `dinero()` de `db.js` (a céntimos) antes de comparar o escribir.
+- El pool (`pg.js`) escucha su evento `error` (sin él, una conexión cortada tumba la API) y espera a lo más `ESPERA_CONEXION_MS` por una conexión. No se quitan.
 - Todo lo que escribe en más de una tabla va en `withTransaction`. Lo que lee un saldo para luego escribir **bloquea** (`FOR UPDATE` / `FOR NO KEY UPDATE`) para que dos cobros simultáneos no pasen del saldo.
 - Toda operación que puede repetirse (sincronización, anulaciones) es **idempotente**: clave única o respuesta `ya_*`, nunca un duplicado.
 - SQL siempre con parámetros (`$1, $2…`). Nunca se arma SQL concatenando datos del usuario.

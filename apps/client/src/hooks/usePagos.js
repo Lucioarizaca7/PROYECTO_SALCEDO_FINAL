@@ -7,7 +7,7 @@ import { enviarReciboOficial } from '../features/payments/reciboOficial';
 import { buildExpressSuggestion } from '../features/payments/sugerenciaExpress';
 import { aComercianteDePantalla, aSaldoDePantalla, hoyEnLima, montoDiaEnZona, periodoEnLima } from '../services/jornadaOffline';
 import { CLAVE_ASISTENCIAS, estadoDelDia } from '../services/asistenciaOffline';
-import { crearHashCobro } from '../services/offlineQueue';
+import { crearHashCobro, servidorNoDisponible } from '../services/offlineQueue';
 import { storeFor } from '../services/offlineStore';
 import { montoDeRequeridos, proximosTickets, requeridosEnZona, requeridosPorDefecto, serieDeTipoVia, seriesConMarcaDeHoy, textoTicket } from '../services/ticketsOffline';
 import { useTicketsCobrador } from '../features/offline/useTicketsCobrador';
@@ -35,6 +35,10 @@ export function usePagos() {
   const [receipt, setReceipt] = useState(null);
   // Hora en que se empezó a atender al comerciante (búsqueda, QR o llegada desde el mapa).
   const inicioAtencion = useRef(null);
+  // Turno del comerciante en pantalla (12/11/2026): cada búsqueda, llegada o cambio de mes toma uno nuevo, y una
+  // respuesta lenta de un turno anterior ya no pisa la pantalla. Antes, con señal débil, buscar a A y luego a B
+  // dejaba a A en pantalla (con su monto) si la respuesta de A llegaba última.
+  const atencionActual = useRef(0);
   const empezarAtencion = () => { inicioAtencion.current = new Date().toISOString(); };
 
   // Tickets preimpresos: un ticket por puesto y día cobrado, de las series del comerciante. Por omisión,
@@ -132,18 +136,30 @@ export function usePagos() {
     }
   };
 
+  // Respuesta del servidor para mostrar un comerciante: un 5xx o una página que no es JSON (el proxy con la API caída)
+  // es como no tener señal (TypeError), así la búsqueda pasa al padrón del celular en vez de decir "Unexpected token".
+  const leerRespuesta = async (response) => {
+    if (servidorNoDisponible(response)) throw new TypeError('El servidor no respondió. Intenta de nuevo.');
+    const body = await response.json().catch(() => null);
+    if (body === null) throw new TypeError('El servidor no respondió. Intenta de nuevo.');
+    return body;
+  };
+
   // Saldo del mes y sugerencia express de un comerciante ya encontrado en el servidor.
   // Si debe meses anteriores, se cobra primero el más antiguo (el cobrador puede elegir otro).
-  const loadMerchant = async (found, periodoPedido = null) => {
+  const loadMerchant = async (found, periodoPedido = null, turno = atencionActual.current) => {
+    const vigente = () => turno === atencionActual.current;
     let periodo = periodoPedido || periodoEnLima();
     let balanceResponse = await authFetch(`${apiBase}/comerciantes/${found.id}/saldo?periodo=${periodo}`);
-    let balanceData = await balanceResponse.json();
+    let balanceData = await leerRespuesta(balanceResponse);
+    if (!vigente()) return undefined;
     if (!balanceResponse.ok) return setMessage(balanceData.message || 'No se pudo calcular el saldo.');
     const masAntiguo = balanceData.data.deuda_acumulada?.periodo_mas_antiguo;
     if (!periodoPedido && masAntiguo && masAntiguo !== periodo) {
       periodo = masAntiguo;
       balanceResponse = await authFetch(`${apiBase}/comerciantes/${found.id}/saldo?periodo=${periodo}`);
-      balanceData = await balanceResponse.json();
+      balanceData = await leerRespuesta(balanceResponse);
+      if (!vigente()) return undefined;
       if (!balanceResponse.ok) return setMessage(balanceData.message || 'No se pudo calcular el saldo.');
     }
 
@@ -152,6 +168,7 @@ export function usePagos() {
     const historyData = await historyResponse.json().catch(() => ({}));
     const history = historyResponse.ok ? (historyData.data || []) : [];
     const next = buildExpressSuggestion(found, balanceData.data, history.length ? history : cobros.filter(sameMerchant(found)));
+    if (!vigente()) return undefined;
 
     setMerchant(found);
     setBalance(balanceData.data);
@@ -163,21 +180,23 @@ export function usePagos() {
   // El cobrador elige a qué mes impago aplicar el cobro.
   const elegirPeriodo = async (periodo) => {
     if (!merchant) return;
+    const turno = ++atencionActual.current;
     setMessage('');
     if (merchant.offline || !navigator.onLine) {
       // Sin señal: el saldo de ese mes sale del padrón del celular.
       const registro = await jornada.porId(merchant.id);
-      if (!registro) return;
+      if (!registro || turno !== atencionActual.current) return;
       const saldoMes = aSaldoDePantalla(registro, periodo);
       setBalance(saldoMes);
       setForm((current) => ({ ...current, periodo: saldoMes.periodo, monto: saldoMes.saldo > 0 ? String(saldoMes.saldo) : '' }));
       return;
     }
-    await loadMerchant(merchant, periodo).catch((error) => setMessage(error.message));
+    await loadMerchant(merchant, periodo, turno).catch((error) => setMessage(error.message));
   };
 
   // Comerciante del padrón del celular en la pantalla (búsqueda o llegada desde Sitios/Mapa sin señal).
   const mostrarDelPadron = (localMerchant) => {
+    atencionActual.current += 1;
     const offlineMerchant = aComercianteDePantalla(localMerchant);
     // Sin periodo: se aplica primero el mes impago más antiguo, igual que en línea.
     const offlineBalance = aSaldoDePantalla(localMerchant);
@@ -206,10 +225,13 @@ export function usePagos() {
     const query = String(typeof queryOverride === 'string' ? queryOverride : form.search).trim();
     if (!query) return setMessage('Ingresa DNI, RUC, nombre, puesto o código.');
     empezarAtencion();
+    const turno = ++atencionActual.current;
+    const vigente = () => turno === atencionActual.current;
 
     // Sin señal se busca en el padrón descargado al iniciar la jornada.
     const searchOffline = async (reason) => {
       const [localMerchant] = await jornada.search(query).catch(() => []);
+      if (!vigente()) return undefined;
       if (!localMerchant) {
         return setMessage(jornada.meta
           ? `${reason} no se encontró el comerciante en el padrón guardado en el celular.`
@@ -225,28 +247,30 @@ export function usePagos() {
       // Código de comerciante (COM-0004-…, CM-004 o un código anterior): el servidor lo resuelve.
       if (/^(?:COM|CM)-/i.test(query)) {
         const merchantResponse = await authFetch(`${apiBase}/comerciantes/${encodeURIComponent(query)}`);
-        const merchantData = await merchantResponse.json();
+        const merchantData = await leerRespuesta(merchantResponse);
         if (merchantResponse.ok) found = merchantData.data;
       }
       if (!found) {
         const response = await authFetch(`${apiBase}/comerciantes?search=${encodeURIComponent(query)}&limit=10`);
-        const data = await response.json();
+        const data = await leerRespuesta(response);
         found = data.data?.[0] || null;
       }
       if (!found) {
         const puestosResponse = await authFetch(`${apiBase}/puestos`);
-        const puestosData = await puestosResponse.json();
+        const puestosData = await leerRespuesta(puestosResponse);
         const puesto = puestosData.data?.find((item) => String(item.codigo || item.codigo_puesto || '').trim().toLowerCase() === query.toLowerCase());
         if (puesto && !puesto.comerciante_id) return setMessage(`El puesto ${puesto.codigo} está libre: no tiene titular a quien cobrar.`);
         if (puesto) {
           const merchantResponse = await authFetch(`${apiBase}/comerciantes/${puesto.comerciante_id}`);
-          const merchantData = await merchantResponse.json();
+          const merchantData = await leerRespuesta(merchantResponse);
           if (merchantResponse.ok) found = { ...merchantData.data, codigo_puesto: puesto.codigo };
         }
       }
+      if (!vigente()) return undefined;
       if (!found) return setMessage('No se encontró un comerciante con ese dato.');
-      await loadMerchant(found);
+      await loadMerchant(found, null, turno);
     } catch (searchError) {
+      if (!vigente()) return undefined;
       // Hay "señal" pero el servidor no responde (Wi-Fi sin internet, API caída): se usa el padrón local.
       if (searchError instanceof TypeError) return searchOffline('Sin conexión con el servidor:');
       setMessage(searchError.message || 'No se pudo buscar el comerciante.');
@@ -261,6 +285,7 @@ export function usePagos() {
     if (!cobrarPuesto || handledArrival.current === cobrarPuesto) return;
     handledArrival.current = cobrarPuesto;
     empezarAtencion();
+    const turno = ++atencionActual.current;
     navigate(location.pathname, { replace: true, state: null });
     setMerchant(cobrarPuesto);
     setBalance(null);
@@ -268,6 +293,7 @@ export function usePagos() {
     if (!navigator.onLine) {
       // Sin señal el saldo sale del padrón del celular; antes quedaba vacío y no se podía confirmar el cobro.
       jornada.porId(cobrarPuesto.id).then((registro) => {
+        if (turno !== atencionActual.current) return;
         if (registro) mostrarDelPadron(registro);
         else setMessage('Sin señal: este comerciante no está en el padrón guardado en el celular. Descárgalo con señal.');
       });
@@ -275,8 +301,8 @@ export function usePagos() {
     }
     (async () => {
       const response = await authFetch(`${apiBase}/comerciantes/${cobrarPuesto.id}`);
-      const data = await response.json();
-      await loadMerchant(response.ok ? { ...cobrarPuesto, ...data.data } : cobrarPuesto);
+      const data = await leerRespuesta(response);
+      await loadMerchant(response.ok ? { ...cobrarPuesto, ...data.data } : cobrarPuesto, null, turno);
     })().catch((error) => setMessage(error.message || 'No se pudo cargar el saldo del comerciante.'));
   }, [cobrarPuesto]);
 
@@ -377,7 +403,14 @@ export function usePagos() {
         }
         throw networkError;
       }
-      const data = await response.json();
+      // El servidor no respondió bien (5xx o una página del proxy que no es JSON): el dinero ya se recibió, así que el
+      // cobro se guarda en el celular con el MISMO hash (12/11/2026). Antes se mostraba "Unexpected token" y el cobro se
+      // perdía; si el servidor sí lo había registrado (un 504 tardío), reintentar creaba un hash nuevo y lo duplicaba.
+      const data = servidorNoDisponible(response) ? null : await response.json().catch(() => null);
+      if (data === null) {
+        await saveOfflinePayment('El servidor no respondió:');
+        return;
+      }
       if (!response.ok) {
         // Un ticket que el servidor no acepta (usado en otro celular, reasignado): se actualiza la numeración.
         if (ticketsEntregados.length) await tickets.refrescar();

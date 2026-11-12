@@ -222,6 +222,17 @@ export function crearColaOffline({ store, enviarLote, ahora = () => new Date(), 
  * Distingue "sin conexión" y "sesión vencida" (la cola se detiene sin gastar intentos)
  * de un error del servidor (cuenta como intento).
  */
+// El proxy responde 502/503/504 cuando la API no está o no alcanzó a contestar: para la cola es como no tener señal.
+const SIN_SERVIDOR = [502, 503, 504];
+export const proxySinServidor = (response) => SIN_SERVIDOR.includes(Number(response?.status));
+
+/**
+ * Un cobro en línea que recibe esto se guarda en el celular con el mismo hash (12/11/2026): el dinero ya se recibió.
+ * Cuenta el 500 (la base caída responde 500) además del proxy. Si el servidor alcanzó a registrarlo (un 504 tardío),
+ * la sincronización lo da por repetido (mismo hash) y no se duplica.
+ */
+export const servidorNoDisponible = (response) => Number(response?.status) >= 500;
+
 export function crearTransporteLote({ url, fetchImpl, deviceId }) {
   return async function enviarLote(cobros) {
     let response;
@@ -236,8 +247,7 @@ export function crearTransporteLote({ url, fetchImpl, deviceId }) {
       throw Object.assign(new Error('Sin conexión con el servidor'), { sinConexion: true, causa: error });
     }
     if (response.status === 401) throw Object.assign(new Error('La sesión venció'), { sesionVencida: true });
-    // El proxy responde 502/503/504 cuando la API no está disponible: es como no tener señal.
-    if ([502, 503, 504].includes(response.status)) {
+    if (proxySinServidor(response)) {
       throw Object.assign(new Error('El servidor no está disponible'), { sinConexion: true });
     }
     const body = await response.json().catch(() => ({}));
