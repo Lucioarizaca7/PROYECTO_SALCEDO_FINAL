@@ -423,6 +423,23 @@ export async function verifyAuditChain(db) {
 // ---------------------------------------------------------------------------
 
 const PAYMENT_DAY = TS('co.fecha_cobro_cliente');
+// Zona y rubro que tenía el comerciante el día (de Lima) del cobro: el panel, los reportes y la proyección
+// agrupan cada cobro donde se cobró. Antes usaban los de hoy y mover a un comerciante de zona cambiaba la
+// recaudación ya cerrada de los meses pasados. La foto queda en la fila del cobro al registrarlo (0028); una
+// fila NULL (escrita fuera de la API) cae al valor actual. Así los informes leen una columna y no una consulta
+// por fila sobre la tabla de cambios, que multiplicaba por 50 (función SQL) o por 2 (LATERAL con UNION) el
+// tiempo de la proyección, medido con 24 000 cobros. Requiere tener a mano `comerciantes c`.
+const ZONA_DEL_COBRO = 'COALESCE(co.zona_cobro_id, c.zona_id)';
+const RUBRO_DEL_COBRO = 'COALESCE(co.rubro_cobro_id, c.rubro_id)';
+// Las marcas de asistencia no llevan esa foto (su zona propia, 0019, es la del puesto, no la del comerciante):
+// la zona del comerciante el día de la marca se resuelve con una sonda LATERAL solo para quienes alguna vez
+// cambiaron de zona; el resto va por la rama sin sondas (anti-join por hash contra la tabla de cambios).
+const CAMBIO_POSTERIOR = (alias, campo, comerciante, fecha) => `
+      LEFT JOIN LATERAL (
+        SELECT valor_anterior FROM comerciantes_datos_cambios
+        WHERE comerciante_id = ${comerciante} AND campo = '${campo}' AND desde > ${fecha}
+        ORDER BY desde, id LIMIT 1
+      ) ${alias} ON TRUE`;
 
 export async function getOperationalDashboard(db, options = {}) {
   const period = String(options.periodo || currentPeriod());
@@ -430,16 +447,26 @@ export async function getOperationalDashboard(db, options = {}) {
   const totals = await first(db, `
     SELECT COALESCE(SUM(co.monto), 0) AS total, COUNT(*) AS cantidad
     FROM transacciones co WHERE co.estado = 'confirmado' AND ${PAYMENT_DAY} LIKE $1`, [like]);
+  // Cada cobro cuenta en la zona y el rubro del día del cobro (0028). "comerciantes" sí es el padrón de hoy
+  // (sin dados de baja, que antes se contaban): dónde está cada quien es un dato del presente.
   const byZone = await rows(db, `
-    SELECT z.nombre AS zona, COUNT(DISTINCT c.id) AS comerciantes, COALESCE(SUM(co.monto), 0) AS recaudado
-    FROM zonas z LEFT JOIN comerciantes c ON c.zona_id = z.id
-    LEFT JOIN transacciones co ON co.comerciante_id = c.id AND co.estado = 'confirmado' AND ${PAYMENT_DAY} LIKE $1
-    GROUP BY z.id, z.nombre ORDER BY recaudado DESC`, [like]);
+    SELECT z.nombre AS zona,
+           (SELECT COUNT(*) FROM comerciantes c WHERE c.zona_id = z.id AND c.estado <> 'inactivo')::int AS comerciantes,
+           COALESCE(cobros.recaudado, 0) AS recaudado
+    FROM zonas z LEFT JOIN (
+      SELECT ${ZONA_DEL_COBRO} AS zona_id, SUM(co.monto) AS recaudado
+      FROM transacciones co JOIN comerciantes c ON c.id = co.comerciante_id
+      WHERE co.estado = 'confirmado' AND ${PAYMENT_DAY} LIKE $1 GROUP BY 1
+    ) cobros ON cobros.zona_id = z.id
+    ORDER BY recaudado DESC`, [like]);
   const byCategory = await rows(db, `
-    SELECT r.nombre AS rubro, COALESCE(SUM(co.monto), 0) AS recaudado, COUNT(co.id) AS pagos
-    FROM rubros r LEFT JOIN comerciantes c ON c.rubro_id = r.id
-    LEFT JOIN transacciones co ON co.comerciante_id = c.id AND co.estado = 'confirmado' AND ${PAYMENT_DAY} LIKE $1
-    GROUP BY r.id, r.nombre ORDER BY recaudado DESC`, [like]);
+    SELECT r.nombre AS rubro, COALESCE(cobros.recaudado, 0) AS recaudado, COALESCE(cobros.pagos, 0) AS pagos
+    FROM rubros r LEFT JOIN (
+      SELECT ${RUBRO_DEL_COBRO} AS rubro_id, SUM(co.monto) AS recaudado, COUNT(*)::int AS pagos
+      FROM transacciones co JOIN comerciantes c ON c.id = co.comerciante_id
+      WHERE co.estado = 'confirmado' AND ${PAYMENT_DAY} LIKE $1 GROUP BY 1
+    ) cobros ON cobros.rubro_id = r.id
+    ORDER BY recaudado DESC`, [like]);
   const byCollector = await rows(db, `
     SELECT COALESCE(u.nombre, 'Sin asignar') AS cobrador, COALESCE(SUM(co.monto), 0) AS recaudado, COUNT(co.id) AS pagos
     FROM transacciones co LEFT JOIN usuarios u ON u.id = co.cobrador_id
@@ -520,15 +547,24 @@ async function enGrupos(db, lista, fn) {
 // en 3 s, el respaldo local con el mismo algoritmo (prediccion.js). Nada de factores fijos.
 const MESES_HISTORIA = 12;
 
-// Días marcados por mes y zona del comerciante, la misma zona con la que se agrupan los cobros en la proyección.
+// Días marcados por mes y zona que tenía el comerciante el día de la marca (0028), la misma zona con la que
+// se agrupan los cobros en la proyección.
 // Sirve para saber si una caída viene de menos asistencia o de que asisten y no pagan. Como en la liquidación,
 // la marca de la app manda sobre las del Excel de ese puesto y día.
 function diasMarcadosPorZona(db, desde, hasta) {
   return rows(db, `
-    SELECT to_char(a.fecha, 'YYYY-MM') AS mes, c.zona_id, z.nombre AS zona, COUNT(DISTINCT (a.puesto_id, a.fecha))::int AS dias
-    FROM asistencias_feriales a
-    JOIN comerciantes c ON c.id = a.comerciante_id
-    LEFT JOIN zonas z ON z.id = c.zona_id
+    SELECT to_char(a.fecha, 'YYYY-MM') AS mes, a.zona_id, z.nombre AS zona, COUNT(DISTINCT (a.puesto_id, a.fecha))::int AS dias
+    FROM (
+      SELECT a.puesto_id, a.fecha, a.sesion, a.asistio, c.zona_id
+      FROM asistencias_feriales a JOIN comerciantes c ON c.id = a.comerciante_id
+      WHERE NOT EXISTS (SELECT 1 FROM comerciantes_datos_cambios d WHERE d.comerciante_id = a.comerciante_id AND d.campo = 'zona_id')
+      UNION ALL
+      SELECT a.puesto_id, a.fecha, a.sesion, a.asistio, COALESCE(zc.valor_anterior, c.zona_id)
+      FROM asistencias_feriales a JOIN comerciantes c ON c.id = a.comerciante_id
+      ${CAMBIO_POSTERIOR('zc', 'zona_id', 'a.comerciante_id', 'a.fecha')}
+      WHERE EXISTS (SELECT 1 FROM comerciantes_datos_cambios d WHERE d.comerciante_id = a.comerciante_id AND d.campo = 'zona_id')
+    ) a
+    LEFT JOIN zonas z ON z.id = a.zona_id
     WHERE a.asistio AND to_char(a.fecha, 'YYYY-MM') BETWEEN $1 AND $2
       AND (a.sesion = '' OR NOT EXISTS (
         SELECT 1 FROM asistencias_feriales app WHERE app.puesto_id = a.puesto_id AND app.fecha = a.fecha AND app.sesion = ''))
@@ -570,13 +606,15 @@ export async function generateForecastProjection(db, options = {}) {
     meses.unshift(mes);
   }
   const filas = await rows(db, `
-    SELECT to_char(${LOCAL('co.fecha_cobro_cliente')}, 'YYYY-MM') AS mes, c.zona_id, z.nombre AS zona, c.rubro_id, r.nombre AS rubro,
-           SUM(co.monto) AS monto
-    FROM transacciones co
-    JOIN comerciantes c ON c.id = co.comerciante_id
-    LEFT JOIN zonas z ON z.id = c.zona_id
-    LEFT JOIN rubros r ON r.id = c.rubro_id
-    WHERE co.estado = 'confirmado' AND to_char(${LOCAL('co.fecha_cobro_cliente')}, 'YYYY-MM') BETWEEN $1 AND $2
+    SELECT t.mes, t.zona_id, z.nombre AS zona, t.rubro_id, r.nombre AS rubro, SUM(t.monto) AS monto
+    FROM (
+      SELECT to_char(${LOCAL('co.fecha_cobro_cliente')}, 'YYYY-MM') AS mes, ${ZONA_DEL_COBRO} AS zona_id,
+             ${RUBRO_DEL_COBRO} AS rubro_id, co.monto
+      FROM transacciones co JOIN comerciantes c ON c.id = co.comerciante_id
+      WHERE co.estado = 'confirmado' AND to_char(${LOCAL('co.fecha_cobro_cliente')}, 'YYYY-MM') BETWEEN $1 AND $2
+    ) t
+    LEFT JOIN zonas z ON z.id = t.zona_id
+    LEFT JOIN rubros r ON r.id = t.rubro_id
     GROUP BY 1, 2, 3, 4, 5`, [meses[0], meses[meses.length - 1]]);
   const primerMes = filas.reduce((min, fila) => (fila.mes < min ? fila.mes : min), meses[meses.length - 1]);
   const usados = filas.length ? meses.filter((item) => item >= primerMes) : [];
@@ -867,8 +905,10 @@ export async function getReportRows(db, options = {}) {
   const params = [];
   const period = String(options.periodo || '').trim();
   if (period) { params.push(`${period}%`); conditions.push(`${PAYMENT_DAY} LIKE $${params.length}`); }
-  if (options.zona_id) { params.push(Number(options.zona_id)); conditions.push(`c.zona_id = $${params.length}`); }
-  if (options.rubro_id) { params.push(Number(options.rubro_id)); conditions.push(`c.rubro_id = $${params.length}`); }
+  // El filtro y las columnas de zona y rubro son los del día del cobro (0028), así el reporte de un mes
+  // cerrado no cambia al corregir el padrón.
+  if (options.zona_id) { params.push(Number(options.zona_id)); conditions.push(`${ZONA_DEL_COBRO} = $${params.length}`); }
+  if (options.rubro_id) { params.push(Number(options.rubro_id)); conditions.push(`${RUBRO_DEL_COBRO} = $${params.length}`); }
   if (options.cobrador_id) { params.push(Number(options.cobrador_id)); conditions.push(`co.cobrador_id = $${params.length}`); }
   if (options.comerciante_id) { params.push(Number(options.comerciante_id)); conditions.push(`co.comerciante_id = $${params.length}`); }
   const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
@@ -878,7 +918,7 @@ export async function getReportRows(db, options = {}) {
       co.monto, co.metodo_pago, co.codigo_operacion, co.estado, cp.numero_correlativo AS comprobante,
       co.observaciones, co.tickets, co.motivo_anulacion, an.nombre AS anulado_por, ${TS('co.anulado_en')} AS fecha_anulacion
     FROM transacciones co JOIN comerciantes c ON c.id = co.comerciante_id
-      JOIN rubros r ON r.id = c.rubro_id JOIN zonas z ON z.id = c.zona_id
+      LEFT JOIN rubros r ON r.id = ${RUBRO_DEL_COBRO} LEFT JOIN zonas z ON z.id = ${ZONA_DEL_COBRO}
       LEFT JOIN usuarios u ON u.id = co.cobrador_id LEFT JOIN comprobantes cp ON cp.id = co.comprobante_id
       LEFT JOIN usuarios an ON an.id = co.anulado_por
     ${where} ORDER BY co.fecha_cobro_cliente DESC`, params);
@@ -2768,8 +2808,18 @@ export async function registrarCobro(db, payload, { audit = null, allowExcess = 
   const cobro = await first(db, `
     INSERT INTO transacciones
       (comerciante_id, tarifa_id, cobrador_id, comprobante_id, monto, concepto, metodo_pago, codigo_operacion,
-       hash_transaccion, observaciones, estado, fecha_cobro_cliente, inicio_atencion, periodo_aplicado, tickets)
-    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'confirmado', $11, $12, $13, $14::jsonb) RETURNING id`,
+       hash_transaccion, observaciones, estado, fecha_cobro_cliente, inicio_atencion, periodo_aplicado, tickets,
+       zona_cobro_id, rubro_cobro_id)
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'confirmado', $11, $12, $13, $14::jsonb,
+      -- La zona y el rubro del día del cobro quedan en la fila (0028): un cobro sin señal fechado días atrás
+      -- toma el valor de ese día, por si el comerciante cambió entre el cobro y la sincronización.
+      COALESCE((SELECT valor_anterior FROM comerciantes_datos_cambios
+                 WHERE comerciante_id = $1 AND campo = 'zona_id' AND desde > ${LOCAL('$11::timestamptz')}::date
+                 ORDER BY desde, id LIMIT 1), (SELECT zona_id FROM comerciantes WHERE id = $1)),
+      COALESCE((SELECT valor_anterior FROM comerciantes_datos_cambios
+                 WHERE comerciante_id = $1 AND campo = 'rubro_id' AND desde > ${LOCAL('$11::timestamptz')}::date
+                 ORDER BY desde, id LIMIT 1), (SELECT rubro_id FROM comerciantes WHERE id = $1)))
+    RETURNING id`,
   [comercianteId, tarifaId, cobradorId, comprobante.id, monto, concepto, metodoPago, uniqueCode,
     hashTransaccion, observaciones || null, clientDate, inicioAtencion, periodoAplicado,
     ticketsDeclarados.length ? JSON.stringify(ticketsDeclarados) : null]);
