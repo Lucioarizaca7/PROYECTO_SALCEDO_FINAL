@@ -112,3 +112,4 @@ Para ver los roles exactos de una ruta: `grep -rn "'/api/v1/<ruta>" apps/server/
 - **0027:** `comerciantes_estado_cambios` (trigger en `comerciantes.estado`): un mes de baja entero no paga la cuota mensual.
 - **0028:** `transacciones.zona_cobro_id` y `rubro_cobro_id`: cada cobro guarda la zona y el rubro del día del cobro; los existentes se rellenan con la historia de la 0025.
 - **0029:** repara en `comerciantes_estado_cambios` las reactivaciones de la importación del padrón que la 0027 no pudo reconstruir (sin datos nuevos ni restricciones).
+- **0030:** quita la marca de asistencia que puso un cobro sin señal con fecha fuera de rango, si su revisión sigue pendiente (desde ahora `registrarCobro` no la pone).

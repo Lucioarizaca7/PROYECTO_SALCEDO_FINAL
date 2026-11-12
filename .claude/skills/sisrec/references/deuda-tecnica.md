@@ -133,6 +133,14 @@ Corregidos, con prueba en `tests/codigo-operacion.test.js`, `tests/tipo-via-de-c
 
 Queda: el paquete de jornada calcula dos veces el mes en curso (`calcularLiquidacion` y otra vez dentro de `calcularDeudaAcumulada`). Con un padrón mucho mayor convendrá la liquidación en lote (paso 6).
 
+## Decimocuarta revisión del 12/11/2026: cobro sin señal con la hora mal
+
+Corregido, con prueba en `tests/cobro-fecha-dudosa.test.js` (migración 0030): un cobro sin señal con la fecha del celular fuera de rango (futura o de más de 3 días) quedaba observado, pero `registrarCobro` marcaba igual la asistencia de ese día: un día cobrado de S/ 3 en un mes que no era, saltándose la ventana de 3 días de las marcas de la app. Comprobado por HTTP en una copia de la demo: un cobro fechado el 22/12 dejaba una marca futura; ahora no.
+
+Quedan (vistos en esta revisión, sin arreglar):
+- `aplicarCobroLocal` (cliente, sin señal): al pagar un mes atrasado con más que su saldo, la deuda vencida local baja el monto entero y no solo el saldo de ese mes.
+- Cambiar el DNI de un comerciante por el de uno dado de baja responde solo "El registro ya existe" (la base lo impide, `dni_ruc` es único); no dice que el documento es de un dado de baja que se puede reactivar.
+
 ## Decimotercera revisión del 12/11/2026: reactivaciones del padrón
 
 Corregido, con prueba en `tests/reactivacion-del-padron.test.js` (migración 0029): la importación del padrón reactivaba sin un registro por comerciante en la auditoría, la 0027 no pudo reconstruir esas reactivaciones y se cobraban sus meses de baja (en la copia de la demo, un reactivado tras una baja de julio debía S/ 990 en vez de S/ 900). La 0029 busca los huecos de la historia (una baja seguida de algo que no es baja) y fija la reactivación según la decisión del usuario (`reglas-negocio.md`). `ESTADO_EN_MES_SQL` ordena ahora por `desde, registrado_en, id`, porque una reactivación reparada puede caer el mismo día que el cambio siguiente con un id mayor.

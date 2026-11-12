@@ -2754,7 +2754,12 @@ export async function registrarCobro(db, payload, { audit = null, allowExcess = 
   const clientDate = payload.fecha_cobro && !Number.isNaN(Date.parse(payload.fecha_cobro)) ? new Date(payload.fecha_cobro) : new Date();
   const inicioAtencion = parseInicioAtencion(payload.inicio_atencion ?? payload.inicioAtencion, clientDate);
   if (payload.periodo && !PERIODO_RE.test(String(payload.periodo))) throw new ValidationError('El periodo debe tener formato AAAA-MM');
-  await marcarDiaCobrado(db, comercianteId, cobradorId, todayInLima(clientDate), payload.periodo);
+  // Solo sin señal la fecha viene del celular (en línea la fija fechaCobroEnLinea en la ruta).
+  const fechaDudosa = allowExcess ? fechaCobroFueraDeRango(clientDate) : null;
+  // Una fecha que no es creíble no marca el día (revisión del 12/11/2026): el cobro queda observado y ese día no
+  // se vuelve día cobrado. Antes un celular con la hora mal marcaba un día futuro o de hace semanas y creaba deuda
+  // en otro mes, saltándose la ventana de DIAS_COBRO_SIN_SENAL de las marcas de la app (decisión del 22/10/2026).
+  if (!fechaDudosa) await marcarDiaCobrado(db, comercianteId, cobradorId, todayInLima(clientDate), payload.periodo);
   // Sin señal el dinero ya se recibió: un comerciante sin tarifa vigente no rechaza el cobro, lo deja observado
   // (migración 0024). En línea se sigue rechazando.
   let liquidation;
@@ -2793,8 +2798,6 @@ export async function registrarCobro(db, payload, { audit = null, allowExcess = 
     if (!allowExcess) throw new ValidationError(tickets.problema);
     observacion = observacion ? `${observacion}. ${tickets.problema}` : `Cobro offline con tickets observados: ${tickets.problema}`;
   }
-  // Solo sin señal la fecha viene del celular (en línea la fija fechaCobroEnLinea en la ruta).
-  const fechaDudosa = allowExcess ? fechaCobroFueraDeRango(clientDate) : null;
   if (fechaDudosa) {
     observacion = observacion ? `${observacion}. Fecha fuera de rango: ${fechaDudosa}` : `Cobro offline con fecha fuera de rango: ${fechaDudosa}`;
   }
