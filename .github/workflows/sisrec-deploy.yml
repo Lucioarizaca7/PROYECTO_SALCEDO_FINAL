@@ -1,4 +1,4 @@
-# Despliegue al servidor al crear un tag sisrec-v*. Secretos y entorno: docs/despliegue-produccion.md, sección 8.
+# Despliegue al servidor al crear un tag sisrec-v*. Secretos y entorno: docs/despliegue-produccion.md, sección 9.
 name: SISREC despliegue
 
 on:
