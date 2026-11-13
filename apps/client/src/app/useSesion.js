@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { apiBase, getDeviceId, getDeviceName, logoutSession, saveSession, SESSION_EXPIRED_EVENT } from '../services/session';
+import { apiBase, getDeviceId, getDeviceName, logoutSession, saveSession, SESSION_EXPIRED_EVENT, leerJson } from '../services/session';
 
 function readStoredUser() {
   try {
@@ -53,7 +53,7 @@ export function useSesion() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ ...credentials, device_id: getDeviceId(), device_nombre: getDeviceName() })
       });
-      const data = await response.json();
+      const data = await leerJson(response);
       if (!response.ok) throw new Error(data.message || 'Credenciales inválidas');
 
       saveSession(data);

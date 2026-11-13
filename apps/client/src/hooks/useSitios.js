@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { pathOf } from '../app/navegacion';
 import { useSisrec } from '../app/SisrecContext';
 import { mapFetch, queueMapMutation } from '../services/mapaOffline';
-import { apiBase, randomId } from '../services/session';
+import { apiBase, randomId, leerJson } from '../services/session';
 
 // Páginas Sitios de venta y Mapa: filtros de la tabla y cambios de puestos.
 // Sin señal, cada cambio se guarda en la cola del mapa y se envía al volver la conexión.
@@ -33,7 +33,7 @@ export function useSitios() {
       setMessage(offlineMessage);
       return;
     }
-    const data = await response.json();
+    const data = await leerJson(response);
     if (!response.ok) throw new Error(data.message || failMessage);
     setMessage(data.message);
     await refresh();
@@ -101,7 +101,7 @@ export function useSitios() {
 
   const searchMerchants = useCallback(async (query) => {
     const response = await mapFetch(`${apiBase}/comerciantes?limit=10&search=${encodeURIComponent(query)}`);
-    const data = await response.json();
+    const data = await leerJson(response);
     return (data.data || []).filter((merchant) => merchant.estado !== 'inactivo');
   }, []);
 
@@ -121,7 +121,7 @@ export function useSitios() {
     if (!bajas) return setSitesWithInactive(null);
     try {
       const response = await mapFetch(`${apiBase}/puestos?incluirInactivos=1`);
-      const data = await response.json();
+      const data = await leerJson(response);
       if (!response.ok) throw new Error(data.message || 'No se pudieron cargar los puestos dados de baja');
       setSitesWithInactive(data.data || []);
     } catch (error) {

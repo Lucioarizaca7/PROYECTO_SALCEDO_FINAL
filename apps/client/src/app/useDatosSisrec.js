@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { fechaDeTexto, formatPEN } from '../lib/formato';
 import { periodoEnLima } from '../services/jornadaOffline';
 import { readMapSnapshot, saveMapSnapshot, syncPendingMapMutations } from '../services/mapaOffline';
-import { apiBase, authFetch } from '../services/session';
+import { apiBase, authFetch, leerJson } from '../services/session';
 
 const EMPTY_OPERATIONAL = { porZona: [], porRubro: [], porCobrador: [] };
 const EMPTY_FORECAST = { totalProyectado: 0, promedioDiario: 0, porZona: [], porRubro: [] };
@@ -40,7 +40,7 @@ export function useDatosSisrec({ user, onSessionExpired }) {
       try {
         const response = await fetch(`${apiBase}/publico/resumen`, { signal: controller.signal });
         if (!response.ok) throw new Error('API no disponible');
-        const dashboard = await response.json();
+        const dashboard = await leerJson(response);
         setDashboardStats(toDashboardStats(dashboard.stats));
         setOperational(dashboard.operational || EMPTY_OPERATIONAL);
         setApiConnected(true);
@@ -59,7 +59,7 @@ export function useDatosSisrec({ user, onSessionExpired }) {
         // Un módulo que el rol no puede ver queda vacío en vez de vaciar todo el panel.
         if (response.status === 403) return { data: [], total: 0 };
         if (response.status === 401) throw Object.assign(new Error('Tu sesión expiró. Ingresa de nuevo.'), { sessionExpired: true });
-        const body = await response.json();
+        const body = await leerJson(response);
         if (!response.ok) throw new Error(body.message || `Error ${response.status}`);
         return body;
       };

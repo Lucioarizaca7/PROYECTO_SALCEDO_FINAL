@@ -129,6 +129,20 @@ const expiredResponse = (error) => new Response(JSON.stringify({ message: error.
  * fetch autenticado con renovación transparente del token. Los errores de red se propagan tal cual
  * (TypeError), para que quien llama pueda pasar al modo sin señal.
  */
+export const MENSAJE_SIN_SERVIDOR = 'El servidor no respondió. Intenta de nuevo en un momento.';
+
+/**
+ * Cuerpo JSON de una respuesta de la API (12/11/2026). Con un 5xx o una página que no es JSON (el proxy responde
+ * 502/503/504 en HTML cuando la API está caída) lanza un mensaje claro: antes cada pantalla mostraba
+ * "Unexpected token '<', \"<html>...\" is not valid JSON". Un 4xx con JSON se devuelve: la pantalla muestra su message.
+ */
+export async function leerJson(response) {
+  if (Number(response?.status) >= 500) throw new Error(MENSAJE_SIN_SERVIDOR);
+  const body = await response.json().catch(() => null);
+  if (body === null || typeof body !== 'object') throw new Error(MENSAJE_SIN_SERVIDOR);
+  return body;
+}
+
 export async function authFetch(url, options = {}) {
   // Página recién abierta: aún no hay token de acceso en memoria; se pide con la cookie.
   if (!accessToken) {

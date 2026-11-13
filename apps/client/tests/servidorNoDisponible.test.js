@@ -25,3 +25,14 @@ test('la cola sin señal: 502 es sin conexión, 500 es un error que se reintenta
   const ok = crearTransporteLote({ url: '/x', deviceId: 'd', fetchImpl: async () => respuesta(200, { data: [{ status: 'SUCCESS' }] }) });
   assert.deepEqual(await ok([]), [{ status: 'SUCCESS' }]);
 });
+
+test('leerJson: una página del proxy da un mensaje claro y un error con JSON pasa su mensaje', async () => {
+  const { leerJson, MENSAJE_SIN_SERVIDOR } = await import('../src/services/session.js');
+  const html = { status: 502, json: async () => { throw new SyntaxError("Unexpected token '<'"); } };
+  await assert.rejects(leerJson(html), { message: MENSAJE_SIN_SERVIDOR }, 'antes la pantalla decía "Unexpected token"');
+  const htmlConOk = { status: 200, json: async () => { throw new SyntaxError("Unexpected token '<'"); } };
+  await assert.rejects(leerJson(htmlConOk), { message: MENSAJE_SIN_SERVIDOR });
+  await assert.rejects(leerJson({ status: 500, json: async () => ({ message: 'Error interno del servidor' }) }), { message: MENSAJE_SIN_SERVIDOR });
+  assert.deepEqual(await leerJson({ status: 200, json: async () => ({ data: [1] }) }), { data: [1] });
+  assert.deepEqual(await leerJson({ status: 409, json: async () => ({ message: 'El registro ya existe' }) }), { message: 'El registro ya existe' });
+});

@@ -67,7 +67,7 @@ PostgreSQL ─► db.js (reglas + SQL, recibe `db` primero) ─► routes/<modul
 | Tarifa aplicable | `findApplicableTariff` | elegir tarifa a mano |
 | Tickets de un cobro | `seriesDelComerciante` + `validarTicketsCobro` | validar tickets en la ruta |
 | Fecha y periodo | `todayInLima()` / `currentPeriod()`; en el cliente `periodoEnLima()` | `new Date().toISOString().slice(…)` |
-| Llamadas HTTP del cliente | `authFetch` | `fetch` con el token a mano, otro cliente HTTP |
+| Llamadas HTTP del cliente | `authFetch` y su cuerpo con `leerJson` (nunca `response.json()` suelto) | `fetch` con el token a mano, otro cliente HTTP |
 
 Una versión en lote de una función única solo se acepta con una prueba que compare sus resultados con la original.
 

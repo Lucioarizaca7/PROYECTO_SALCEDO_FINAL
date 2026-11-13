@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useSisrec } from '../app/SisrecContext';
-import { apiBase, authFetch } from '../services/session';
+import { apiBase, authFetch, leerJson } from '../services/session';
 
 const EMPTY_ZONE = { nombre: '', descripcion: '', tipo_via: '' };
 const emptyCalle = (zonaId = '') => ({ zona_id: String(zonaId), nombre: '', descripcion: '' });
@@ -19,7 +19,7 @@ export function useZonas() {
   const loadCatalog = async () => {
     try {
       const response = await authFetch(`${apiBase}/zonas`);
-      const data = await response.json();
+      const data = await leerJson(response);
       if (!response.ok) throw new Error(data.message || 'No se pudieron cargar las zonas');
       const zonas = Array.isArray(data.data) ? data.data : [];
       setZoneRecords(zonas);
@@ -39,7 +39,7 @@ export function useZonas() {
     setMessage('');
     try {
       const response = await authFetch(endpoint, options);
-      const data = await response.json();
+      const data = await leerJson(response);
       if (!response.ok) throw new Error(data.message || fallbackMessage);
       setMessage(data.message);
       onSuccess?.();

@@ -133,6 +133,14 @@ Corregidos, con prueba en `tests/codigo-operacion.test.js`, `tests/tipo-via-de-c
 
 Queda: el paquete de jornada calcula dos veces el mes en curso (`calcularLiquidacion` y otra vez dentro de `calcularDeudaAcumulada`). Con un padrón mucho mayor convendrá la liquidación en lote (paso 6).
 
+## Vigesimotercera revisión del 12/11/2026: "Unexpected token" en el resto de pantallas
+
+Corregido, con prueba en `apps/client/tests/servidorNoDisponible.test.js`; comprobado en el navegador con el proxy respondiendo 502 en una copia de la demo:
+- **21 lecturas `response.json()` sin protección** en 9 archivos (inicio de sesión, panel, portal, caja, comerciantes, sitios, tarifas, zonas, pagos): con una página HTML del proxy mostraban `Unexpected token '<'...`. Ahora pasan por `leerJson` (`services/session.js`): un 5xx o algo que no es JSON da "El servidor no respondió. Intenta de nuevo en un momento."; un 4xx con JSON sigue mostrando el mensaje del servidor. Reproducido en el inicio de sesión.
+- **"Cobrar" desde Sitios o el Mapa con el servidor caído** solo mostraba un error; ahora toma el saldo del padrón del celular, como la búsqueda.
+- Descartado: un pedido sin cuerpo JSON ya respondía 400 (lo valida el middleware de cada ruta), no 500.
+- Toda lectura nueva de una respuesta de la API usa `leerJson`, nunca `response.json()` suelto.
+
 ## Vigesimosegunda revisión del 12/11/2026: caídas y fallos de pantalla
 
 Corregido, con prueba en `tests/conexion-perdida.test.js` (servidor) y `apps/client/tests/servidorNoDisponible.test.js`. Cada fallo se reprodujo con el código anterior en una copia de la demo y se comprobó corregido:
