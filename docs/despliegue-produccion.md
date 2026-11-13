@@ -1,6 +1,8 @@
-# Despliegue en producción (fase 4)
+# Instalación del servidor de SISREC
 
-Paso a paso para dejar SISREC en un servidor propio. El sistema queda en un VPS con Docker Compose y cinco contenedores:
+Paso a paso para dejar SISREC en un servidor propio, cargar los datos reales y preparar los celulares de los cobradores para el piloto.
+
+El sistema queda en un VPS con Docker Compose y cinco contenedores:
 
 | Contenedor | Qué hace |
 |---|---|
@@ -14,13 +16,17 @@ Solo `web` queda expuesto a internet, por los puertos 80 y 443.
 
 > Lo marcado con **[tú]** solo lo puede hacer la municipalidad o el responsable del proyecto: contratar, pagar, decidir nombres o tener acceso a cuentas.
 
+**Antes de empezar:** el servidor descarga la rama `main` de GitHub. Lo que se quiera instalar debe estar unido a `main` (el pull request de la rama de trabajo, ya revisado).
+
 ## 1. Servidor y dominio **[tú]**
 
-1. Contratar un VPS Ubuntu 24.04 de 2 vCPU y 4 GB de RAM (unos US$ 24 al mes en DigitalOcean o Akamai Linode). Alcanza de sobra para 120 comerciantes y 5 usuarios.
+1. Contratar un VPS Ubuntu 24.04 de 2 vCPU y 4 GB de RAM (unos US$ 24 al mes en DigitalOcean o Akamai Linode). Alcanza para el piloto de 400 a 600 comerciantes y unos 10 usuarios.
 2. Registrar el dominio y crear un registro DNS **A** que apunte a la IP del servidor.
    - Si será `.gob.pe`, el trámite va con la Secretaría de Gobierno y Transformación Digital.
    - Para un servidor de pruebas sin dominio sirve `203-0-113-10.sslip.io`, poniendo la IP con guiones.
 3. Crear un bucket S3 compatible para los respaldos (DigitalOcean Spaces, Linode Object Storage o Backblaze B2) con una regla de ciclo de vida de 30 días. Anotar el endpoint, la access key y la secret key.
+
+Sin HTTPS los celulares no pueden instalar la app ni trabajar sin señal: por eso el dominio (o `sslip.io`) es obligatorio, una IP sola no sirve.
 
 ## 2. Preparar el servidor
 
@@ -40,18 +46,16 @@ cd /opt/sisrec
 cp .env.production.example .env.production
 ```
 
-El clon toma la rama `main`: lo que se quiera desplegar debe estar unido ahí.
-
 En `.env.production` hay que completar:
 
 | Variable | Qué poner |
 |---|---|
 | `DOMAIN` | el dominio del paso 1 |
 | `POSTGRES_PASSWORD` | una clave larga |
-| `JWT_SECRET` | el resultado de `openssl rand -hex 48` |
+| `JWT_SECRET` | el resultado de `openssl rand -hex 48` (mínimo 32 caracteres) |
 | `BACKUP_S3_*` | los datos del bucket |
 
-Este archivo solo existe en el servidor: no se sube a GitHub.
+Las demás variables ya traen un valor razonable. Este archivo solo existe en el servidor: no se sube a GitHub.
 
 ## 3. Primer arranque
 
@@ -61,7 +65,9 @@ docker compose --env-file .env.production -f docker-compose.prod.yml ps        #
 curl https://$DOMINIO/api/v1/health                                             # {"status":"ok","base_de_datos":"ok","analitica":"ok"}
 ```
 
-La API aplica sola las migraciones al arrancar. En producción **no** se crean los usuarios de demostración.
+- La API aplica sola las migraciones al arrancar (hoy, de la 0001 a la 0031).
+- En producción **no** se crean los usuarios de demostración (`admin@salcedo.gob.pe` y los demás).
+- La primera vez Caddy tarda uno o dos minutos en obtener el certificado.
 
 ## 4. Cuentas reales **[tú decides los nombres y correos]**
 
@@ -72,27 +78,53 @@ $C node dist/cli/crear-usuario.js --rol cobrador       # una vez por cada cobrad
 $C node dist/cli/crear-usuario.js --rol auditor        # jefa de área / auditor
 ```
 
+| Rol | Qué puede hacer |
+|---|---|
+| `super_admin` | todo: tarifas, zonas, lotes de tickets, carnets, anular cobros, resolver los cobros observados y revocar sesiones de celulares |
+| `cobrador` | cobrar, marcar asistencia, registrar la ubicación de puestos y cerrar su caja |
+| `auditor` | consultar: comerciantes, tarifas, tickets, auditoría, reportes y la lista de cobros observados (no los resuelve) |
+
 - Las claves tienen como mínimo 10 caracteres.
 - Nunca se escriben en la línea de comandos: el script las pregunta.
 
-## 5. Datos reales
+## 5. Datos reales, en este orden
 
-1. **Importar el padrón [tú entregas el Excel]:** en Comerciantes → Importar padrón, subir el Excel de la municipalidad. Primero se ve la vista previa y luego se confirma.
-2. **Revisar coordenadas.** Este comando lista los puestos a más de 2 km del centro de Salcedo y termina con código 2 si encuentra alguno:
+Todo esto se hace en la web, con la cuenta `super_admin`.
 
-   ```bash
-   $C node dist/cli/revisar-coordenadas.js
-   ```
+1. **Zonas y calles [tú confirmas las zonas]:** en *Configuración → Zonas y calles*, crear cada zona con su **Tipo de vía** (*Vía asfaltada* o *Vía sin asfaltar*) y sus calles.
+2. **Tarifas: el precio lo pone la zona [tú confirmas la ordenanza vigente]:** en *Configuración → Tarifas*, *Nueva tarifa*:
+   - **Rubro:** *Todos los rubros*. El rubro y los metros no cambian el precio.
+   - **Aplica a:** *Zonas con vía asfaltada*, *Zonas con vía sin asfaltar* o *Solo <zona>* si una zona tiene un precio propio.
+   - **Unidad:** *Por día cobrado*. Ejemplo: S/ 3 la vía asfaltada y S/ 2 la sin asfaltar.
+   - **Vigencia desde:** hoy o una fecha futura. Lo ya cobrado no cambia. Para cambiar un monto se crea una tarifa nueva y la anterior se cierra sola.
+   - Solo el `super_admin` crea y cierra tarifas.
+3. **Padrón [tú entregas el Excel]:** en *Gestión → Comerciantes*, *Carga masiva del padrón*:
+   - pulsar *Descargar plantilla oficial* si el Excel no tiene ese formato;
+   - subir el `.xlsx`: la previsualización no modifica datos y muestra los errores y advertencias;
+   - pulsar *Confirmar importación de N filas*.
+   - Después, revisar las coordenadas. Este comando lista los puestos a más de 2 km del centro de Salcedo y termina con código 2 si encuentra alguno:
 
-   Hay que corregirlos en el Mapa de sitios. El puesto de demostración S-001, por ejemplo, estaba a 63 km.
-3. **Cargar las tarifas [tú confirmas la ordenanza vigente]:**
-   - En Tarifas, crear las tarifas por rubro.
-   - Las de vía asfaltada y sin asfaltar se crean con "Aplica a: zonas con vía asfaltada / sin asfaltar".
-   - En Zonas, marcar el tipo de vía de cada zona.
-4. **Inicio de cobro:** en Tarifas, fijar el primer mes desde el que se suma la deuda acumulada (por ejemplo `2026-12`, el mes del piloto).
-5. **Carnets del portal:** con una cuenta `super_admin`, emitir los carnets desde Comerciantes, uno por uno o en lote (hasta 500), e imprimirlos. La llave se muestra una sola vez y un carnet nuevo anula el anterior.
+     ```bash
+     $C node dist/cli/revisar-coordenadas.js
+     ```
 
-## 6. Respaldos
+     Hay que corregirlos en el *Mapa de sitios*.
+4. **Inicio de cobro:** en *Tarifas*, *Deuda acumulada desde (inicio de cobro)*, elegir el primer mes que se cobra (por ejemplo `2026-12`, el mes del piloto) y pulsar *Guardar inicio de cobro*. Antes de ese mes no se suma deuda.
+5. **Tickets preimpresos [tú entregas los talonarios]:** en *Gestión → Tickets*, asignar a cada cobrador un lote de la serie **S3** (vía asfaltada) y uno de la **S2** (sin asfaltar), con *Desde el N°* y *Hasta el N°* de su talonario. El ticket es el comprobante físico que recibe el comerciante en cada cobro.
+6. **Carnets del portal:** en *Comerciantes*, *Emitir carnet*, uno por uno o en lote (hasta 500), e imprimirlos. La llave se muestra una sola vez y un carnet nuevo anula el anterior. Con el carnet, el comerciante ve sus pagos, el ticket que recibió en cada uno y descarga sus recibos en el portal.
+
+## 6. Celulares de los cobradores
+
+Con cada celular Android, en Chrome:
+
+1. Abrir `https://<dominio>` y aceptar el aviso **"Instala SISREC en este celular…"**, o desde el menú ⋮ → *Instalar aplicación*.
+2. Entrar con la cuenta del cobrador.
+3. En *Pagos y cobros*, panel de la jornada, pulsar *Descargar padrón y tarifas* hasta que diga **Listo para hoy**. Así puede cobrar sin señal; lo cobrado se sincroniza solo al volver la señal.
+4. Hacer un cobro de prueba pequeño y enviarlo con *Enviar por WhatsApp*: el recibo sale como imagen con su QR de verificación. No se usa impresora.
+
+Antes del piloto, hacer la **prueba en seco** con 2 cobradores y unos 20 comerciantes siguiendo [`guia-prueba-campo-offline.md`](guia-prueba-campo-offline.md) (instalación, cobros en modo avión, sincronización, recibo, portal).
+
+## 7. Respaldos
 
 | Qué | Cómo |
 |---|---|
@@ -104,7 +136,7 @@ La restauración de prueba carga la copia más reciente en una base temporal, mu
 
 Para restaurar de verdad tras un desastre, detener la API y usar `pg_restore --clean` sobre la base `sisrec`. Hacerlo con la guía de este documento a mano.
 
-## 7. Monitoreo y logs **[tú creas la cuenta de UptimeRobot]**
+## 8. Monitoreo y logs **[tú creas la cuenta de UptimeRobot]**
 
 - **UptimeRobot** (plan gratuito):
   - monitor HTTP(s) a `https://$DOMINIO/api/v1/health` cada 5 minutos;
@@ -116,7 +148,20 @@ Para restaurar de verdad tras un desastre, detener la API y usar `pg_restore --c
   docker compose --env-file .env.production -f docker-compose.prod.yml logs --tail 200 api
   ```
 
-## 8. Despliegues siguientes (GitHub Actions)
+## 9. Actualizar el servidor
+
+Antes de cada actualización, hacer un **respaldo manual** (paso 7). Las migraciones nuevas se aplican solas al arrancar la API y nunca borran datos.
+
+**A mano**, como `deploy`:
+
+```bash
+cd /opt/sisrec
+git pull origin main
+docker compose --env-file .env.production -f docker-compose.prod.yml up -d --build
+curl https://$DOMINIO/api/v1/health
+```
+
+**Con GitHub Actions** (recomendado cuando ya esté configurado):
 
 - `.github/workflows/sisrec-ci.yml` corre en cada push o pull request:
   - las pruebas de la API (con su propio PostgreSQL), del cliente y del modelo de analítica;
@@ -142,14 +187,30 @@ Después crear el entorno `produccion`, en Settings → Environments, para poder
 git tag sisrec-v1.0.0 && git push origin sisrec-v1.0.0
 ```
 
+## 10. Si algo falla
+
+| Síntoma | Qué pasa | Qué hacer |
+|---|---|---|
+| `/api/v1/health` responde 503 | la base de datos no contesta | `docker compose … logs --tail 100 postgres` y `docker compose … restart postgres` |
+| El navegador avisa de un certificado inválido | el DNS aún no apunta al servidor o los puertos 80/443 están cerrados | revisar el registro A y `ufw status`; luego `docker compose … restart web` |
+| El celular dice "El servidor no respondió" | el servidor está caído o lento | el cobrador sigue cobrando: el cobro queda en la cola sin señal y se sincroniza solo. Revisar el paso 8 |
+| Un cobro aparece "En revisión" | llegó sin señal con algo dudoso (hora, tickets, sin tarifa) | el `super_admin` lo resuelve en *Control → Revisión de cobros*: el dinero ya se recibió, nunca se descarta |
+| Un cobrador olvidó su clave | todavía no hay cambio de clave desde la web | crearle una cuenta nueva con otro correo (`crear-usuario`) y revocar las sesiones de la cuenta vieja en *Configuración → Dispositivos* |
+| Se perdió un celular | la sesión del celular sigue abierta | en *Configuración → Dispositivos*, revocar su sesión: tendrá que volver a ingresar con la clave |
+
 ## Lista de lo que te toca hacer a ti
 
+- [ ] Unir a `main` el pull request de la rama de trabajo.
 - [ ] Contratar el VPS y el dominio, y apuntar el DNS.
 - [ ] Crear el bucket de respaldos y su regla de 30 días.
 - [ ] Completar `.env.production` en el servidor.
 - [ ] Definir las cuentas reales (nombres y correos) y crearlas con los scripts.
+- [ ] Confirmar las zonas y su tipo de vía, y crear las tarifas por zona según la ordenanza.
 - [ ] Entregar el Excel del padrón real y revisar las coordenadas.
-- [ ] Confirmar las tarifas vigentes (ordenanza) y el tipo de vía de cada zona.
+- [ ] Fijar el mes de inicio de cobro.
+- [ ] Asignar los lotes de tickets S3 y S2 a cada cobrador.
+- [ ] Emitir e imprimir los carnets del portal.
+- [ ] Instalar la app en los celulares de los cobradores y hacer la prueba en seco.
 - [ ] Cargar los secretos en GitHub y crear el entorno `produccion`.
 - [ ] Crear el monitor en UptimeRobot.
 - [ ] Hacer la primera restauración de prueba y anotar el resultado.
