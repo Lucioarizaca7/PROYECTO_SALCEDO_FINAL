@@ -23,6 +23,8 @@ import { PortalPage } from './pages/PortalPage';
 import { SitiosPage } from './pages/SitiosPage';
 import { TarifasPage } from './pages/TarifasPage';
 import { TicketsPage } from './pages/TicketsPage';
+import { UsuariosPage } from './pages/UsuariosPage';
+import { MiClavePage } from './pages/MiClavePage';
 import { VerificarPage } from './pages/VerificarPage';
 import { ZonasPage } from './pages/ZonasPage';
 
@@ -40,6 +42,8 @@ function pageFor(key, { user, refresh }) {
     case 'reportes': return <ReportesPage />;
     case 'auditoria': return <AuditoriaPage />;
     case 'revision': return <ReviewPanel canResolve={user?.rol === 'super_admin'} onResolved={refresh} />;
+    case 'usuarios': return <UsuariosPage />;
+    case 'mi-clave': return <MiClavePage />;
     case 'dispositivos': return <DeviceSessions />;
     case 'ia': return <AnaliticaPage />;
     case 'tarifas': return <TarifasPage />;
@@ -84,7 +88,7 @@ function SisrecRoutes() {
   const afterLogin = navItems.some((item) => item.path === from && canSee(item, user.rol)) ? from : HOME_PATH;
 
   return (
-    <SisrecContext.Provider value={{ user, isOnline, jornada, offlineQueue, ...datos }}>
+    <SisrecContext.Provider value={{ user, isOnline, jornada, offlineQueue, avisoSesion: sesion.aviso, cerrarAvisoSesion: () => sesion.setAviso(''), ...datos }}>
       <Routes>
         <Route element={<AppShell onLogout={logout} />}>
           {navItems.map((item) => (

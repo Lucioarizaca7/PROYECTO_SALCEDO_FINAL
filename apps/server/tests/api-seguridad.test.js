@@ -62,7 +62,7 @@ function registeredWriteRoutes(stack = app.router.stack) {
 }
 
 // Escrituras que no cambian datos del sistema: entrar, renovar o cerrar la propia sesión.
-const SESION_PROPIA = new Set(['/api/v1/auth/login', '/api/v1/auth/refresh', '/api/v1/auth/logout', '/api/v1/auth/sesiones/:id', '/api/v1/portal/login']);
+const SESION_PROPIA = new Set(['/api/v1/auth/login', '/api/v1/auth/refresh', '/api/v1/auth/logout', '/api/v1/auth/sesiones/:id', '/api/v1/auth/mi-clave', '/api/v1/portal/login']);
 
 const concrete = (path) => path.replace(/:[A-Za-z_]+/g, '1');
 
@@ -72,7 +72,7 @@ test('toda ruta GET de la API exige token, salvo las públicas declaradas', asyn
   // públicas del recibo (fase 3), /tickets/series, /tickets/lotes, /tickets/cobradores, /tickets/mios y
   // /comerciantes/plantilla-padron, /tickets/lotes/:id/tickets y /comprobantes/:id/recibo (12/11/2026). Si cambia,
   // revise que las nuevas pidan token.
-  assert.equal(routes.length, 42, `cambió el número de rutas GET: ${routes.length}`);
+  assert.equal(routes.length, 43, `cambió el número de rutas GET: ${routes.length}`);
 
   const open = [];
   for (const path of routes) {

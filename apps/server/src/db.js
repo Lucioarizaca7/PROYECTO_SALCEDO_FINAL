@@ -201,16 +201,16 @@ export async function initializeDatabase({ seed = true } = {}) {
 // Cuentas reales del personal (en producción no hay semilla): super_admin, cobrador o auditor.
 const ROLES_PERSONAL = ['super_admin', 'cobrador', 'auditor'];
 
-export async function createUser({ nombre, email, password, rol = 'cobrador' }) {
+export async function createUser({ nombre, email, password, rol = 'cobrador' }, db = pool) {
   const cleanEmail = String(email || '').trim().toLowerCase();
   const cleanName = String(nombre || '').trim();
   const cleanRol = String(rol || '').trim();
   if (!ROLES_PERSONAL.includes(cleanRol)) throw new ValidationError(`El rol debe ser uno de: ${ROLES_PERSONAL.join(', ')}`);
   if (!cleanName) throw new ValidationError('El nombre es obligatorio');
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)) throw new ValidationError('Correo no válido');
-  if (String(password || '').length < 10) throw new ValidationError('La contraseña debe tener al menos 10 caracteres');
+  if (String(password || '').length < MIN_CLAVE) throw new ValidationError(`La contraseña debe tener al menos ${MIN_CLAVE} caracteres`);
 
-  const created = await first(pool, `
+  const created = await first(db, `
     INSERT INTO usuarios (nombre, email, password_hash, rol_id)
     SELECT $1, $2, $3, r.id FROM roles r WHERE r.codigo = $4
     ON CONFLICT (email) DO NOTHING
@@ -221,6 +221,118 @@ export async function createUser({ nombre, email, password, rol = 'cobrador' }) 
 
 export async function createAdminUser({ nombre, email, password }) {
   return createUser({ nombre, email, password, rol: 'super_admin' });
+}
+
+// ---------------------------------------------------------------------------
+// Usuarios del personal: pantalla Usuarios (solo super_admin; decisiones del usuario, 13/11/2026)
+// ---------------------------------------------------------------------------
+// Se crean super_admin, cobradores y auditores. Un usuario no se borra, se desactiva: sus cobros, cierres de
+// caja y la auditoría guardan quién los hizo. La clave nueva no obliga a cambiarla al entrar.
+
+export const MIN_CLAVE = 10;
+
+const USUARIO_SELECT = `
+  SELECT u.id, u.nombre, u.email, r.codigo AS rol, u.activo, u.creado_en,
+         (SELECT max(s.ultimo_uso_en) FROM sesiones_dispositivo s WHERE s.usuario_id = u.id) AS ultimo_ingreso
+  FROM usuarios u JOIN roles r ON r.id = u.rol_id`;
+
+const usuarioFila = (row) => row && { ...row, id: Number(row.id) };
+
+// Nunca devuelve el hash de la clave: lo usan la pantalla y la auditoría (payload previo y nuevo).
+export async function getUsuario(db, id) {
+  return usuarioFila(await first(db, `${USUARIO_SELECT} WHERE u.id = $1`, [Number(id)]));
+}
+
+export async function getUsuarios(db) {
+  return (await rows(db, `${USUARIO_SELECT} WHERE r.codigo = ANY($1) ORDER BY u.activo DESC, r.codigo, u.nombre`, [ROLES_PERSONAL]))
+    .map(usuarioFila);
+}
+
+// Cierra todas las sesiones del usuario y devuelve sus ids, para que la ruta corte también los tokens de
+// acceso que siguen vigentes (markSessionRevoked); si no, el usuario seguiría hasta 15 minutos más.
+async function cerrarSesionesDe(client, usuarioId, { revocadoPor, motivo, excepto = null }) {
+  const cerradas = await rows(client, `
+    UPDATE sesiones_dispositivo SET revocado_en = now(), revocado_por = $2, motivo_revocacion = $3
+    WHERE usuario_id = $1 AND revocado_en IS NULL AND ($4::bigint IS NULL OR id <> $4)
+    RETURNING id`, [Number(usuarioId), revocadoPor ? Number(revocadoPor) : null, motivo, excepto ? Number(excepto) : null]);
+  return cerradas.map((row) => Number(row.id));
+}
+
+/**
+ * Desactiva o reactiva una cuenta. Desactivar cierra sus sesiones al instante.
+ * No se puede desactivar la propia cuenta ni al último super_admin activo: nadie podría volver a entrar
+ * a administrar (bloquea las filas de super_admin para que dos desactivaciones a la vez no dejen cero).
+ */
+export async function cambiarEstadoUsuario(db, id, activo, { actorId }) {
+  const usuarioId = Number(id);
+  const quiereActivo = activo === true || activo === 'true';
+  if (activo !== true && activo !== false && activo !== 'true' && activo !== 'false') throw new ValidationError('Indique si la cuenta queda activa o desactivada');
+  return withTransaction(async (client) => {
+    const actual = await first(client, `
+      SELECT u.id, u.activo, r.codigo AS rol FROM usuarios u JOIN roles r ON r.id = u.rol_id
+      WHERE u.id = $1 FOR UPDATE OF u`, [usuarioId]);
+    if (!actual || !ROLES_PERSONAL.includes(actual.rol)) throw new NotFoundError('Usuario no encontrado');
+    if (actual.activo === quiereActivo) return { usuario: await getUsuario(client, usuarioId), sesionesCerradas: [], sinCambio: true };
+
+    let sesionesCerradas = [];
+    if (!quiereActivo) {
+      if (usuarioId === Number(actorId)) throw new ValidationError('No puede desactivar su propia cuenta');
+      if (actual.rol === 'super_admin') {
+        const otros = await rows(client, `
+          SELECT u.id FROM usuarios u JOIN roles r ON r.id = u.rol_id
+          WHERE r.codigo = 'super_admin' AND u.activo AND u.id <> $1 FOR UPDATE OF u`, [usuarioId]);
+        if (!otros.length) throw new ConflictError('Es el último super administrador activo: cree o active otro antes de desactivarlo');
+      }
+      sesionesCerradas = await cerrarSesionesDe(client, usuarioId, { revocadoPor: actorId, motivo: 'Cuenta desactivada' });
+    }
+    await client.query('UPDATE usuarios SET activo = $1 WHERE id = $2', [quiereActivo, usuarioId]);
+    return { usuario: await getUsuario(client, usuarioId), sesionesCerradas, sinCambio: false };
+  });
+}
+
+/**
+ * Pone una clave nueva (el super_admin se la dice a la persona; no se le pide cambiarla al entrar).
+ * Cierra las sesiones abiertas del usuario por si alguien más conocía la clave anterior; si es la propia
+ * cuenta, conserva la sesión desde la que se cambia.
+ */
+export async function cambiarClaveUsuario(db, id, password, { actorId, sesionActual = null }) {
+  const usuarioId = Number(id);
+  if (String(password || '').length < MIN_CLAVE) throw new ValidationError(`La contraseña debe tener al menos ${MIN_CLAVE} caracteres`);
+  return withTransaction(async (client) => {
+    const actual = await first(client, `
+      SELECT u.id, r.codigo AS rol FROM usuarios u JOIN roles r ON r.id = u.rol_id WHERE u.id = $1 FOR UPDATE OF u`, [usuarioId]);
+    if (!actual || !ROLES_PERSONAL.includes(actual.rol)) throw new NotFoundError('Usuario no encontrado');
+    await client.query('UPDATE usuarios SET password_hash = $1 WHERE id = $2',
+      [bcrypt.hashSync(String(password), config.bcryptSaltRounds), usuarioId]);
+    const sesionesCerradas = await cerrarSesionesDe(client, usuarioId, {
+      revocadoPor: actorId, motivo: 'Clave cambiada', excepto: usuarioId === Number(actorId) ? sesionActual : null
+    });
+    return { usuario: await getUsuario(client, usuarioId), sesionesCerradas };
+  });
+}
+
+/**
+ * Cada persona del personal cambia su propia clave (decisión del usuario, 13/11/2026), por ejemplo la que
+ * le entregó el super_admin al crear la cuenta o al ponerle una clave nueva. No es obligatorio.
+ * Pide la clave actual: quien encuentre la sesión abierta en un celular ajeno no puede cambiarla.
+ * Responde 400 (no 401) si la actual no coincide: un 401 haría que el cliente creyera vencida la sesión.
+ * Cierra las otras sesiones de la persona y conserva la del dispositivo desde el que la cambia.
+ */
+export async function cambiarMiClave(db, usuarioId, { actual, nueva, sesionActual = null }) {
+  const id = Number(usuarioId);
+  if (!actual) throw new ValidationError('Escriba su clave actual');
+  if (String(nueva || '').length < MIN_CLAVE) throw new ValidationError(`La clave nueva debe tener al menos ${MIN_CLAVE} caracteres`);
+  if (String(nueva) === String(actual)) throw new ValidationError('La clave nueva debe ser distinta de la actual');
+  return withTransaction(async (client) => {
+    const fila = await first(client, `
+      SELECT u.id, u.password_hash, r.codigo AS rol FROM usuarios u JOIN roles r ON r.id = u.rol_id
+      WHERE u.id = $1 AND u.activo FOR UPDATE OF u`, [id]);
+    if (!fila || !ROLES_PERSONAL.includes(fila.rol)) throw new NotFoundError('Usuario no encontrado');
+    if (!(await bcrypt.compare(String(actual), fila.password_hash))) throw new ValidationError('La clave actual no es correcta');
+    await client.query('UPDATE usuarios SET password_hash = $1 WHERE id = $2', [bcrypt.hashSync(String(nueva), config.bcryptSaltRounds), id]);
+    const sesionesCerradas = await cerrarSesionesDe(client, id, { revocadoPor: id, motivo: 'La persona cambió su clave', excepto: sesionActual });
+    return { usuario: await getUsuario(client, id), sesionesCerradas };
+  });
 }
 
 // Puestos con coordenadas lejos del centro de Salcedo (p. ej. S-001 de la semilla, a ~60 km): casi

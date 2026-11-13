@@ -1,5 +1,7 @@
-import { useEffect, useState } from 'react';
-import { apiBase, getDeviceId, getDeviceName, logoutSession, saveSession, SESSION_EXPIRED_EVENT, leerJson } from '../services/session';
+import { useEffect, useRef, useState } from 'react';
+import { apiBase, clearSession, getDeviceId, getDeviceName, logoutSession, saveSession, SESSION_EXPIRED_EVENT, leerJson } from '../services/session';
+import { cambioDeSesion, CLAVE_USUARIO, leerUsuario, USUARIO_SESION_EVENT } from '../services/sesionPestanas';
+import { formatRole } from '../lib/formato';
 
 function readStoredUser() {
   try {
@@ -22,6 +24,10 @@ function readStoredUser() {
 export function useSesion() {
   const [user, setUser] = useState(readStoredUser);
   const [error, setError] = useState('');
+  // Aviso de la barra superior cuando esta pestaña pasa a la cuenta con que se entró en otra pestaña.
+  const [aviso, setAviso] = useState('');
+  const userRef = useRef(user);
+  userRef.current = user;
 
   useEffect(() => {
     if (user) {
@@ -35,6 +41,7 @@ export function useSesion() {
   // La sesión del dispositivo venció o fue revocada: se pide ingresar de nuevo sin borrar la cola offline.
   const expire = (message) => {
     setUser(null);
+    setAviso('');
     setError(message || 'Tu sesión venció. Ingresa de nuevo; los cobros sin enviar se conservan en el celular.');
   };
 
@@ -42,6 +49,35 @@ export function useSesion() {
     const onExpired = (event) => expire(event.detail?.message);
     window.addEventListener(SESSION_EXPIRED_EVENT, onExpired);
     return () => window.removeEventListener(SESSION_EXPIRED_EVENT, onExpired);
+  }, []);
+
+  // La sesión es del navegador, no de la pestaña (services/sesionPestanas.js): la pestaña muestra siempre
+  // al usuario de la cookie, el que trae /auth/refresh o el que otra pestaña acaba de guardar al entrar o salir.
+  useEffect(() => {
+    const alRecibir = (recibido, { deOtraPestana }) => {
+      const cambio = cambioDeSesion(userRef.current, recibido);
+      if (cambio === 'igual') return;
+      // El token de acceso en memoria es de la cuenta anterior: el próximo pedido lo renueva con la cookie.
+      if (deOtraPestana) clearSession();
+      if (cambio === 'cerrar') {
+        expire('Se cerró la sesión en otra pestaña de este navegador. Ingresa de nuevo; los cobros sin enviar se conservan.');
+      } else {
+        setUser(recibido);
+        setError('');
+        setAviso('');
+        if (cambio === 'cambiar') setAviso(`En otra pestaña de este navegador se ingresó como ${recibido.nombre || recibido.email} (${formatRole(recibido.rol)}). Esta pestaña ahora usa esa cuenta.`);
+      }
+    };
+    const onRefresh = (event) => alRecibir(event.detail?.user || null, { deOtraPestana: false });
+    const onStorage = (event) => {
+      if (event.key === CLAVE_USUARIO) alRecibir(leerUsuario(event.newValue), { deOtraPestana: true });
+    };
+    window.addEventListener(USUARIO_SESION_EVENT, onRefresh);
+    window.addEventListener('storage', onStorage);
+    return () => {
+      window.removeEventListener(USUARIO_SESION_EVENT, onRefresh);
+      window.removeEventListener('storage', onStorage);
+    };
   }, []);
 
   const login = async (credentials) => {
@@ -58,6 +94,7 @@ export function useSesion() {
 
       saveSession(data);
       setUser(data.user);
+      setAviso('');
     } catch (loginError) {
       setError(loginError.message || 'No se pudo iniciar sesión');
     }
@@ -66,8 +103,9 @@ export function useSesion() {
   const logout = () => {
     setUser(null);
     setError('');
+    setAviso('');
     logoutSession();
   };
 
-  return { user, error, setError, login, logout, expire };
+  return { user, error, setError, aviso, setAviso, login, logout, expire };
 }

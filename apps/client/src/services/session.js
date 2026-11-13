@@ -11,6 +11,8 @@
  * Sin red no se cierra la sesión: el cobrador sigue trabajando offline.
  */
 
+import { USUARIO_SESION_EVENT } from './sesionPestanas.js';
+
 const KEYS = {
   device: 'sisrec-device-id'
 };
@@ -105,6 +107,10 @@ export function refreshSession() {
     }
     if (!response.ok) throw new Error(body.message || `No se pudo renovar la sesión (${response.status})`);
     saveSession({ token: body.token });
+    // La cookie es del navegador: si otra pestaña entró con otra cuenta, este es el usuario real (sesionPestanas.js).
+    if (body.user && typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent(USUARIO_SESION_EVENT, { detail: { user: body.user } }));
+    }
     return body.token;
   })().finally(() => {
     refreshing = null;
