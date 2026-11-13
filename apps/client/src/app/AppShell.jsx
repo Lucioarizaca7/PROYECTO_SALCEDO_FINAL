@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { NavLink, Outlet, useLocation } from 'react-router-dom';
 import { SyncStatusBadge } from '../components/ui/SyncStatusBadge';
 import { fechaLargaEnLima, formatRole, getInitials } from '../lib/formato';
+import { BotonInstalarApp } from '../pwa/BotonInstalarApp';
 import { periodoEnLima } from '../services/jornadaOffline';
 import { Icono } from './iconos';
 import { canSee, gruposMenu, navItemByPath, navItems, navItemsFor } from './navegacion';
@@ -62,6 +63,8 @@ export function AppShell({ onLogout }) {
             );
           })}
         </nav>
+
+        <BotonInstalarApp />
 
         <div className="sidebar-footer">
           <span className="sidebar-hoy-eyebrow">Hoy en Salcedo</span>
