@@ -75,4 +75,3 @@ En el cliente, la lógica pura (por ejemplo `sitesGeo.js` o `offlineQueue.js`) s
 
 - Hay dos endpoints para crear puestos (`POST /puestos` y `POST /puestos-mapa`) con lógica casi igual. No agregar un tercero.
 - Muchas validaciones están en `db.js` y no en `validation.ts`. Para código nuevo, elegir un solo lugar y usarlo siempre.
-- `src/utils/*.test.js` y `receiptFormatter.validation.js` del cliente no se ejecutan en ningún script.

@@ -24,7 +24,6 @@
 - `features/offline`: `useJornada`, `useOfflineQueue`, `ReviewPanel`, `DeviceSessions`, `FieldWorkPanel`.
 - `components/features/map`: `SitesMap` (Leaflet), `SitesMap25D` (mapbox-gl) y `sitesGeo.js`, que es lógica pura y tiene pruebas.
 - `services`: `session.js` (tokens, `authFetch`, renovación), `offlineQueue.js` + `offlineStore.js` (IndexedDB, huella SHA-256), `jornadaOffline.js` y `mapaOffline.js` + `colaMapa.js` (cambios del mapa sin señal; los rechazados se ven en `CambiosRechazadosMapa`).
-- `utils`: `bluetoothPrint.js`, `offlinePrintQueue.js`, `testable/receiptFormatter.js`.
 
 ## Flujo de datos
 
@@ -45,7 +44,7 @@ Mapa / Padrón:  zonas ─┐
                 tarifas ──────┘                                    └─ calcularLiquidacion (mes)
 
 Cobros: POST /cobros → registrarCobro (withTransaction, codigo_operacion)
-        → transacciones + comprobantes → PDF (/comprobantes/:id/pdf) o impresora Bluetooth
+        → transacciones + comprobantes → PDF (/comprobantes/:id/pdf), imagen por WhatsApp o PDF del portal
 
 Offline: GET /jornada/paquete → IndexedDB → cola → POST /cobros/sincronizar-lote
          → SUCCESS / IGNORED (repetido) / OBSERVED (cobros_observados → revisión)

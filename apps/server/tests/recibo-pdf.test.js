@@ -117,6 +117,22 @@ test('el recibo trae los tickets entregados con el cobro', async () => {
   assert.equal(pdf.subarray(0, 5).toString('latin1'), '%PDF-');
 });
 
+// Decisión del 13/11/2026: el ticket preimpreso es el comprobante físico y el portal guarda el recibo. Cada pago
+// del portal dice qué tickets se entregaron, para que el comerciante empareje su papel con el recibo.
+test('el portal muestra con cada pago los tickets preimpresos que se entregaron', async () => {
+  const [merchant] = await dosComerciantesConSaldo();
+  const conTicket = await cobrar(merchant, '2031-09');
+  await pool.query(`UPDATE transacciones SET tickets = '[{"serie":"S3","numero":12},{"serie":"S2","numero":4}]'::jsonb WHERE id = $1`, [conTicket.id]);
+  await cobrar(merchant, '2031-10');
+  const [{ llave }] = await emitirCarnets(pool, [merchant.id], 1);
+
+  const portal = await api('/portal/login', { method: 'POST', body: { identifier: merchant.dni_ruc, llave } });
+  assert.equal(portal.status, 200, portal.body?.message);
+  const pagos = portal.body.data.pagos;
+  assert.equal(pagos.find((item) => item.id === conTicket.id).tickets, 'S3 N° 000012, S2 N° 000004');
+  assert.equal(pagos.find((item) => item.id !== conTicket.id).tickets, '', 'sin tickets queda vacío');
+});
+
 // Ronda 19 (12/11/2026): el recibo oficial se vuelve a compartir, y cada cobrador solo ve los suyos.
 const ingresar = async (email, password) => (await api('/auth/login', { method: 'POST', body: { email, password, device_id: `pc-${email}` } })).body.token;
 

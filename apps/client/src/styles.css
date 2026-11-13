@@ -336,6 +336,12 @@ a:focus-visible {
   margin-bottom: 14px;
 }
 
+/* Tickets preimpresos de un pago del portal: el papel que el comerciante tiene en la mano. */
+.portal-tickets {
+  display: block;
+  color: var(--muted);
+}
+
 .portal-debt {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
