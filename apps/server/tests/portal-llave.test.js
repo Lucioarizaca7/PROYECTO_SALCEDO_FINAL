@@ -68,7 +68,15 @@ test('el carnet entrega una llave legible que solo se ve al emitirla', async () 
   const { rows: [acceso] } = await pool.query('SELECT llave_hash FROM comerciante_portal_acceso WHERE comerciante_id = $1', [comerciante.id]);
   assert.match(acceso.llave_hash, /^[0-9a-f]{64}$/, 'en la base queda solo la huella');
 
-  const { rows: [entry] } = await pool.query("SELECT * FROM auditoria_logs WHERE accion = 'EMITIR_CARNET' ORDER BY id DESC LIMIT 1");
+  // La auditoría se escribe justo después de responder, sin que la respuesta la espere (auditMutation): en una
+  // máquina lenta la fila aún no existía y la prueba fallaba al azar (CI del 13/11/2026). Se espera hasta 2 s.
+  let entry;
+  for (let intento = 0; intento < 20 && !entry; intento += 1) {
+    if (intento) await new Promise((resolve) => setTimeout(resolve, 100));
+    ({ rows: [entry] } = await pool.query(
+      "SELECT * FROM auditoria_logs WHERE accion = 'EMITIR_CARNET' AND recurso_id = $1 ORDER BY id DESC LIMIT 1", [String(comerciante.id)]));
+  }
+  assert.ok(entry, 'la emisión del carnet queda en la auditoría');
   assert.ok(!JSON.stringify(entry).includes(body.data[0].llave), 'la llave en claro no queda en la auditoría');
   assert.ok(!JSON.stringify(entry).includes(body.data[0].llave.replace(/-/g, '')));
 

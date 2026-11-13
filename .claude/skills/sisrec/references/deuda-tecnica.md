@@ -133,6 +133,12 @@ Corregidos, con prueba en `tests/codigo-operacion.test.js`, `tests/tipo-via-de-c
 
 Queda: el paquete de jornada calcula dos veces el mes en curso (`calcularLiquidacion` y otra vez dentro de `calcularDeudaAcumulada`). Con un padrón mucho mayor convendrá la liquidación en lote (paso 6).
 
+## Vigesimoquinta revisión del 13/11/2026: continuidad entre gestiones
+
+- No hay pantalla de usuarios: las cuentas se crean con `crear-admin` / `crear-usuario` y se desactivan con `UPDATE usuarios SET activo = false` en el servidor (el ingreso y la renovación de sesión revisan `u.activo`; comprobado: 401). Ese cambio no queda en la auditoría de SISREC, por eso el procedimiento de `docs/despliegue-produccion.md` (sección 11) lo anota en un acta.
+- Prueba inestable corregida (`tests/portal-llave.test.js`): buscaba la auditoría de `EMITIR_CARNET` apenas llegaba la respuesta, pero `auditMutation` la escribe después de responder; en el CI lento la fila aún no existía. Ahora espera hasta 2 s, como `tarifas-http.test.js`, y busca la fila de ese comerciante. Una prueba nueva que lea `auditoria_logs` tras una petición HTTP debe esperar igual.
+- Pendiente si el usuario lo pide: pantalla de Usuarios para `super_admin` (crear, restablecer clave, desactivar, con auditoría) y "Cambiar mi clave".
+
 ## Vigesimocuarta revisión del 13/11/2026: decisiones sobre el recibo, la impresora y la zona
 
 - **Recibo sin señal:** el ticket preimpreso es el comprobante físico y el portal guarda el recibo oficial para descargarlo. El portal muestra ahora con cada pago los tickets entregados (prueba en `tests/recibo-pdf.test.js`).
