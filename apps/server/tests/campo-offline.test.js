@@ -10,6 +10,7 @@ import jwt from 'jsonwebtoken';
 import { startServer } from '../src/index.ts';
 import { closeDatabase, calcularLiquidacion, findUserByEmail, getComerciantes, getAuditTrail, DIAS_COBRO_SIN_SENAL, fechaCobroEnLinea, fechaCobroFueraDeRango } from '../src/db.js';
 import { pool } from '../src/pg.js';
+import { comercianteConDeuda } from './_deuda.js';
 
 let server;
 let baseUrl;
@@ -58,15 +59,11 @@ const adminLogin = () => login('admin@salcedo.gob.pe', 'admin123', { device_id: 
 let hashCounter = 0;
 const offlineHash = () => `test-offline-${process.pid}-${Date.now()}-${hashCounter += 1}`;
 
-// La semilla trae pocos comerciantes con deuda: cada prueba cobra en su propio periodo (futuro), que el
-// cobro aplica con periodo_aplicado, para no consumir el saldo de las demás.
+// Cada prueba cobra en su propio periodo (futuro), que el cobro aplica con periodo_aplicado, a un comerciante
+// con deuda armada para ella: días cobrados × el precio de su zona (13/11/2026).
 async function merchantWithBalance(periodo) {
-  const merchants = await getComerciantes(pool, { limit: 100 });
-  for (const merchant of merchants) {
-    const liquidation = await calcularLiquidacion(pool, merchant.id, periodo).catch(() => null);
-    if (liquidation && !liquidation.no_devengo && liquidation.saldo >= 5) return { merchant, liquidation };
-  }
-  throw new Error(`La semilla no tiene un comerciante con saldo en ${periodo}`);
+  const { merchant } = await comercianteConDeuda(pool, { periodo });
+  return { merchant, liquidation: await calcularLiquidacion(pool, merchant.id, periodo) };
 }
 
 // Hora del celular de hace una hora (más los minutos indicados): dentro del rango que se acepta sin señal.

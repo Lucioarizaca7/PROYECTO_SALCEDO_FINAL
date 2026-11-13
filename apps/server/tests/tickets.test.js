@@ -1,6 +1,7 @@
 /**
  * Tickets preimpresos (migrations/0014_tickets_preimpresos.sql): un ticket de papel por puesto y día cobrado,
- * serie S3 (S/ 3, vía asfaltada) o S2 (S/ 2, sin asfaltar), tomado de los lotes del cobrador.
+ * tomado de los lotes del cobrador. Desde la 0032 la serie es la de valor igual al precio por día de la zona:
+ * S3 (S/ 3) o S2 (S/ 2); una zona con un precio sin serie se cobra solo con el recibo.
  * Las pruebas de este archivo corren a la vez: cada una crea sus cobradores, zonas, comerciantes y rangos.
  */
 import test from 'node:test';
@@ -11,6 +12,7 @@ import {
   syncOfflineBatch, anularCobro, asignarLote, reasignarTickets, devolverTickets, anularTickets, ticketsDelCobrador, getTicketsDelLote,
   getLotes, resumenTickets, cerrarCaja, getAuditTrail, getJornadaPackage, todayInLima, currentPeriod
 } from '../src/db.js';
+import { insertZonaConPrecio, zonaConPrecio } from './_deuda.js';
 
 let correlativo = 0;
 const unico = () => `${process.pid}-${correlativo += 1}-${Date.now()}`;
@@ -20,10 +22,12 @@ const AUDIT = { accion: 'PRUEBA_TICKETS' };
 const nuevoCobrador = () => createUser({ nombre: `Cobrador tickets ${unico()}`, email: `tickets-${unico()}@prueba.pe`, password: 'clave-de-prueba-1', rol: 'cobrador' });
 const rubroId = async (db) => (await db.query(`SELECT id FROM rubros WHERE nombre = 'ropa'`)).rows[0].id;
 
-// Comerciante permanente con un puesto en una zona (con o sin tipo de vía). Con la zona asfaltada se le
-// cobra S/ 3 por día cobrado (tarifa general de la migración 0013, vigente desde el mes actual).
-async function comerciante(db, tipoVia = 'asfaltada') {
-  const zona = await insertZona(db, { nombre: `Zona tickets ${unico()}`, tipo_via: tipoVia ?? undefined });
+// Comerciante permanente con un puesto en una zona. La asfaltada tiene precio S/ 3 por día (serie S3); con
+// `precio` la zona tiene ese precio, y si no hay serie de ese valor el cobro no lleva ticket.
+async function comerciante(db, tipoVia = 'asfaltada', precio = null) {
+  const zona = precio === null
+    ? await insertZonaConPrecio(db, { nombre: `Zona tickets ${unico()}`, tipo_via: tipoVia ?? undefined })
+    : await zonaConPrecio(db, precio, { nombre: `Zona tickets ${unico()}` });
   const merchant = await insertComerciante(db, {
     dni_ruc: String(documento += 1), nombre: `Tickets ${documento}`, rubro_id: await rubroId(db), zona_id: zona.id,
     tipo_comerciante: 'permanente', estado: 'activo', usuario_creador: 1
@@ -123,7 +127,7 @@ test('en línea: un ticket por día cobrado y la suma es el monto', async () => 
 
   // Dos puestos en vías distintas el mismo día: un ticket de cada serie.
   const mixto = await comerciante(db);
-  const tierra = await insertZona(db, { nombre: `Zona tickets ${unico()}`, tipo_via: 'sin_asfaltar' });
+  const tierra = await insertZonaConPrecio(db, { nombre: `Zona tickets ${unico()}`, tipo_via: 'sin_asfaltar' });
   const segundo = await insertPuesto(db, { zona_id: tierra.id, metros_cuadrados: 4, direccion: `Tickets ${unico()}`, comerciante_id: mixto.merchant.id });
   await marcarAsistencias(db, [mixto.puesto.id, segundo.id].map((puesto_id) => ({ puesto_id, fecha: hoy(), asistio: true })), { usuarioId: cobrador.id });
   const paquete = (await getJornadaPackage(db)).comerciantes.find((item) => item.id === mixto.merchant.id);
@@ -157,10 +161,11 @@ test('en línea se rechaza lo que no cuadra, y quien no cobra por día no lleva 
   await cobro(db, cobrador.id, merchant.id, 3, [{ serie: 'S3', numero: 4001 }]);
   await assert.rejects(cobro(db, cobrador.id, merchant.id, 3, [{ serie: 'S3', numero: 4001 }]), /ya fue usado en el cobro/);
 
-  // Zona sin tipo de vía: tarifa del rubro, sin ticket.
-  const porRubro = await comerciante(db, null);
+  // Zona de S/ 5 por día: no hay serie de S/ 5, se cobra sin ticket.
+  const porRubro = await comerciante(db, null, 5);
   const sinTicket = await cobro(db, cobrador.id, porRubro.merchant.id, 5, undefined);
   assert.deepEqual(sinTicket.tickets, []);
+  await marcarDia(db, porRubro.puesto.id, otroDia());
   await assert.rejects(cobro(db, cobrador.id, porRubro.merchant.id, 3, [{ serie: 'S3', numero: 4002 }]), /no lleva ticket/);
 
   // Un cobrador sin tickets asignados sigue cobrando sin ticket.

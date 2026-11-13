@@ -14,6 +14,7 @@ import {
   marcarAsistencias, recalcularRiesgoMorosidad, scoreMorosidadComerciante, todayInLima
 } from '../src/db.js';
 import { pool } from '../src/pg.js';
+import { insertZonaConPrecio } from './_deuda.js';
 
 let documento = 48990000;
 const rubroId = async (nombre) => (await pool.query('SELECT id FROM rubros WHERE nombre = $1', [nombre])).rows[0].id;
@@ -36,7 +37,7 @@ before(async () => {
     FROM generate_series(1, 320) AS n`);
 
   // Paga por día cobrado: S/ 3 por puesto y día marcado en vía asfaltada; hoy asistió y no pagó.
-  zonaAsfaltada = await insertZona(pool, { nombre: `Riesgo asfaltada ${process.pid}`, tipo_via: 'asfaltada' });
+  zonaAsfaltada = await insertZonaConPrecio(pool, { nombre: `Riesgo asfaltada ${process.pid}`, tipo_via: 'asfaltada' });
   porDia = await insertComerciante(pool, {
     dni_ruc: String(documento += 1), nombre: 'Riesgo por día', rubro_id: await rubroId('otros'), zona_id: zonaAsfaltada.id,
     tipo_comerciante: 'ferial', estado: 'activo', usuario_creador: 1

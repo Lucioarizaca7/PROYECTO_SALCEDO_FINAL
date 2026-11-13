@@ -64,7 +64,7 @@ Roles: `super_admin`, `cobrador`, `auditor`, `comerciante`. `staffOnly` = los tr
 | Comerciantes | CRUD `/comerciantes`, `POST /comerciantes/importar-padron`, `GET /comerciantes/plantilla-padron`, `/comerciantes/:id/preferencias` | super_admin (las preferencias también cobrador); el auditor solo descarga la plantilla |
 | Puestos | `GET /puestos?incluirInactivos=1`, `POST /puestos`, `POST/PUT /puestos-mapa` (el cobrador solo la ubicación) | super_admin, cobrador |
 | Puestos (titular y baja) | `POST /puestos/:id/liberar`, `DELETE /puestos-mapa/:id` | super_admin |
-| Tarifas | `GET/POST/PUT /tarifas` | según la ruta (ver `routes/tarifas.ts`) |
+| Tarifas (precio por día de cada zona, 0032) | `GET/POST/PUT /tarifas` (`GET` filtra por `zona_id`) | según la ruta (ver `routes/tarifas.ts`) |
 | Liquidación | `GET /liquidaciones/:comercianteId`, `GET /comerciantes/:id/saldo` | lectura |
 | Cobros | `GET/POST /cobros`, `POST /cobros/sincronizar`, `/cobros/sincronizar-lote`, `/cobros/observados(/:id/resolver)`, `/cobros/sincronizacion/errores` | cobrador, super_admin |
 | Anulación y tiempos | `POST /cobros/:id/anular` (motivo), `GET /cobros/tiempos` | anular: solo super_admin; tiempos: super_admin, auditor |
@@ -101,7 +101,7 @@ Para ver los roles exactos de una ruta: `grep -rn "'/api/v1/<ruta>" apps/server/
 - **0017:** el portal queda solo con la llave: se borra `pin_hash` y los accesos que solo tenían PIN.
 - **0018:** `puestos.zona_por_regularizar` (puesto del padrón sin zona o con zona no registrada).
 - **0019:** `asistencias_feriales.zona_id` y `puestos_zona_cambios`: cada día marcado guarda la zona que tenía el puesto.
-- **0020:** trigger `tarifa_sin_cruces`: dos tarifas activas del mismo rubro, zona y tipo de vía no cruzan fechas.
+- **0020:** trigger `tarifa_sin_cruces`: dos tarifas activas del mismo rubro, zona y tipo de vía no cruzan fechas (desde la 0032, dos precios de la misma zona).
 - **0021:** `zonas_via_cambios`, `via_de_zona()` y `asistencias_feriales.tipo_via`: cada día marcado guarda el tipo de vía que tenía su zona.
 - **0022:** `puestos.clave_cliente` (única si no es NULL): alta de puesto idempotente desde la cola del mapa.
 - **0023:** `comerciantes_tipo_cambios` (trigger `trg_comerciante_cambia_tipo`): cada mes pasado se liquida con el tipo que tenía.
@@ -113,3 +113,4 @@ Para ver los roles exactos de una ruta: `grep -rn "'/api/v1/<ruta>" apps/server/
 - **0029:** repara en `comerciantes_estado_cambios` las reactivaciones de la importación del padrón que la 0027 no pudo reconstruir (sin datos nuevos ni restricciones).
 - **0030:** quita la marca de asistencia que puso un cobro sin señal con fecha fuera de rango, si su revisión sigue pendiente (desde ahora `registrarCobro` no la pone).
 - **0031:** zona del día (el cambio de zona de un puesto ya no pisa la zona elegida en una marca) y `puestos_tenencia` (qué puestos tuvo cada comerciante cada día), para cobrar por puesto desde noviembre de 2026.
+- **0032:** cobro solo por día cobrado con el precio de cada zona: unidad `dia`, CHECK `tarifas_precio_de_zona` (una tarifa activa es el precio de una zona), las tarifas por rubro o mes quedan inactivas, `ticket_series` por valor y trigger `trg_puesto_calle_de_su_zona` (la calle de un puesto es de su zona).

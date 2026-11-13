@@ -12,6 +12,7 @@ import {
   closeDatabase, DIAS_COBRO_SIN_SENAL, initializeDatabase, insertComerciante, insertPuesto, insertZona, marcarAsistencias, todayInLima
 } from '../src/db.js';
 import { pool } from '../src/pg.js';
+import { insertZonaConPrecio } from './_deuda.js';
 
 let documento = 47110000;
 let correlativo = 0;
@@ -20,7 +21,7 @@ const diasAtras = (n) => todayInLima(new Date(Date.now() - n * 24 * 60 * 60 * 10
 
 async function ferialConPuesto() {
   correlativo += 1;
-  const zona = await insertZona(pool, { nombre: `Asistencia lote ${process.pid}-${correlativo}`, tipo_via: 'asfaltada' });
+  const zona = await insertZonaConPrecio(pool, { nombre: `Asistencia lote ${process.pid}-${correlativo}`, tipo_via: 'asfaltada' });
   const rubro = (await pool.query("SELECT id FROM rubros WHERE nombre = 'otros'")).rows[0].id;
   const comerciante = await insertComerciante(pool, {
     dni_ruc: String(documento += 1), nombre: `Ferial lote ${correlativo}`, rubro_id: rubro, zona_id: zona.id,

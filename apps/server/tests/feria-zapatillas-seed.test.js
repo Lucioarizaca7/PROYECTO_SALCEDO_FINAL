@@ -54,7 +54,9 @@ test('seeder crea comerciantes temporales, puestos por bloque y conserva marcas 
   assert.ok(liquidacionPendiente.dias_asistidos > 0);
 
   const scalar = async (text, params = []) => Number((await db.query(text, params)).rows[0].count);
-  assert.equal(await scalar("SELECT COUNT(*) FROM tarifas t JOIN rubros r ON r.id = t.rubro_id WHERE LOWER(r.nombre) = 'zapatillas' AND t.unidad_medida = 'metro_cuadrado' AND t.monto_variable = 2"), 1);
+  // Cada bloque es un sector sin asfaltar con su precio por día de S/ 2 (13/11/2026), una sola vez.
+  const preciosDeBloque = "SELECT COUNT(*) FROM tarifas t JOIN zonas z ON z.id = t.zona_id WHERE z.descripcion LIKE 'Sector ferial %' AND t.activo AND t.unidad_medida = 'dia' AND t.monto_fijo = 2";
+  assert.equal(await scalar(preciosDeBloque), 2);
   assert.equal(await scalar('SELECT COUNT(*) FROM asistencias_feriales'), 5);
   const blockPost = importedPosts.find((post) => post.codigo === 'ZAP-A-I-01');
   assert.equal(await scalar('SELECT COUNT(*) FROM asistencias_feriales WHERE puesto_id = $1 AND fecha = $2', [blockPost.id, '2026-09-08']), 2);
@@ -67,6 +69,7 @@ test('seeder crea comerciantes temporales, puestos por bloque y conserva marcas 
   assert.equal(await scalar("SELECT COUNT(*) FROM puestos WHERE codigo_puesto LIKE 'ZAP-%'"), 3);
   assert.equal(await scalar('SELECT COUNT(*) FROM asistencias_feriales'), 5);
   assert.equal(await scalar("SELECT COUNT(*) FROM auditoria_logs WHERE accion = 'SEED_FERIA_ZAPATILLAS'"), 2);
+  assert.equal(await scalar(preciosDeBloque), 2, 'reejecutar no duplica el precio');
 });
 
 test('seeder omite y reporta correlativos repetidos en el mismo bloque', async () => {

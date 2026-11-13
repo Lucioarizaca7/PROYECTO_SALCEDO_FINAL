@@ -29,7 +29,7 @@ export function useDatosSisrec({ user, onSessionExpired }) {
   const [cobros, setCobros] = useState([]);
   const [mapPuestos, setMapPuestos] = useState([]);
   const [auditRecords, setAuditRecords] = useState([]);
-  const [catalogos, setCatalogos] = useState({ rubros: [], zonas: [] });
+  const [catalogos, setCatalogos] = useState({ rubros: [], zonas: [], calles: [] });
   const [predictiveData, setPredictiveData] = useState(EMPTY_FORECAST);
   const [riskData, setRiskData] = useState(EMPTY_RISK);
 
@@ -85,7 +85,7 @@ export function useDatosSisrec({ user, onSessionExpired }) {
       setCobros(payments.data || []);
       setMapPuestos(puestos.data || []);
       setAuditRecords(audit.data || []);
-      setCatalogos({ rubros: catalogs.rubros || [], zonas: catalogs.zonas || [] });
+      setCatalogos({ rubros: catalogs.rubros || [], zonas: catalogs.zonas || [], calles: catalogs.calles || [] });
       setPredictiveData(forecast.data || EMPTY_FORECAST);
       setRiskData(risk.data || EMPTY_RISK);
 
@@ -102,7 +102,7 @@ export function useDatosSisrec({ user, onSessionExpired }) {
       setMapPuestos(await readMapSnapshot().catch(() => []));
       setAuditRecords([]);
       setOperational(EMPTY_OPERATIONAL);
-      setCatalogos({ rubros: [], zonas: [] });
+      setCatalogos({ rubros: [], zonas: [], calles: [] });
       setApiConnected(false);
     } finally {
       setLoading(false);

@@ -8,7 +8,7 @@ import { pool as db } from '../pg.js';
 export const router = express.Router();
 
 router.get('/api/v1/tarifas', requireAuth, async (_req, res) => {
-  const data = await getTarifas(db, { rubro_id: _req.query.rubro_id });
+  const data = await getTarifas(db, { zona_id: _req.query.zona_id });
   res.json({ data, total: data.length });
 });
 

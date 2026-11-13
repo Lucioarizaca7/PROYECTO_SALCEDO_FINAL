@@ -39,8 +39,13 @@ test('crear una tarifa avisa del cierre de la anterior, lo audita y un cruce res
   assert.equal(login.status, 200);
   const token = login.body.token;
 
-  const rubro = await pool.query('INSERT INTO rubros (nombre) VALUES ($1) RETURNING id', [`Rubro http ${process.pid} ${Date.now()}`]);
-  const tarifa = (extra) => api('/tarifas', { method: 'POST', token, body: { rubro_id: rubro.rows[0].id, tipo_tarifa: 'fija', monto_fijo: 10, unidad_medida: 'mensual', ...extra } });
+  const zona = await pool.query('INSERT INTO zonas (nombre) VALUES ($1) RETURNING id', [`Zona http ${process.pid} ${Date.now()}`]);
+  const tarifa = (extra) => api('/tarifas', { method: 'POST', token, body: { zona_id: zona.rows[0].id, monto_fijo: 10, ...extra } });
+
+  // Solo hay precio por día de una zona (0032): una cuota mensual por rubro responde 400 en español.
+  const mensual = await api('/tarifas', { method: 'POST', token, body: { rubro_id: 1, monto_fijo: 90, unidad_medida: 'mensual', vigencia_inicio: '2031-01-01' } });
+  assert.equal(mensual.status, 400);
+  assert.match(mensual.body.message, /Elija la zona/);
 
   // Una tarifa nueva no empieza antes de hoy (11/11/2026): cerraría la anterior hacia atrás.
   const pasada = await tarifa({ vigencia_inicio: '2026-01-01' });

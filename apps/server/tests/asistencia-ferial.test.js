@@ -1,6 +1,6 @@
 /**
- * Asistencia ferial por fecha (migrations/0010_asistencia_ferial.sql): el ferial paga los días que
- * asistió × la tarifa diaria; sin asistencias en el mes no devenga.
+ * Asistencia por fecha (migrations/0010_asistencia_ferial.sql): el ferial (y desde el 13/11/2026 también el
+ * permanente) paga los días que asistió × el precio por día de su zona; sin asistencias en el mes no devenga.
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -12,30 +12,31 @@ import {
 
 let documento = 20777000000;
 
-async function rubroConTarifaDiaria(db, monto) {
-  const nombre = `rubro feria ${process.pid} ${Date.now()} ${Math.random().toString(16).slice(2, 6)}`;
-  const rubroId = (await db.query('INSERT INTO rubros (nombre) VALUES ($1) RETURNING id', [nombre])).rows[0].id;
-  await insertTarifa(db, { rubro_id: rubroId, tipo_tarifa: 'fija', monto_fijo: monto, unidad_medida: 'diaria', vigencia_inicio: '2026-01-01' }, { permitirInicioPasado: true });
-  return rubroId;
+// Zona propia con su precio por día (lo fija el super_admin; 0032).
+async function zonaConPrecioDiario(db, monto) {
+  const nombre = `zona feria ${process.pid} ${Date.now()} ${Math.random().toString(16).slice(2, 6)}`;
+  const zonaId = (await db.query('INSERT INTO zonas (nombre) VALUES ($1) RETURNING id', [nombre])).rows[0].id;
+  await insertTarifa(db, { zona_id: zonaId, monto_fijo: monto, vigencia_inicio: '2026-01-01' }, { permitirInicioPasado: true });
+  return zonaId;
 }
 
-async function ferialConPuesto(db, rubroId, estadoPuesto = 'ocupado') {
+async function ferialConPuesto(db, zonaId, estadoPuesto = 'ocupado') {
   const comerciante = await insertComerciante(db, {
-    dni_ruc: String(documento += 1), nombre: `Ferial ${documento}`, rubro_id: rubroId, zona_id: 1,
+    dni_ruc: String(documento += 1), nombre: `Ferial ${documento}`, rubro_id: 1, zona_id: zonaId,
     tipo_comerciante: 'ferial', estado: 'activo', usuario_creador: 1
   });
-  const puesto = await insertPuesto(db, { zona_id: 1, metros_cuadrados: 2, direccion: `Feria ${documento}`, codigo_puesto: `FER-${documento}`, comerciante_id: comerciante.id, estado: estadoPuesto });
+  const puesto = await insertPuesto(db, { zona_id: zonaId, metros_cuadrados: 2, direccion: `Feria ${documento}`, codigo_puesto: `FER-${documento}`, comerciante_id: comerciante.id, estado: estadoPuesto });
   return { comerciante, puesto };
 }
 
 test('el ferial paga solo los días que asistió; sin asistencias no devenga', async () => {
   const db = await initializeDatabase();
-  const rubroId = await rubroConTarifaDiaria(db, 2);
+  const rubroId = await zonaConPrecioDiario(db, 2); // id de la zona
   const { comerciante, puesto } = await ferialConPuesto(db, rubroId);
 
   const sinMarcas = await calcularLiquidacion(db, comerciante.id, '2026-09');
   assert.equal(sinMarcas.no_devengo, true);
-  assert.equal(sinMarcas.motivo, 'ferial_sin_asistencia');
+  assert.equal(sinMarcas.motivo, 'sin_dias_cobrados');
 
   await marcarAsistencias(db, [
     { puesto_id: puesto.id, fecha: '2026-09-06', asistio: true },
@@ -60,28 +61,28 @@ test('el ferial paga solo los días que asistió; sin asistencias no devenga', a
 
 test('el ferial ausente que conserva su puesto también paga si asistió', async () => {
   const db = await initializeDatabase();
-  const rubroId = await rubroConTarifaDiaria(db, 3);
+  const rubroId = await zonaConPrecioDiario(db, 3); // id de la zona
   const { comerciante, puesto } = await ferialConPuesto(db, rubroId, 'disponible');
   await marcarAsistencias(db, { puesto_id: puesto.id, fecha: '2026-08-02', asistio: true }, { usuarioId: 1 });
   const liquidacion = await calcularLiquidacion(db, comerciante.id, '2026-08');
   assert.equal(liquidacion.monto_total, 3);
 });
 
-test('las marcas se validan y la lista del día muestra a los feriales', async () => {
+test('las marcas se validan y la lista del día muestra a quienes pagan por día; el eventual no se marca', async () => {
   const db = await initializeDatabase();
-  const rubroId = await rubroConTarifaDiaria(db, 2);
+  const rubroId = await zonaConPrecioDiario(db, 2); // id de la zona
   const { comerciante, puesto } = await ferialConPuesto(db, rubroId);
 
   await assert.rejects(() => marcarAsistencias(db, { puesto_id: puesto.id, fecha: '2999-01-01', asistio: true }), /todavía no llega/);
   await assert.rejects(() => marcarAsistencias(db, { puesto_id: puesto.id, asistio: 'si' }), /asistió/);
   await assert.rejects(() => marcarAsistencias(db, { puesto_id: 99999999, asistio: true }), /no existe/);
 
-  const permanente = await insertComerciante(db, {
-    dni_ruc: String(documento += 1), nombre: `Permanente ${documento}`, rubro_id: rubroId, zona_id: 1,
-    tipo_comerciante: 'permanente', estado: 'activo', usuario_creador: 1
+  const eventual = await insertComerciante(db, {
+    dni_ruc: String(documento += 1), nombre: `Eventual ${documento}`, rubro_id: 1, zona_id: rubroId,
+    tipo_comerciante: 'eventual', estado: 'activo', usuario_creador: 1
   });
-  const puestoPermanente = await insertPuesto(db, { zona_id: 1, metros_cuadrados: 2, direccion: `Fijo ${documento}`, comerciante_id: permanente.id });
-  await assert.rejects(() => marcarAsistencias(db, { puesto_id: puestoPermanente.id, asistio: true }), /no es de un comerciante ferial/);
+  const puestoEventual = await insertPuesto(db, { zona_id: rubroId, metros_cuadrados: 2, direccion: `Eventual ${documento}`, comerciante_id: eventual.id });
+  await assert.rejects(() => marcarAsistencias(db, { puesto_id: puestoEventual.id, asistio: true }), /eventual/);
 
   await marcarAsistencias(db, { puesto_id: puesto.id, asistio: true }, { usuarioId: 2 });
   const hoy = await getAsistencias(db);
@@ -89,7 +90,7 @@ test('las marcas se validan y la lista del día muestra a los feriales', async (
   const fila = hoy.puestos.find((item) => item.puesto_id === Number(puesto.id));
   assert.equal(fila.asistio, true);
   assert.equal(fila.comerciante_id, Number(comerciante.id));
-  assert.ok(!hoy.puestos.some((item) => item.puesto_id === Number(puestoPermanente.id)), 'solo feriales');
+  assert.ok(!hoy.puestos.some((item) => item.puesto_id === Number(puestoEventual.id)), 'el eventual no está en la lista');
 
   const paquete = await getJornadaPackage(db);
   const enPaquete = paquete.comerciantes.find((item) => item.id === Number(comerciante.id));
@@ -99,7 +100,7 @@ test('las marcas se validan y la lista del día muestra a los feriales', async (
 
 test('el pendiente de regularización entra al padrón de la jornada y a la deuda del panel', async () => {
   const db = await initializeDatabase();
-  const rubroId = await rubroConTarifaDiaria(db, 2);
+  const rubroId = await zonaConPrecioDiario(db, 2); // id de la zona
   const { comerciante, puesto } = await ferialConPuesto(db, rubroId);
   await db.query(`UPDATE comerciantes SET estado = 'pendiente' WHERE id = $1`, [comerciante.id]);
   await marcarAsistencias(db, { puesto_id: puesto.id, asistio: true }, { usuarioId: 2 });

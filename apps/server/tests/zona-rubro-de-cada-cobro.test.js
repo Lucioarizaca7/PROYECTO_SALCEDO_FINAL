@@ -12,6 +12,7 @@ import {
   initializeDatabase, insertComerciante, insertPuesto, insertTarifa, insertZona, registrarCobro, updateComerciante
 } from '../src/db.js';
 import { pool } from '../src/pg.js';
+import { zonaConPrecio } from './_deuda.js';
 
 before(async () => { await initializeDatabase(); });
 after(async () => { await closeDatabase(); });
@@ -25,15 +26,9 @@ let correlativo = 0;
 const unico = () => `${process.pid}-${correlativo += 1}`;
 let documento = 20888000000;
 
-// Zonas sin tipo de vía y tarifa mensual de S/ 30 por rubro, vigente desde el mes pasado.
-const zona = (nombre) => insertZona(pool, { nombre: `${nombre} ${unico()}` });
-async function rubroConTarifa(nombre) {
-  const id = (await pool.query('INSERT INTO rubros (nombre) VALUES ($1) RETURNING id', [`${nombre} ${unico()}`])).rows[0].id;
-  await insertTarifa(pool, {
-    tipo_tarifa: 'fija', monto_fijo: 30, monto_variable: 0, unidad_medida: 'mensual', rubro_id: id, vigencia_inicio: `${mesPasado}-01`
-  }, { permitirInicioPasado: true });
-  return id;
-}
+// Zonas de S/ 30 por día: cada cobro de hoy marca el día y deja S/ 30 de deuda que pagar.
+const zona = (nombre) => zonaConPrecio(pool, 30, { nombre: `${nombre} ${unico()}` });
+const rubroConTarifa = async (nombre) => (await pool.query('INSERT INTO rubros (nombre) VALUES ($1) RETURNING id', [`${nombre} ${unico()}`])).rows[0].id;
 async function comerciante(zonaId, rubroId) {
   const merchant = await insertComerciante(pool, {
     dni_ruc: String(documento += 1), nombre: `Informe ${documento}`, rubro_id: rubroId, zona_id: zonaId,

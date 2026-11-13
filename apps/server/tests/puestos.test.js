@@ -10,8 +10,11 @@ import {
   deactivatePuesto,
   getPuestos,
   calcularLiquidacion,
-  registrarCobro
+  currentPeriod,
+  registrarCobro,
+  todayInLima
 } from '../src/db.js';
+import { marcarDias } from './_deuda.js';
 
 let documento = 20999000000;
 const nuevoComerciante = (db, extra = {}) => insertComerciante(db, {
@@ -54,10 +57,22 @@ test('un puesto ocupado necesita titular (servidor y base de datos)', async () =
   await assert.rejects(() => db.query(`UPDATE puestos SET estado = 'ocupado' WHERE id = $1`, [libre.id]), /puestos_ocupado_con_titular/);
 });
 
-test('el saldo del puesto es la liquidación del mes de su titular y baja con el cobro', async () => {
+// Un día cobrado hoy: sin días cobrados no hay deuda (13/11/2026).
+const marcarHoy = (db, puestoId) => marcarDias(db, puestoId, currentPeriod(), 1, { desde: Number(todayInLima().slice(8, 10)) });
+
+test('sin días cobrados el puesto no debe nada; el saldo es la liquidación de su titular y baja con el cobro', async () => {
+  const db0 = await initializeDatabase();
+  const sinDias = await nuevoComerciante(db0);
+  const puestoSinDias = await insertPuesto(db0, puestoBase({ direccion: 'Sin días D-00', comerciante_id: sinDias.id }));
+  const vacio = (await getPuestos(db0)).find((item) => item.id === puestoSinDias.id);
+  assert.equal(vacio.estado_pago, 'no_devenga', 'antes mostraba la cuota del mes');
+  assert.equal(vacio.saldo_pendiente, 0);
+  assert.equal(vacio.motivo, 'sin_dias_cobrados');
+
   const db = await initializeDatabase();
   const comerciante = await nuevoComerciante(db);
   const puesto = await insertPuesto(db, puestoBase({ direccion: 'Deuda D-01', comerciante_id: comerciante.id }));
+  await marcarHoy(db, puesto.id);
 
   const liquidacion = await calcularLiquidacion(db, comerciante.id);
   assert.ok(liquidacion.saldo > 0);
@@ -78,6 +93,7 @@ test('con dos puestos la deuda va solo en el principal; el otro sale incluido', 
   const comerciante = await nuevoComerciante(db);
   const principal = await insertPuesto(db, puestoBase({ direccion: 'Doble A', codigo_puesto: 'DOB-A', comerciante_id: comerciante.id }));
   const segundo = await insertPuesto(db, puestoBase({ direccion: 'Doble B', codigo_puesto: 'DOB-B', comerciante_id: comerciante.id }));
+  await marcarHoy(db, segundo.id);
 
   const filas = await getPuestos(db);
   const a = filas.find((item) => item.id === principal.id);

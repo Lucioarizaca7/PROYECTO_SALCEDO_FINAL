@@ -1,17 +1,17 @@
 /**
- * Un mes en que el comerciante estuvo de baja todo el mes no paga la cuota mensual (migración 0027, revisión del
- * 11/11/2026). Antes la cuota se cobraba todos los meses desde el alta: dado de baja en julio y reactivado en
- * noviembre, debía agosto, septiembre y octubre. El mes de la baja y el de la reactivación sí se cobran, como el
- * tipo de comerciante (0023): estuvo activo algunos días.
+ * La baja con el cobro por día cobrado (13/11/2026): ya no hay cuota mensual, así que un comerciante de baja no
+ * debe nada mientras no se le cobren días, y no se le pueden marcar (11/11/2026). Lo que debía de los días
+ * cobrados antes de la baja se mantiene. Antes (0027) se cuidaba que la cuota no se cobrara los meses de baja.
  */
 import test, { after, before } from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
   calcularDeudaAcumulada, calcularLiquidacion, closeDatabase, currentPeriod, initializeDatabase, insertComerciante,
-  insertPuesto, insertTarifa, insertZona, setInicioCobro, updateComerciante
+  insertPuesto, marcarAsistencias, setInicioCobro, todayInLima, updateComerciante
 } from '../src/db.js';
 import { pool } from '../src/pg.js';
+import { marcarDias, zonaConPrecio } from './_deuda.js';
 
 before(async () => {
   await initializeDatabase();
@@ -23,20 +23,16 @@ let correlativo = 0;
 const unico = () => `${process.pid}-${correlativo += 1}`;
 let documento = 20444000000;
 
-// Permanente con cuota mensual de S/ 30 de su rubro (zona sin tipo de vía), dado de alta en junio.
+// Permanente en una zona de S/ 30 por día, dado de alta en junio.
 async function permanente() {
-  const zona = await insertZona(pool, { nombre: `Zona baja ${unico()}` });
-  const rubro = (await pool.query('INSERT INTO rubros (nombre) VALUES ($1) RETURNING id', [`rubro baja ${unico()}`])).rows[0].id;
-  await insertTarifa(pool, {
-    tipo_tarifa: 'fija', monto_fijo: 30, monto_variable: 0, unidad_medida: 'mensual', rubro_id: rubro, vigencia_inicio: '2026-01-01'
-  }, { permitirInicioPasado: true });
+  const zona = await zonaConPrecio(pool, 30);
   const merchant = await insertComerciante(pool, {
-    dni_ruc: String(documento += 1), nombre: `Baja ${documento}`, rubro_id: rubro, zona_id: zona.id,
+    dni_ruc: String(documento += 1), nombre: `Baja ${documento}`, rubro_id: 1, zona_id: zona.id,
     tipo_comerciante: 'permanente', estado: 'activo', usuario_creador: 1
   });
-  await insertPuesto(pool, { zona_id: zona.id, metros_cuadrados: 4, direccion: `Baja ${unico()}`, comerciante_id: merchant.id });
+  const puesto = await insertPuesto(pool, { zona_id: zona.id, metros_cuadrados: 4, direccion: `Baja ${unico()}`, comerciante_id: merchant.id });
   await pool.query("UPDATE comerciantes SET creado_en = '2026-06-05T12:00:00-05:00' WHERE id = $1", [merchant.id]);
-  return merchant;
+  return { ...merchant, puesto };
 }
 // La baja se registra hoy (trigger); se mueve al día que se quiere simular.
 async function darDeBaja(id, desde) {
@@ -45,30 +41,33 @@ async function darDeBaja(id, desde) {
 }
 const saldos = (deuda) => Object.fromEntries(deuda.periodos.map((item) => [item.periodo, item.saldo]));
 
-test('dado de baja en julio y reactivado hoy: no debe los meses de en medio', async () => {
+test('dado de baja en julio y reactivado hoy: solo debe los días que se le cobraron', async () => {
   const merchant = await permanente();
+  await marcarDias(pool, merchant.puesto.id, '2026-06', 1, { desde: 10 });
+  await marcarDias(pool, merchant.puesto.id, '2026-07', 1, { desde: 5 });
   await darDeBaja(merchant.id, '2026-07-10');
   await updateComerciante(pool, merchant.id, { estado: 'activo' });
 
   const deuda = await calcularDeudaAcumulada(pool, merchant.id);
   const porMes = saldos(deuda);
   assert.equal(porMes['2026-06'], 30);
-  assert.equal(porMes['2026-07'], 30, 'el mes de la baja se cobra');
-  for (const mes of ['2026-08', '2026-09', '2026-10']) assert.equal(porMes[mes], undefined, `antes debía ${mes}`);
-  assert.equal(porMes[currentPeriod()], 30, 'el mes de la reactivación se cobra');
-  assert.equal(deuda.deuda_total, 90, 'antes eran S/ 180');
+  assert.equal(porMes['2026-07'], 30, 'el día cobrado antes de la baja se debe');
+  for (const mes of ['2026-08', '2026-09', '2026-10']) assert.equal(porMes[mes], undefined, `sin días cobrados en ${mes}`);
+  assert.equal(deuda.deuda_total, 60);
 
   const agosto = await calcularLiquidacion(pool, merchant.id, '2026-08');
   assert.equal(agosto.no_devengo, true);
-  assert.equal(agosto.motivo, 'dado_de_baja');
+  assert.equal(agosto.motivo, 'sin_dias_cobrados');
 });
 
-test('de baja desde antes de este mes: la cuota del mes no se cobra', async () => {
+test('de baja: no se le marcan días, el mes no se cobra y lo de antes de la baja se mantiene', async () => {
   const merchant = await permanente();
+  await marcarDias(pool, merchant.puesto.id, '2026-09', 1, { desde: 6 });
   await darDeBaja(merchant.id, '2026-09-20');
+  await assert.rejects(() => marcarAsistencias(pool, { puesto_id: merchant.puesto.id, fecha: todayInLima(), asistio: true }, { usuarioId: 1 }), /dado de baja/);
   const mes = await calcularLiquidacion(pool, merchant.id, currentPeriod());
-  assert.equal(mes.saldo, 0, 'antes mostraba S/ 30');
-  assert.equal(mes.motivo, 'dado_de_baja');
+  assert.equal(mes.saldo, 0);
+  assert.equal(mes.motivo, 'sin_dias_cobrados');
   assert.equal((await calcularLiquidacion(pool, merchant.id, '2026-09')).saldo, 30, 'lo que debía antes de la baja se mantiene');
 });
 

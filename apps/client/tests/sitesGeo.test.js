@@ -85,8 +85,12 @@ test('geolocationErrorMessage explica cada código de error', () => {
   assert.equal(geolocationErrorMessage({ message: 'x' }), 'x');
 });
 
-test('el puesto que cobra por día y no tuvo días cobrados explica por qué no debe', () => {
-  assert.equal(paymentStatusText({ estado_pago: 'no_devenga', motivo: 'sin_asistencia' }), 'Cobro por día: sin días cobrados en el mes');
-  assert.equal(paymentStatusText({ estado_pago: 'no_devenga', motivo: 'ferial_sin_asistencia' }), 'Ferial: no devenga por inasistencia');
+test('el puesto sin días cobrados explica por qué no debe; con deuda dice que es por días cobrados', () => {
+  assert.equal(paymentStatusText({ estado_pago: 'no_devenga', motivo: 'sin_dias_cobrados' }), 'Sin días cobrados en el mes: no debe nada');
+  // Instantáneas guardadas antes del 13/11/2026 traen los motivos viejos.
+  assert.equal(paymentStatusText({ estado_pago: 'no_devenga', motivo: 'sin_asistencia' }), 'Sin días cobrados en el mes: no debe nada');
+  assert.equal(paymentStatusText({ estado_pago: 'no_devenga', motivo: 'ferial_sin_asistencia' }), 'Sin días cobrados en el mes: no debe nada');
+  assert.equal(paymentStatusText({ estado_pago: 'pendiente', saldo_pendiente: 6 }), 'Debe por días cobrados: S/ 6.00', 'antes decía "Saldo del mes"');
+  assert.equal(paymentStatusText({ estado_pago: 'sin_tarifa' }), 'Su zona no tiene precio por día: póngalo en Tarifas');
   assert.equal(paymentStatusText({ estado_pago: 'no_devenga', motivo: 'dado_de_baja' }), 'Dado de baja: no paga este mes');
 });

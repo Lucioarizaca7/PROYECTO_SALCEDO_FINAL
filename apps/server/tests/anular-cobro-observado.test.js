@@ -11,6 +11,7 @@ import {
   insertZona, resolveCobroObservado, syncOfflineBatch
 } from '../src/db.js';
 import { pool } from '../src/pg.js';
+import { insertZonaConPrecio } from './_deuda.js';
 
 before(async () => { await initializeDatabase(); });
 after(async () => { await closeDatabase(); });
@@ -21,7 +22,7 @@ let documento = 20666000000;
 
 // Permanente en zona asfaltada que debe S/ 3 hoy: un cobro sin señal de S/ 50 excede el saldo y queda observado.
 async function cobroObservado() {
-  const zona = await insertZona(pool, { nombre: `Zona revisión ${unico()}`, tipo_via: 'asfaltada' });
+  const zona = await insertZonaConPrecio(pool, { nombre: `Zona revisión ${unico()}`, tipo_via: 'asfaltada' });
   const rubro = (await pool.query("SELECT id FROM rubros WHERE nombre = 'ropa'")).rows[0].id;
   const comerciante = await insertComerciante(pool, {
     dni_ruc: String(documento += 1), nombre: `Revisión ${documento}`, rubro_id: rubro, zona_id: zona.id,

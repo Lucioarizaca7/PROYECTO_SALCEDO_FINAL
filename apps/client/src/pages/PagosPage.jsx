@@ -34,7 +34,7 @@ function DebtBreakdown({ balance }) {
     <div className="debt-breakdown">
       {balance.cobro_diario
         ? <><div><span>Cobro del día (eventual)</span><strong>S/ {Number(balance.monto_total || 0).toFixed(2)}</strong></div><div><span>Día</span><strong>{balance.dia}</strong></div></>
-        : <><div><span>Tarifa</span><strong>{textoTarifa(balance)}</strong></div><div><span>Periodo</span><strong>{balance.periodo}</strong></div></>}
+        : <><div><span>Días cobrados</span><strong>{textoTarifa(balance)}</strong></div><div><span>Periodo</span><strong>{balance.periodo}</strong></div></>}
       <div><span>Pagado</span><strong>S/ {Number(balance.monto_pagado || 0).toFixed(2)}</strong></div>
       <div className="debt-total"><span>Saldo pendiente</span><strong>S/ {balance.saldo.toFixed(2)}</strong></div>
     </div>
@@ -84,18 +84,18 @@ function AvisoPocosTickets({ tickets }) {
   );
 }
 
-// Zona del día (12/11/2026): si hoy vende en otra zona porque faltaron otros, se cobra con la tarifa de esa zona.
+// Zona del día (12/11/2026): si hoy vende en otra zona porque faltaron otros, se cobra con el precio de esa zona.
 // Queda en la auditoría y el administrador la ve en Observaciones.
 function ZonaDelDia({ pagos, merchant }) {
-  const via = (zona) => (zona.tipo_via === 'asfaltada' ? 'asfaltada' : zona.tipo_via === 'sin_asfaltar' ? 'sin asfaltar' : 'sin tipo de vía');
+  const precio = (zona) => (zona.precio_dia == null ? 'sin precio' : `S/ ${Number(zona.precio_dia).toFixed(2)} por día`);
   return (
     <label className="zona-del-dia">
       <span>Zona de hoy</span>
       <select aria-label="Zona de hoy" value={pagos.zonaDia} onChange={(event) => pagos.setZonaDia(event.target.value)}>
         <option value="">Sin cambio: la ya marcada hoy o la de su puesto{merchant?.zona ? ` (${merchant.zona})` : ''}</option>
-        {pagos.zonas.map((zona) => <option key={zona.id} value={zona.id}>{zona.nombre} · {via(zona)}</option>)}
+        {pagos.zonas.map((zona) => <option key={zona.id} value={zona.id}>{zona.nombre} · {precio(zona)}</option>)}
       </select>
-      {pagos.zonaDia && <small>Hoy se cobra con la tarifa de esa zona. Queda registrado para la oficina.</small>}
+      {pagos.zonaDia && <small>Hoy se cobra con el precio de esa zona. Queda registrado para la oficina.</small>}
     </label>
   );
 }

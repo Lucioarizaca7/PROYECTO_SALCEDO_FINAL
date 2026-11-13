@@ -9,6 +9,7 @@ import {
   initializeDatabase, insertComerciante, insertPuesto, insertZona, updatePuesto, calcularLiquidacion,
   marcarAsistencias, seriesDelComerciante, todayInLima
 } from '../src/db.js';
+import { insertZonaConPrecio } from './_deuda.js';
 
 let documento = 20999000000;
 let correlativoZona = 0;
@@ -19,12 +20,7 @@ const rubroId = async (db, nombre) => (await db.query('SELECT id FROM rubros WHE
 // Tarifas por día cobrado desde septiembre de 2026, hasta el mes anterior al de las que trae la migración 0013.
 async function preparar() {
   const db = await initializeDatabase();
-  await db.query(`
-    INSERT INTO tarifas (rubro_id, tipo_via, tipo_tarifa, monto_fijo, monto_variable, unidad_medida, vigencia_inicio, vigencia_fin)
-    SELECT NULL, via.tipo_via, 'fija', via.monto, 0, 'semanal', DATE '2026-09-01', date_trunc('month', now() AT TIME ZONE 'America/Lima')::date - 1
-    FROM (VALUES ('asfaltada', 3), ('sin_asfaltar', 2)) AS via (tipo_via, monto)
-    WHERE NOT EXISTS (SELECT 1 FROM tarifas t WHERE t.rubro_id IS NULL AND t.tipo_via = via.tipo_via AND t.vigencia_inicio = DATE '2026-09-01')`);
-  const nuevaZona = (tipoVia) => insertZona(db, { nombre: `Zona de cada día ${process.pid}-${correlativoZona += 1}-${Date.now()}`, tipo_via: tipoVia });
+  const nuevaZona = (tipoVia) => insertZonaConPrecio(db, { nombre: `Zona de cada día ${process.pid}-${correlativoZona += 1}-${Date.now()}`, tipo_via: tipoVia });
   return { db, asfaltada: await nuevaZona('asfaltada'), sinAsfaltar: await nuevaZona('sin_asfaltar') };
 }
 
