@@ -12,18 +12,15 @@ import {
   getReportRows, getRiskDashboard, getSyncErrors, initializeDatabase, insertComerciante, registrarCobro, syncOfflineCobro, todayInLima
 } from '../src/db.js';
 import { pool } from '../src/pg.js';
+import { comercianteConDeuda } from './_deuda.js';
 
 let correlativo = 0;
 const idDe = async (tabla, nombre) => (await pool.query(`SELECT id FROM ${tabla} WHERE nombre = $1`, [nombre])).rows[0].id;
 
+// Debe S/ 90 este mes: 3 días cobrados × S/ 30 (antes, la cuota mensual de "otros").
 async function nuevoComerciante() {
   correlativo += 1;
-  return insertComerciante(pool, {
-    dni_ruc: `4811${String(correlativo).padStart(4, '0')}`,
-    nombre: `Fallos noviembre ${correlativo}`,
-    rubro_id: await idDe('rubros', 'otros'), // tarifa mensual de S/ 90
-    zona_id: await idDe('zonas', 'Mercado Central')
-  });
+  return (await comercianteConDeuda(pool, { nombre: `Fallos noviembre ${correlativo}` })).merchant;
 }
 
 before(async () => { await initializeDatabase(); });

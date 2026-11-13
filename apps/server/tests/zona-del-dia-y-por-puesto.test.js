@@ -2,18 +2,19 @@
  * Decisiones del usuario del 12/11/2026 (migración 0031):
  * - Zona del día: si faltan otros, un comerciante vende en otra zona y ese día se le cobra con la tarifa de esa
  *   zona (asfaltada S/ 3, sin asfaltar S/ 2). El cobrador la elige al marcar o al cobrar; el administrador la ve.
- * - Cuota por puesto: la cuota mensual o diaria por rubro se paga por cada puesto desde noviembre de 2026.
+ * - Por puesto: cada puesto marcado paga su día (desde el 13/11/2026 ya no hay cuota mensual por rubro).
  * - Reenviar la baja o la liberación de un puesto (cola del mapa con señal débil) no es un error.
  */
 import test, { after, before } from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
-  COBRO_POR_PUESTO_DESDE, calcularLiquidacion, closeDatabase, createUser, currentPeriod, deactivatePuesto, getObservacionesCobro,
+  calcularLiquidacion, closeDatabase, createUser, currentPeriod, deactivatePuesto, getObservacionesCobro,
   initializeDatabase, insertComerciante, insertPuesto, insertTarifa, insertZona, liberarPuesto, marcarAsistencias, registrarCobro,
   seriesDelComerciante, todayInLima, updatePuesto
 } from '../src/db.js';
 import { pool } from '../src/pg.js';
+import { insertZonaConPrecio, zonaConPrecio } from './_deuda.js';
 
 before(async () => { await initializeDatabase(); });
 after(async () => { await closeDatabase(); });
@@ -25,7 +26,7 @@ const rubroRopa = async () => (await pool.query("SELECT id FROM rubros WHERE nom
 
 // Ferial con su puesto en una zona asfaltada (S/ 3 por día, tarifa general de la 0013).
 async function ferialAsfaltado() {
-  const asfaltada = await insertZona(pool, { nombre: `Zona asfaltada ${unico()}`, tipo_via: 'asfaltada' });
+  const asfaltada = await insertZonaConPrecio(pool, { nombre: `Zona asfaltada ${unico()}`, tipo_via: 'asfaltada' });
   const comerciante = await insertComerciante(pool, {
     dni_ruc: String(documento += 1), nombre: `Zona del día ${documento}`, rubro_id: await rubroRopa(), zona_id: asfaltada.id,
     tipo_comerciante: 'ferial', estado: 'activo', usuario_creador: 1
@@ -33,7 +34,7 @@ async function ferialAsfaltado() {
   const puesto = await insertPuesto(pool, { zona_id: asfaltada.id, metros_cuadrados: 4, direccion: `Zona del día ${unico()}`, comerciante_id: comerciante.id });
   return { asfaltada, comerciante, puesto };
 }
-const zonaSinAsfaltar = () => insertZona(pool, { nombre: `Zona sin asfaltar ${unico()}`, tipo_via: 'sin_asfaltar' });
+const zonaSinAsfaltar = () => insertZonaConPrecio(pool, { nombre: `Zona sin asfaltar ${unico()}`, tipo_via: 'sin_asfaltar' });
 const nuevoCobrador = () => createUser({ nombre: `Cobrador zona ${unico()}`, email: `zona-${unico()}@prueba.pe`, password: 'clave-de-prueba-1', rol: 'cobrador' });
 const zonaDeLaMarca = async (puestoId) => Number((await pool.query(
   "SELECT zona_id FROM asistencias_feriales WHERE puesto_id = $1 AND fecha = $2::date AND sesion = ''", [puestoId, todayInLima()])).rows[0]?.zona_id);
@@ -79,21 +80,17 @@ test('ya marcado en la zona del puesto: elegir la zona del día al cobrar la cor
 test('cambiar la zona del puesto no pisa la zona del día ya elegida', async () => {
   const { puesto } = await ferialAsfaltado();
   const tierra = await zonaSinAsfaltar();
-  const otra = await insertZona(pool, { nombre: `Zona nueva del puesto ${unico()}`, tipo_via: 'asfaltada' });
+  const otra = await insertZonaConPrecio(pool, { nombre: `Zona nueva del puesto ${unico()}`, tipo_via: 'asfaltada' });
   await marcarAsistencias(pool, [{ puesto_id: puesto.id, fecha: todayInLima(), asistio: true, zona_id: tierra.id }], { usuarioId: 1 });
   await updatePuesto(pool, puesto.id, { zona_id: otra.id });
   assert.equal(await zonaDeLaMarca(puesto.id), Number(tierra.id), 'antes el cambio de zona del puesto la borraba');
 });
 
-// Permanente con cuota mensual de S/ 30 de su rubro (zona sin tipo de vía).
+// Permanente con dos puestos en una zona de S/ 30 por día.
 async function permanenteMensual() {
-  const zona = await insertZona(pool, { nombre: `Zona mensual ${unico()}` });
-  const rubro = (await pool.query('INSERT INTO rubros (nombre) VALUES ($1) RETURNING id', [`rubro por puesto ${unico()}`])).rows[0].id;
-  await insertTarifa(pool, {
-    tipo_tarifa: 'fija', monto_fijo: 30, monto_variable: 0, unidad_medida: 'mensual', rubro_id: rubro, vigencia_inicio: '2026-01-01'
-  }, { permitirInicioPasado: true });
+  const zona = await zonaConPrecio(pool, 30, { nombre: `Zona por puesto ${unico()}` });
   const comerciante = await insertComerciante(pool, {
-    dni_ruc: String(documento += 1), nombre: `Por puesto ${documento}`, rubro_id: rubro, zona_id: zona.id,
+    dni_ruc: String(documento += 1), nombre: `Por puesto ${documento}`, rubro_id: 1, zona_id: zona.id,
     tipo_comerciante: 'permanente', estado: 'activo', usuario_creador: 1
   });
   const puestos = [];
@@ -102,25 +99,22 @@ async function permanenteMensual() {
   }
   return { comerciante, puestos };
 }
+const marcarHoy = (puestos) => marcarAsistencias(pool, puestos.map((puesto) => ({ puesto_id: puesto.id, fecha: todayInLima(), asistio: true })), { usuarioId: 1 });
 
-test('dos puestos con cuota mensual: desde noviembre paga por cada puesto', async () => {
-  assert.equal(COBRO_POR_PUESTO_DESDE, '2026-11');
-  const { comerciante } = await permanenteMensual();
-  const mes = await calcularLiquidacion(pool, comerciante.id, currentPeriod());
-  assert.equal(mes.cantidad_puestos, 2);
-  assert.equal(mes.monto_total, 60, 'antes pagaba S/ 30 por un solo puesto');
-  // Un mes antes de la decisión sigue siendo por un puesto.
-  assert.equal((await calcularLiquidacion(pool, comerciante.id, '2026-10')).monto_total, 30);
+test('dos puestos: paga cada puesto marcado ese día, no una cuota del mes', async () => {
+  const { comerciante, puestos } = await permanenteMensual();
+  assert.equal((await calcularLiquidacion(pool, comerciante.id, currentPeriod())).saldo, 0, 'sin días cobrados no debe nada');
+  await marcarHoy([puestos[0]]);
+  assert.equal((await calcularLiquidacion(pool, comerciante.id, currentPeriod())).monto_total, 30);
+  await marcarHoy(puestos);
+  assert.equal((await calcularLiquidacion(pool, comerciante.id, currentPeriod())).monto_total, 60, 'los dos puestos marcados hoy');
 });
 
-test('ceder un puesto después no cambia el mes en que lo tuvo', async () => {
+test('ceder un puesto después no cambia lo que debe por los días que lo tuvo', async () => {
   const { comerciante, puestos } = await permanenteMensual();
-  // El segundo puesto se libera: este mes lo tuvo algún día, así que se sigue cobrando.
+  await marcarHoy(puestos);
   await liberarPuesto(pool, puestos[1].id);
-  assert.equal((await calcularLiquidacion(pool, comerciante.id, currentPeriod())).monto_total, 60);
-  // Simula que eso fue el mes pasado: el tramo cerrado antes de este mes ya no cuenta para este mes.
-  await pool.query("UPDATE puestos_tenencia SET desde = '2026-10-01', hasta = '2026-10-31' WHERE puesto_id = $1", [puestos[1].id]);
-  assert.equal((await calcularLiquidacion(pool, comerciante.id, currentPeriod())).monto_total, 30);
+  assert.equal((await calcularLiquidacion(pool, comerciante.id, currentPeriod())).monto_total, 60, 'el día marcado sigue siendo suyo');
 });
 
 test('reenviar la baja o la liberación de un puesto no es un error', async () => {

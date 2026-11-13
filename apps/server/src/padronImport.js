@@ -203,8 +203,6 @@ export async function previewPadronSheets(sheets, { filename = '', db }) {
   const defaultRubroId = rubroDelArchivo(rubros, filename);
   const otrosRubroId = rubroExacto(rubros, 'otros');
   const defaultZonaId = zonas[0]?.id;
-  // En una zona con tipo de vía el cobro es por día cobrado y no usa metros: ahí el metraje es opcional.
-  const zonasConVia = new Set(zonas.filter((zona) => zona.tipo_via).map((zona) => Number(zona.id)));
   const seenCodes = new Set();
   const candidates = [];
   const sheetSummaries = [];
@@ -284,11 +282,9 @@ export async function previewPadronSheets(sheets, { filename = '', db }) {
           rowErrors.push(error.message);
         }
       }
+      // El metraje es opcional: el cobro es por día y no usa metros (13/11/2026).
       const sinMetraje = !Number.isFinite(area) || area <= 0;
       if (!name) rowErrors.push('Falta el nombre del titular.');
-      if (sinMetraje && zonaId && !zonasConVia.has(Number(zonaId))) {
-        rowErrors.push('Falta un metraje mayor que cero: la zona no tiene tipo de vía y su tarifa puede ser por metro cuadrado.');
-      }
       if (!rubroId) rowErrors.push(`No hay un rubro configurado que coincida con "${rubroValue}".`);
       if (!zonaId) rowErrors.push('No hay ninguna zona registrada: cree al menos una antes de importar el padrón.');
       if (seenCodes.has(code)) rowErrors.push(`Código de puesto ${code} duplicado dentro del libro.`);

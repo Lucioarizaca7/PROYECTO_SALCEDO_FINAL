@@ -26,7 +26,7 @@ export function normalizarComerciante(item, descargadoEn = new Date().toISOStrin
     rubro: item.rubro || null,
     zona: item.zona || null,
     zonaId: item.zona_id ?? null,
-    // Cuota por puesto (12/11/2026): "× N puestos" también sin señal.
+    // Puestos del eventual (paga un día por cada uno): "× N puestos" también sin señal.
     cantidadPuestos: Number(item.cantidad_puestos || 1),
     // Zona del puesto donde se marca la asistencia: la que se propone como zona de hoy (12/11/2026).
     zonaPuestoId: item.zona_puesto_id ?? item.zona_id ?? null,
@@ -127,13 +127,13 @@ export function aplicarCobroLocal(registro, monto, periodo = null) {
 }
 
 /**
- * Monto de un día cobrado en una zona según su tipo de vía, con las tarifas generales del paquete (por día
- * cobrado, sin rubro ni zona): S/ 3 asfaltada, S/ 2 sin asfaltar. Para la zona del día sin tickets; null si no hay.
+ * Precio de un día cobrado en una zona, con los precios del paquete de jornada (el super_admin fija el precio de
+ * cada zona, 13/11/2026). Para la zona del día sin tickets; null si la zona no tiene precio ese día.
  */
-export function montoDiaEnZona(tarifas = [], tipoVia, dia = hoyEnLima()) {
-  if (!tipoVia) return null;
-  const tarifa = tarifas.find((item) => Number(item.estado ?? 1) === 1 && item.unidad_medida === 'semanal' && item.tipo_via === tipoVia
-    && !item.rubro_id && !item.zona_id && String(item.vigencia_inicio) <= dia && (!item.vigencia_fin || String(item.vigencia_fin) >= dia));
+export function montoDiaEnZona(tarifas = [], zonaId, dia = hoyEnLima()) {
+  if (zonaId === null || zonaId === undefined || zonaId === '') return null;
+  const tarifa = tarifas.find((item) => Number(item.estado ?? 1) === 1 && item.unidad_medida === 'dia' && String(item.zona_id) === String(zonaId)
+    && String(item.vigencia_inicio) <= dia && (!item.vigencia_fin || String(item.vigencia_fin) >= dia));
   return tarifa ? Number(tarifa.monto_fijo) : null;
 }
 

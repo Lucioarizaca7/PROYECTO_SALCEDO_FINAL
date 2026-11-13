@@ -36,10 +36,10 @@ Cada sección dice qué hacer y qué está prohibido. Si una regla choca con lo 
 4. Cuando el usuario decide algo nuevo, se escribe en `reglas-negocio.md` (con fecha) y, si hay término nuevo, en el glosario. Así la siguiente sesión no adivina.
 
 Decisiones que más se olvidan:
-- Cobro por **día cobrado**: S/ 3 vía asfaltada, S/ 2 sin asfaltar, **por puesto y por día**, para todos los rubros. Sin día cobrado no hay deuda. El tipo de vía es de la **zona**.
-- Ferial paga por día asistido; eventual paga el día que se le encuentra; permanente por mes o por día cobrado según la tarifa de su zona.
+- Cobro **solo por día cobrado** (13/11/2026): cada puesto paga el **precio por día de su zona** (lo fija el `super_admin` en Tarifas) por cada día que el cobrador salió a cobrar, igual para todos los rubros y sin metros. Sin día cobrado no hay deuda; no hay cuota mensual. Zona = sector (tipo de vía + precio); las calles van dentro de su zona.
+- Ferial y permanente pagan sus días marcados (o cobrados); el eventual paga el día que se le encuentra, sin marca.
 - Deuda acumulada desde `max(mes de alta, inicio_cobro)`.
-- Un ticket preimpreso por puesto y día cobrado (S3/S2); los lotes los asigna solo `super_admin`; el ticket convive con el recibo `R-`.
+- Un ticket preimpreso por puesto y día cobrado, de la serie cuyo valor es el precio del día (S3 = S/ 3, S2 = S/ 2); los lotes los asigna solo `super_admin`; el ticket convive con el recibo `R-`.
 - Sin señal, un conflicto **nunca se descarta**: el cobro queda `OBSERVED` y va a revisión, porque el dinero ya se recibió.
 - Un cobro no se borra: se **anula** con motivo y responsable (solo `super_admin`).
 
@@ -85,7 +85,7 @@ grep -rn "nombreFuncion(" apps/server/src apps/client/src
 
 ## 3. Base de datos
 
-- **Las migraciones solo se agregan**: `migrations/000N_nombre.sql` (la siguiente es la 0032), con `BEGIN; … COMMIT;`, comentarios en español, la corrección de los datos existentes y su prueba. Nunca se edita una que ya se aplicó.
+- **Las migraciones solo se agregan**: `migrations/000N_nombre.sql` (la siguiente es la 0033), con `BEGIN; … COMMIT;`, comentarios en español, la corrección de los datos existentes y su prueba. Nunca se edita una que ya se aplicó.
 - **La regla también va en la base**: CHECK, FK, UNIQUE (parcial si hace falta). El JS valida para dar un buen mensaje; la base impide el dato malo aunque entre por otro camino. Ejemplos: `puestos_ocupado_con_titular`, `tarifas_zona_o_tipo_via`, `UNIQUE (serie, numero)` de tickets.
 - Dinero en `NUMERIC(12,2)`; se redondea solo al mostrar. En JS llega como número (`pg.js`): todo monto de entrada y toda suma de dinero pasa por `dinero()` de `db.js` (a céntimos) antes de comparar o escribir.
 - El pool (`pg.js`) escucha su evento `error` (sin él, una conexión cortada tumba la API) y espera a lo más `ESPERA_CONEXION_MS` por una conexión. No se quitan.

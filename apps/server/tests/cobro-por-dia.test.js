@@ -1,6 +1,7 @@
 /**
- * Cobro por día cobrado (migrations/0013_cobro_por_dia.sql): S/ 3 en vía asfaltada y S/ 2 sin asfaltar,
- * para todos los rubros, por cada día que el cobrador marcó asistencia. Sin día cobrado no hay deuda.
+ * Cobro solo por día cobrado (0013 y 0032, decisión del usuario del 13/11/2026): cada día que el cobrador salió y
+ * marcó se cobra el precio por día de la zona, que fija el super_admin (aquí S/ 3 en la zona asfaltada y S/ 2 en
+ * la sin asfaltar), igual para todo rubro y tipo. Sin día cobrado no hay deuda: no hay cuota mensual.
  * El cobrador puede dejar una observación: "no salió" es una falta; "no vendió" no libera la deuda del día.
  */
 import test from 'node:test';
@@ -11,13 +12,14 @@ import {
   marcarAsistencias, getAsistencias, getObservacionesCobro, getJornadaPackage, getTarifas, todayInLima, currentPeriod,
   registrarCobro, syncOfflineCobro
 } from '../src/db.js';
+import { insertZonaConPrecio } from './_deuda.js';
 
 let documento = 20999000000;
 let correlativoZona = 0;
 const PERIODO = '2026-09';
 
 const rubroId = async (db, nombre) => (await db.query('SELECT id FROM rubros WHERE nombre = $1', [nombre])).rows[0].id;
-const zonaNueva = (db, tipo_via) => insertZona(db, { nombre: `Zona por día ${process.pid}-${correlativoZona += 1}-${Date.now()}`, tipo_via });
+const zonaNueva = (db, tipo_via) => insertZonaConPrecio(db, { nombre: `Zona por día ${process.pid}-${correlativoZona += 1}-${Date.now()}`, tipo_via });
 
 async function comercianteConPuesto(db, { rubro, zonaId, tipo = 'permanente', metros = 4 }) {
   const comerciante = await insertComerciante(db, {
@@ -28,37 +30,33 @@ async function comercianteConPuesto(db, { rubro, zonaId, tipo = 'permanente', me
   return { comerciante, puesto };
 }
 
-// Las tarifas generales de la migración rigen desde el mes actual. Estas pruebas liquidan septiembre de
-// 2026: cada una agrega (una sola vez) las mismas tarifas generales vigentes desde ese mes. Las pruebas del
-// archivo corren a la vez, así que ninguna modifica las de la migración.
-async function preparar() {
-  const db = await initializeDatabase();
-  await db.query(`
-    INSERT INTO tarifas (rubro_id, tipo_via, tipo_tarifa, monto_fijo, monto_variable, unidad_medida, vigencia_inicio, vigencia_fin)
-    SELECT NULL, via.tipo_via, 'fija', via.monto, 0, 'semanal', DATE '2026-09-01', date_trunc('month', now() AT TIME ZONE 'America/Lima')::date - 1
-    FROM (VALUES ('asfaltada', 3), ('sin_asfaltar', 2)) AS via (tipo_via, monto)
-    WHERE NOT EXISTS (SELECT 1 FROM tarifas t WHERE t.rubro_id IS NULL AND t.tipo_via = via.tipo_via AND t.vigencia_inicio = DATE '2026-09-01')`);
-  return db;
-}
+// Cada zona de prueba nace con su precio por día desde siempre (zonaNueva), así se puede liquidar septiembre.
+const preparar = () => initializeDatabase();
 
 const marcar = (db, puesto, fechas, extra = {}) => marcarAsistencias(db, fechas.map((fecha) => ({ puesto_id: puesto.id, fecha, asistio: true, ...extra })), { usuarioId: 2 });
 
-test('las tarifas generales por tipo de vía existen y valen para todos los rubros', async () => {
+test('las tarifas activas son solo precios por día de una zona; ya no hay cuota mensual', async () => {
   const db = await initializeDatabase();
-  const generales = (await getTarifas(db)).filter((item) => item.rubro_id === null && item.unidad_medida === 'semanal' && item.vigencia_inicio === `${currentPeriod()}-01`);
-  assert.deepEqual(generales.map((item) => [item.tipo_via, Number(item.monto_fijo)]).sort(), [['asfaltada', 3], ['sin_asfaltar', 2]]);
-  assert.equal(generales[0].rubro, 'Todos los rubros');
+  const activas = (await getTarifas(db)).filter((item) => item.estado === 1);
+  assert.ok(activas.length > 0);
+  for (const tarifa of activas) {
+    assert.equal(tarifa.unidad_medida, 'dia');
+    assert.ok(tarifa.zona_id, 'cada precio es de una zona');
+    assert.equal(tarifa.rubro_id, null);
+  }
+  // Las zonas de la semilla: S/ 3 la asfaltada y S/ 2 las sin asfaltar.
+  const zonas = (await db.query(`SELECT z.nombre, t.monto_fijo FROM tarifas t JOIN zonas z ON z.id = t.zona_id
+    WHERE t.activo AND z.nombre IN ('Mercado Central', 'Parque Principal') ORDER BY z.nombre`)).rows;
+  assert.deepEqual(zonas.map((fila) => [fila.nombre, Number(fila.monto_fijo)]), [['Mercado Central', 3], ['Parque Principal', 2]]);
 
-  const creada = await insertTarifa(db, { rubro_id: '', tipo_tarifa: 'fija', monto_fijo: 1, unidad_medida: 'diaria', vigencia_inicio: '2030-01-01' }, { permitirInicioPasado: true });
-  assert.equal(creada.rubro_id, null, 'una tarifa sin rubro se puede registrar');
-
-  // Rigen desde el mes de la migración: los meses anteriores siguen con la tarifa del rubro, así cargar el
-  // tipo de vía de una zona no reescribe la deuda ni lo pagado de esos meses.
+  // Un permanente sin días cobrados no debe nada en ningún mes: antes "otros" pagaba S/ 90 al mes.
   const asfaltada = await zonaNueva(db, 'asfaltada');
   const { comerciante } = await comercianteConPuesto(db, { rubro: 'otros', zonaId: asfaltada.id });
   const mesPasado = await calcularLiquidacion(db, comerciante.id, '2026-08');
-  assert.equal(mesPasado.tarifa.unidad_medida, 'mensual');
-  assert.equal(mesPasado.monto_total, 90);
+  assert.equal(mesPasado.no_devengo, true);
+  assert.equal(mesPasado.motivo, 'sin_dias_cobrados');
+  assert.equal(mesPasado.monto_total, 0);
+  assert.equal((await calcularLiquidacion(db, comerciante.id, currentPeriod())).saldo, 0);
 });
 
 test('el permanente paga S/ 3 o S/ 2 por día cobrado, sin importar rubro ni metros', async () => {
@@ -71,7 +69,7 @@ test('el permanente paga S/ 3 o S/ 2 por día cobrado, sin importar rubro ni met
 
   const sinMarcas = await calcularLiquidacion(db, comida.comerciante.id, PERIODO);
   assert.equal(sinMarcas.no_devengo, true);
-  assert.equal(sinMarcas.motivo, 'sin_asistencia');
+  assert.equal(sinMarcas.motivo, 'sin_dias_cobrados');
   assert.equal(sinMarcas.saldo, 0);
   assert.equal((await calcularDeudaAcumulada(db, comida.comerciante.id)).deuda_total, 0, 'sin día cobrado no hay deuda');
 
@@ -81,7 +79,12 @@ test('el permanente paga S/ 3 o S/ 2 por día cobrado, sin importar rubro ni met
   assert.equal(deComida.monto_dia, 3);
   assert.equal(deComida.monto_total, 6);
   assert.equal((await calcularLiquidacion(db, ropa.comerciante.id, PERIODO)).monto_total, 6, 'otro rubro y otro tamaño, el mismo monto');
-  assert.equal((await calcularLiquidacion(db, enTierra.comerciante.id, PERIODO)).monto_total, 4, 'vía sin asfaltar: S/ 2 por día');
+  assert.equal((await calcularLiquidacion(db, enTierra.comerciante.id, PERIODO)).monto_total, 4, 'zona sin asfaltar: S/ 2 por día');
+
+  // Una feria que sale solo los miércoles paga solo los miércoles: 4 miércoles × S/ 3.
+  const miercoles = await comercianteConPuesto(db, { rubro: 'comida', zonaId: asfaltada.id, tipo: 'ferial' });
+  await marcar(db, miercoles.puesto, ['2026-09-02', '2026-09-09', '2026-09-16', '2026-09-23']);
+  assert.equal((await calcularLiquidacion(db, miercoles.comerciante.id, PERIODO)).monto_total, 12);
 });
 
 test('el ferial y el eventual también cobran S/ 3 en vía asfaltada', async () => {
@@ -95,17 +98,23 @@ test('el ferial y el eventual también cobran S/ 3 en vía asfaltada', async () 
   const hoy = await calcularLiquidacion(db, eventual.comerciante.id);
   assert.equal(hoy.cobro_diario, true);
   assert.equal(hoy.monto_total, 3);
-  await assert.rejects(() => marcar(db, eventual.puesto, [todayInLima()]), /no es de un comerciante ferial/, 'al eventual se le cobra sin marca');
+  await assert.rejects(() => marcar(db, eventual.puesto, [todayInLima()]), /eventual: se le cobra el día en que se le encuentra/, 'al eventual se le cobra sin marca');
 });
 
-test('una zona sin tipo de vía sigue con la tarifa de su rubro', async () => {
+test('una zona sin precio: sin días no debe nada; un día marcado avisa que falta el precio', async () => {
   const db = await preparar();
-  const sinDato = await zonaNueva(db);
-  const { comerciante, puesto } = await comercianteConPuesto(db, { rubro: 'otros', zonaId: sinDato.id });
-  const liquidacion = await calcularLiquidacion(db, comerciante.id, PERIODO);
-  assert.equal(liquidacion.tarifa.unidad_medida, 'mensual');
-  assert.equal(liquidacion.monto_total, 90);
-  await assert.rejects(() => marcar(db, puesto, ['2026-09-06']), /tarifa por día cobrado/);
+  const sinPrecio = await zonaNueva(db);
+  const { comerciante, puesto } = await comercianteConPuesto(db, { rubro: 'otros', zonaId: sinPrecio.id });
+  const vacio = await calcularLiquidacion(db, comerciante.id, PERIODO);
+  assert.equal(vacio.no_devengo, true);
+  assert.equal(vacio.tarifa, null);
+
+  await marcar(db, puesto, ['2026-09-06']);
+  await assert.rejects(() => calcularLiquidacion(db, comerciante.id, PERIODO), (error) => error.sinTarifa && /no tiene precio por día/.test(error.message));
+
+  // El super_admin le pone precio y el día marcado se cobra con él.
+  await insertTarifa(db, { zona_id: sinPrecio.id, monto_fijo: 5, vigencia_inicio: '2026-09-01' }, { permitirInicioPasado: true });
+  assert.equal((await calcularLiquidacion(db, comerciante.id, PERIODO)).monto_total, 5);
 });
 
 test('el permanente que cobra por día aparece en la lista del día y en el paquete de jornada', async () => {
@@ -200,7 +209,7 @@ test('"no salió" en la app manda sobre la P importada del Excel ese día', asyn
   assert.equal((await calcularLiquidacion(db, comerciante.id, PERIODO)).dias_asistidos, 1);
 });
 
-test('con dos puestos marcados el mismo día paga por cada puesto, con la tarifa de la zona de cada uno', async () => {
+test('con dos puestos marcados el mismo día paga por cada puesto, con el precio de la zona de cada uno', async () => {
   const db = await preparar();
   const asfaltada = await zonaNueva(db, 'asfaltada');
   const tierra = await zonaNueva(db, 'sin_asfaltar');
@@ -214,7 +223,7 @@ test('con dos puestos marcados el mismo día paga por cada puesto, con la tarifa
   assert.equal(mismaVia.monto_total, 9);
   assert.deepEqual(mismaVia.puestos_cobrados.map((item) => [item.puesto_id, item.dias]), [[Number(puesto.id), 1], [Number(segundo.id), 2]]);
 
-  // Un tercer puesto en vía sin asfaltar paga S/ 2 por día.
+  // Un tercer puesto en la zona sin asfaltar paga S/ 2 por día.
   const enTierra = await insertPuesto(db, { zona_id: tierra.id, metros_cuadrados: 4, direccion: `Por día tierra ${documento}`, comerciante_id: comerciante.id });
   await marcar(db, enTierra, ['2026-09-06']);
   const mixto = await calcularLiquidacion(db, comerciante.id, PERIODO);

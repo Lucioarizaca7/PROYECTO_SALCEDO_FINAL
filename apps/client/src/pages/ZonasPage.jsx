@@ -16,7 +16,7 @@ export function ZonasPage() {
         <div>
           <div className="eyebrow">GESTIÓN / ZONAS Y CALLES</div>
           <h1>Zonas y calles</h1>
-          <p>Administra la distribución territorial y la ubicación de cada comercio autorizado.</p>
+          <p>Cada zona es un sector con su tipo de vía y su precio por día (se pone en Tarifas). Las calles van dentro de su zona y ubican cada puesto.</p>
         </div>
       </div>
 
@@ -27,7 +27,7 @@ export function ZonasPage() {
           <div className="panel-heading">
             <div>
               <div className="panel-title">{puedeEditar ? 'Crear o editar zona' : 'Zonas'}</div>
-              <div className="panel-subtitle">Cada zona agrupa varias calles y puestos.</div>
+              <div className="panel-subtitle">Si una calle es de otro tipo de vía, va en otra zona: el precio es de la zona.</div>
             </div>
           </div>
 
@@ -50,7 +50,7 @@ export function ZonasPage() {
           <div className="table-card" style={{ marginTop: '16px' }}>
             <table>
               <thead>
-                <tr><th>Zona</th><th>Descripción</th><th>Tipo de vía</th><th>Calles</th>{puedeEditar && <th>Acciones</th>}</tr>
+                <tr><th>Zona</th><th>Descripción</th><th>Tipo de vía</th><th>Precio por día</th><th>Calles</th>{puedeEditar && <th>Acciones</th>}</tr>
               </thead>
               <tbody>
                 {zonas.zoneRecords.map((zona) => (
@@ -58,6 +58,7 @@ export function ZonasPage() {
                     <td>{zona.nombre}</td>
                     <td>{zona.descripcion || 'Sin descripción'}</td>
                     <td>{TIPO_VIA_TEXTO[zona.tipo_via] || 'Sin dato'}</td>
+                    <td>{zona.precio_dia == null ? <span className="status pending">Sin precio</span> : `S/ ${Number(zona.precio_dia).toFixed(2)}`}</td>
                     <td>{Number(zona.total_calles || 0)}</td>
                     {puedeEditar && (
                       <td>
@@ -76,7 +77,7 @@ export function ZonasPage() {
           <div className="panel-heading">
             <div>
               <div className="panel-title">{puedeEditar ? 'Crear o editar calle' : 'Calles'}</div>
-              <div className="panel-subtitle">Asocia cada vía a la zona correcta.</div>
+              <div className="panel-subtitle">Cada calle es de una zona; al registrar un puesto se elige su calle.</div>
             </div>
           </div>
 

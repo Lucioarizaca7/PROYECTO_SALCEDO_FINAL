@@ -1,6 +1,6 @@
 /**
- * Comerciante sin tarifa vigente (revisión del 11/11/2026, migración 0024). Una zona sin tipo de vía y un rubro sin
- * tarifa propia no tienen tarifa aplicable:
+ * Comerciante sin tarifa vigente (revisión del 11/11/2026, migración 0024). Desde la 0032 es una zona a la que el
+ * super_admin aún no le puso precio por día, con un día cobrado:
  * - sin señal el cobrador igual puede cobrarle (el paquete de jornada lo trae con saldo 0). Antes el cobro se
  *   rechazaba al sincronizar y el dinero ya recibido quedaba fuera; ahora queda observado, sin tarifa;
  * - el portal respondía 400 y el comerciante no veía ni sus recibos; ahora abre y avisa que no hay tarifa.
@@ -8,21 +8,24 @@
 import test, { after, before } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { closeDatabase, createUser, initializeDatabase, insertComerciante, insertZona, registrarCobro, syncOfflineBatch } from '../src/db.js';
+import { closeDatabase, createUser, currentPeriod, initializeDatabase, insertComerciante, insertPuesto, registrarCobro, syncOfflineBatch, todayInLima } from '../src/db.js';
 import { emitirCarnets, ingresarAlPortal } from '../src/portalAcceso.js';
 import { pool } from '../src/pg.js';
+import { marcarDias, zonaConPrecio } from './_deuda.js';
 
 before(async () => { await initializeDatabase(); });
 after(async () => { await closeDatabase(); });
 
 let documento = 20444000000;
+// Permanente con un puesto en una zona sin precio: el día que se le cobre no tiene con qué liquidarse.
 async function comercianteSinTarifa() {
-  const zona = await insertZona(pool, { nombre: `Zona sin vía ${process.pid}-${documento}` });
-  const rubro = (await pool.query('INSERT INTO rubros (nombre) VALUES ($1) RETURNING id', [`rubro sin tarifa ${process.pid}-${documento}`])).rows[0].id;
-  return insertComerciante(pool, {
-    dni_ruc: String(documento += 1), nombre: `Sin tarifa ${documento}`, rubro_id: rubro, zona_id: zona.id,
+  const zona = await zonaConPrecio(pool, null, { nombre: `Zona sin precio ${process.pid}-${documento}` });
+  const comerciante = await insertComerciante(pool, {
+    dni_ruc: String(documento += 1), nombre: `Sin tarifa ${documento}`, rubro_id: 1, zona_id: zona.id,
     tipo_comerciante: 'permanente', estado: 'activo', usuario_creador: 1
   });
+  const puesto = await insertPuesto(pool, { comerciante_id: comerciante.id, zona_id: zona.id, direccion: `Sin precio ${documento}` });
+  return { ...comerciante, puestoId: puesto.id };
 }
 
 test('sin señal, el cobro a un comerciante sin tarifa queda observado (antes se rechazaba)', async () => {
@@ -36,15 +39,16 @@ test('sin señal, el cobro a un comerciante sin tarifa queda observado (antes se
   const { rows: [fila] } = await pool.query(`
     SELECT t.tarifa_id, o.motivo FROM transacciones t JOIN cobros_observados o ON o.transaccion_id = t.id WHERE t.id = $1`, [resultado.id]);
   assert.equal(fila.tarifa_id, null);
-  assert.match(fila.motivo, /sin tarifa vigente/);
+  assert.match(fila.motivo, /zona no tiene precio por día/);
 
-  // En línea se sigue rechazando: con señal no hay por qué cobrar sin tarifa.
+  // En línea se sigue rechazando: con señal no hay por qué cobrar sin precio.
   await assert.rejects(registrarCobro(pool, { comerciante_id: comerciante.id, cobrador_id: cobrador.id, monto: 5, metodo_pago: 'efectivo' }),
-    /No existe una tarifa vigente/);
+    /no tiene precio por día/);
 });
 
 test('el portal abre sin tarifa vigente y muestra los pagos (antes respondía 400)', async () => {
   const comerciante = await comercianteSinTarifa();
+  await marcarDias(pool, comerciante.puestoId, currentPeriod(), 1, { desde: Number(todayInLima().slice(8, 10)) });
   const [carnet] = await emitirCarnets(pool, [comerciante.id], 1);
   const datos = await ingresarAlPortal(pool, { identifier: comerciante.dni_ruc, llave: carnet.llave });
   assert.equal(datos.deuda.sin_tarifa, true);

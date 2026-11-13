@@ -1,6 +1,6 @@
 // Salud, panel, analítica, reportes y catálogos de solo lectura.
 import express from 'express';
-import { currentPeriod, getDbStats, getRubros, getZonas, getPuestos, getOperationalDashboard, getReportRows, buildReportCsv, generateForecastProjection, getRiskDashboard, indicadoresPanel } from '../db.js';
+import { currentPeriod, getCalles, getDbStats, getRubros, getZonas, getPuestos, getOperationalDashboard, getReportRows, buildReportCsv, generateForecastProjection, getRiskDashboard, indicadoresPanel } from '../db.js';
 import { staffOnly, roles } from '../http/comunes.js';
 import { pool as db } from '../pg.js';
 import { config } from '../config.js';
@@ -103,7 +103,9 @@ router.get('/api/v1/roles', ...staffOnly, (_req, res) => {
 router.get('/api/v1/catalogos', ...staffOnly, async (_req, res) => {
   res.json({
     rubros: await getRubros(db),
-    zonas: await getZonas(db)
+    zonas: await getZonas(db),
+    // Las calles ubican el puesto dentro de su zona (13/11/2026): el mapa y Sitios las ofrecen al elegir zona.
+    calles: await getCalles(db)
   });
 });
 
