@@ -1345,3 +1345,13 @@ tbody td {
 .veredicto-detalle li + li { margin-top: 4px; }
 .veredicto-nota { margin: 14px 0 0; color: var(--tinta-2); font-size: 12px; }
 .form-message.error { background: var(--rojo-bg); color: var(--rojo-tinta); }
+
+/* Botón "Instalar app" del menú (pwa/BotonInstalarApp.jsx) */
+.instalar-app { display: grid; gap: 8px; margin: 0 16px 10px; }
+.instalar-app-boton {
+  display: flex; align-items: center; gap: 10px; min-height: 44px; padding: 0 14px;
+  border: 1px solid rgba(255, 255, 255, 0.22); border-radius: var(--radio-md);
+  background: transparent; color: #FFF; font: inherit; font-size: 14px; font-weight: 600; cursor: pointer;
+}
+.instalar-app-boton:hover, .instalar-app-boton:focus-visible { background: rgba(255, 255, 255, 0.1); }
+.instalar-app-pasos { margin: 0; color: #C9DDD1; font-size: 13px; line-height: 1.4; }
