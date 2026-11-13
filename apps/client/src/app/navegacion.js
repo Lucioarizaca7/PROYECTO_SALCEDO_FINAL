@@ -10,6 +10,8 @@ export const navItems = [
   { key: 'tickets', path: '/tickets', label: 'Tickets', grupo: 'gestion', roles: ['super_admin', 'auditor'] },
   { key: 'zonas', path: '/zonas', label: 'Zonas y calles', grupo: 'configuracion', roles: ['super_admin', 'auditor'] },
   { key: 'tarifas', path: '/tarifas', label: 'Tarifas', grupo: 'configuracion', roles: ['super_admin', 'auditor'] },
+  { key: 'usuarios', path: '/usuarios', label: 'Usuarios', grupo: 'configuracion', roles: ['super_admin'] },
+  { key: 'mi-clave', path: '/mi-clave', label: 'Mi clave', grupo: 'configuracion', roles: ['super_admin', 'cobrador', 'auditor'] },
   { key: 'dispositivos', path: '/dispositivos', label: 'Dispositivos', grupo: 'configuracion', roles: ['super_admin'] },
   { key: 'reportes', path: '/reportes', label: 'Reportes', grupo: 'control' },
   { key: 'auditoria', path: '/auditoria', label: 'Auditoría', grupo: 'control', roles: ['super_admin', 'auditor'] },

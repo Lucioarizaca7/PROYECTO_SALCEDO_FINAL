@@ -28,7 +28,7 @@ const accesosPara = (rol) => accesosCelular
 
 // Marco de las páginas del personal: menú lateral por grupos, barra superior y accesos rápidos del celular.
 export function AppShell({ onLogout }) {
-  const { user, isOnline, apiConnected, offlineQueue } = useSisrec();
+  const { user, isOnline, apiConnected, offlineQueue, avisoSesion, cerrarAvisoSesion } = useSisrec();
   const { pathname } = useLocation();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const pendingSyncCount = offlineQueue.counts.pendiente + offlineQueue.counts.error;
@@ -102,6 +102,12 @@ export function AppShell({ onLogout }) {
           </div>
         </header>
 
+        {avisoSesion && (
+          <div className="aviso-sesion" role="alert">
+            <span>{avisoSesion}</span>
+            <button type="button" className="pwa-toast-close" aria-label="Cerrar aviso" onClick={cerrarAvisoSesion}>×</button>
+          </div>
+        )}
         <div className="page-content" id="pageContent"><Outlet /></div>
         <nav className="mobile-bottom-nav" aria-label="Accesos del celular">
           {accesosPara(user?.rol).map(({ key, label, item }) => (
