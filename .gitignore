@@ -19,6 +19,7 @@ apps/*/temp/
 *.backup
 *.log
 .env.production
+.env.tunel
 
 # Python
 __pycache__/

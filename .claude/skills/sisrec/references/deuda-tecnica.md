@@ -133,6 +133,12 @@ Corregidos, con prueba en `tests/codigo-operacion.test.js`, `tests/tipo-via-de-c
 
 Queda: el paquete de jornada calcula dos veces el mes en curso (`calcularLiquidacion` y otra vez dentro de `calcularDeudaAcumulada`). Con un padrón mucho mayor convendrá la liquidación en lote (paso 6).
 
+## Vigesimosexta revisión del 13/11/2026: prueba en celulares con túnel
+
+- `docker-compose.tunel.yml` + `.env.tunel.example` + `docs/prueba-con-tunel.md`: la PC del usuario hace de servidor y `cloudflared tunnel --url` le da HTTPS. La API va en modo desarrollo (datos demo, claves públicas) y la web llama a la API por el mismo origen (`VITE_API_URL=/` → `apiBase` `/api/v1`), así la dirección del túnel puede cambiar sin recompilar. **Nunca en producción ni con el padrón real.**
+- Comprobado con el build de esa configuración detrás de un proxy como Caddy y Chromium: Service Worker activo, "Listo para hoy", recarga sin señal, cobro con `PROV-` y una sola transacción `R-000001` al volver la señal. `docker compose config` del override, validado; las imágenes no se pudieron bajar aquí (Docker Hub 429).
+- Si se cierra el túnel cambia el origen y la app instalada queda con su IndexedDB en el origen viejo: sincronizar antes de reinstalar.
+
 ## Vigesimoquinta revisión del 13/11/2026: continuidad entre gestiones
 
 - No hay pantalla de usuarios: las cuentas se crean con `crear-admin` / `crear-usuario` y se desactivan con `UPDATE usuarios SET activo = false` en el servidor (el ingreso y la renovación de sesión revisan `u.activo`; comprobado: 401). Ese cambio no queda en la auditoría de SISREC, por eso el procedimiento de `docs/despliegue-produccion.md` (sección 11) lo anota en un acta.

@@ -8,7 +8,7 @@ Anota el resultado de cada paso en la tabla del final. Si un paso falla, apunta 
 
 | Recurso | Detalle |
 |---|---|
-| Servidor de pruebas con HTTPS | `docker-compose.prod.yml` con Caddy y dominio propio. Sin HTTPS no funcionan el Service Worker, la instalación, el GPS ni la hoja de compartir. `http://192.168.x.x` **no sirve**. |
+| Servidor de pruebas con HTTPS | `docker-compose.prod.yml` con Caddy y dominio propio. Sin HTTPS no funcionan el Service Worker, la instalación, el GPS ni la hoja de compartir. `http://192.168.x.x` **no sirve**. Para una primera prueba sin servidor: la PC con el túnel gratuito de [`prueba-con-tunel.md`](prueba-con-tunel.md). |
 | 2 celulares Android | Los de los cobradores, con Chrome actualizado y WhatsApp instalado. |
 | Tickets preimpresos | Un lote asignado a cada cobrador (lo asigna el `super_admin`). |
 | Cuentas | Una cuenta de cobrador por celular y una de administrador (en una PC). |
