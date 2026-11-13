@@ -54,4 +54,4 @@ Antes de tocar uno de estos controles, comprobar que sigue igual en el código (
 
 ## Continuidad entre gestiones (13/11/2026)
 
-Las cuentas externas (VPS, dominio, GitHub) van a correos institucionales por cargo; siempre dos `super_admin`; las claves del servidor en un sobre lacrado bajo custodia de Secretaría General, que se abre solo con memorando de la Gerencia y acta. Procedimiento completo: `docs/despliegue-produccion.md`, sección 11.
+Las cuentas externas (VPS, dominio, GitHub) van a correos institucionales por cargo; un `super_admin` titular y uno suplente (decisión del usuario, 13/11/2026: los dos activos, el suplente solo actúa cuando falta el titular y cada uno revisa en la auditoría lo que hizo el otro); las claves del servidor en un sobre lacrado bajo custodia de Secretaría General, que se abre solo con memorando de la Gerencia y acta. Procedimiento completo: `docs/despliegue-produccion.md`, sección 11.

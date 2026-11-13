@@ -299,3 +299,7 @@ No se usa la impresora térmica en el piloto. El recibo se envía por WhatsApp *
 
 - Sin tarifa vigente el portal abre igual: la deuda del mes va en 0 con `sin_tarifa`, y la pantalla dice "Aún no hay una tarifa vigente para su puesto" en vez de "Cuenta al día". Antes respondía 400 y no se veían ni los recibos.
 - Un cobro observado que aún no se revisó sale "En revisión", no "Válido": la municipalidad todavía puede anularlo.
+
+## Super administrador titular y suplente (13/11/2026)
+
+Decisión del usuario: dos cuentas `super_admin` activas, de cargos distintos y designadas por memorando. El titular trabaja a diario; el suplente solo actúa cuando el titular falta o con encargo escrito. Cada mes uno revisa en la auditoría lo que hizo el otro. El sistema no limita la cantidad de `super_admin` (no hace falta código); la regla es de organización y está en `docs/despliegue-produccion.md` (secciones 4 y 11).

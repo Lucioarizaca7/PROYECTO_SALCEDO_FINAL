@@ -87,6 +87,8 @@ $C node dist/cli/crear-usuario.js --rol auditor        # jefa de área / auditor
 - Las claves tienen como mínimo 10 caracteres.
 - Nunca se escriben en la línea de comandos: el script las pregunta.
 
+**Super administrador titular y suplente** (decisión del 13/11/2026): se crean **dos** cuentas `super_admin` con `crear-admin`, una para el **titular** y otra para el **suplente**, cada una con su propio correo y su propia clave. "Super" es el nivel de permisos, no la cantidad de personas: el titular trabaja a diario y el suplente solo actúa cuando el titular falta. Una cuenta nunca se comparte. Detalle en la sección 11.
+
 ## 5. Datos reales, en este orden
 
 Todo esto se hace en la web, con la cuenta `super_admin`.
@@ -196,7 +198,7 @@ git tag sisrec-v1.0.0 && git push origin sisrec-v1.0.0
 | El celular dice "El servidor no respondió" | el servidor está caído o lento | el cobrador sigue cobrando: el cobro queda en la cola sin señal y se sincroniza solo. Revisar el paso 8 |
 | Un cobro aparece "En revisión" | llegó sin señal con algo dudoso (hora, tickets, sin tarifa) | el `super_admin` lo resuelve en *Control → Revisión de cobros*: el dinero ya se recibió, nunca se descarta |
 | Un cobrador olvidó su clave | todavía no hay cambio de clave desde la web | crearle una cuenta nueva con otro correo (`crear-usuario`) y desactivar la vieja (sección 11.4, paso 3) |
-| Falta el super administrador (se fue, olvidó su clave o falleció) | nadie puede crear usuarios desde la web | seguir el procedimiento de la sección 11 |
+| Falta el super administrador titular (vacaciones, se fue, olvidó su clave o falleció) | nadie puede crear usuarios desde la web | mientras tanto actúa el suplente; para reemplazar al titular o si faltan los dos, sección 11 |
 | Se perdió un celular | la sesión del celular sigue abierta | en *Configuración → Dispositivos*, revocar su sesión: tendrá que volver a ingresar con la clave |
 
 ## 11. Continuidad: cambio de gestión y contingencia
@@ -206,7 +208,10 @@ La gestión municipal cambia cada 4 años y el personal rota. SISREC no puede de
 ### 11.1 Reglas fijas **[tú, al instalar]**
 
 1. **Correos institucionales por cargo**, no personales: por ejemplo `sistemas@<dominio>` para el VPS, el dominio, GitHub y UptimeRobot, y `rentas@<dominio>` para avisos. Si la persona se va, el correo queda.
-2. **Dos super administradores siempre**, de cargos distintos (por ejemplo, Gerencia de Rentas y la jefatura del área de cobranza). Si uno falta, el otro sigue.
+2. **Un super administrador titular y uno suplente**, de cargos distintos y designados por memorando (por ejemplo, titular la jefatura del área de cobranza y suplente la Gerencia de Rentas):
+   - los dos tienen la cuenta activa, pero el suplente **solo la usa cuando el titular falta** (vacaciones, licencia, renuncia, fallecimiento) o con un encargo escrito;
+   - cada mes el titular revisa en *Auditoría* lo que hizo el suplente, y el suplente revisa las anulaciones de cobros del titular: ninguno actúa sin que el otro pueda verlo;
+   - si falta el titular, el suplente sigue trabajando ese mismo día, sin abrir el sobre.
 3. **Un responsable técnico designado por resolución o memorando**: el área de informática o quien la municipalidad contrate como soporte.
 4. **Sobre de contingencia** bajo custodia de **Secretaría General**, con acta de entrega. Contiene:
    - el acceso a la cuenta del VPS, del dominio y de GitHub (correo institucional y clave);
@@ -222,18 +227,23 @@ La gestión municipal cambia cada 4 años y el personal rota. SISREC no puede de
 |---|---|---|
 | Autoriza | Gerente municipal (o el alcalde) | Firma el memorando que designa al nuevo administrador y autoriza abrir el sobre |
 | Custodia | Secretaría General | Guarda el sobre y lo entrega solo con el memorando firmado; levanta el acta |
-| Ejecuta | Responsable técnico designado | Abre el sobre ante Secretaría General, ejecuta los comandos y prepara un sobre nuevo |
+| Ejecuta | Responsable técnico designado | Ejecuta los comandos con su acceso al servidor; abre el sobre ante Secretaría General solo cuando corresponde (11.3) y entonces prepara uno nuevo |
+| Reemplaza | Super administrador suplente | Actúa mientras falta el titular; no necesita el sobre ni al técnico |
 | Usa | El nuevo administrador | Escribe su propia clave al crear su cuenta; el técnico no la conoce |
 
 ### 11.3 Cuándo se activa
 
-- **Cambio de gestión** (cada 4 años, dentro de la transferencia de gestión): siempre, aunque nadie haya olvidado nada.
-- **Un administrador se va, olvida su clave, se enferma o fallece:** cuando lo pida la Gerencia.
-- **Sospecha de que una clave se filtró:** de inmediato.
+| Situación | Qué se hace |
+|---|---|
+| El titular falta unos días (vacaciones, licencia, enfermedad) | Actúa el suplente. No se toca el servidor |
+| El titular se va del cargo, olvida su clave o fallece | Actúa el suplente mientras tanto. Con memorando, el técnico crea al nuevo titular y desactiva la cuenta anterior (pasos 1 a 3 y 5 de 11.4), con su acceso habitual al servidor |
+| Faltan **los dos** super administradores, o el técnico no tiene acceso al servidor | Se abre el sobre ante Secretaría General (pasos 1 a 5) |
+| **Cambio de gestión** (cada 4 años, dentro de la transferencia de gestión) | Siempre, aunque nadie haya olvidado nada: se revisan titular y suplente, se desactivan las cuentas de quienes se van y se cambian las claves con un sobre nuevo (pasos 1 a 5) |
+| Sospecha de que una clave se filtró | De inmediato: pasos 1, 3 y 4 |
 
 ### 11.4 Pasos del técnico
 
-Con el memorando firmado y ante Secretaría General, abrir el sobre y entrar al servidor. Luego:
+Con el memorando firmado, entrar al servidor con el acceso habitual del técnico o, si hace falta, abriendo el sobre ante Secretaría General. Luego:
 
 ```bash
 cd /opt/sisrec
@@ -272,7 +282,7 @@ $C exec postgres psql -U sisrec sisrec -c "UPDATE usuarios SET activo = false WH
 ### 11.6 Revisión anual
 
 Una vez al año (y al empezar cada gestión), la Gerencia y el responsable técnico revisan:
-- que haya dos super administradores activos y que sigan en sus cargos;
+- que haya un super administrador titular y uno suplente activos, y que sigan en sus cargos;
 - que las cuentas de quienes se fueron estén desactivadas;
 - que el sobre exista y sus claves funcionen, sin abrirlo: el técnico prueba el acceso con las claves vigentes y, si cambiaron, se prepara un sobre nuevo con acta.
 
@@ -293,5 +303,5 @@ Una vez al año (y al empezar cada gestión), la Gerencia y el responsable técn
 - [ ] Crear el monitor en UptimeRobot.
 - [ ] Hacer la primera restauración de prueba y anotar el resultado.
 - [ ] Crear los correos institucionales por cargo y poner a su nombre el VPS, el dominio, GitHub y UptimeRobot.
-- [ ] Designar por memorando al responsable técnico y a los dos super administradores.
+- [ ] Designar por memorando al responsable técnico y a los super administradores titular y suplente.
 - [ ] Preparar el sobre de contingencia y entregarlo con acta a Secretaría General (sección 11).
