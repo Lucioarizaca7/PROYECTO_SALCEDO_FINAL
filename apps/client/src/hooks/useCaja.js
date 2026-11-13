@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useSisrec } from '../app/SisrecContext';
 import { hoyEnLima } from '../services/jornadaOffline';
-import { apiBase, authFetch } from '../services/session';
+import { apiBase, authFetch, leerJson } from '../services/session';
 
 export const METODOS_CAJA = [
   { key: 'efectivo', label: 'Efectivo' },
@@ -36,13 +36,13 @@ export function useCaja() {
     try {
       if (esCobrador) {
         const response = await authFetch(`${apiBase}/caja/resumen?fecha=${fecha}`);
-        const body = await response.json();
+        const body = await leerJson(response);
         if (!response.ok) throw new Error(body.message || 'No se pudo cargar la caja');
         setResumen(body.data);
       }
       if (veTodos) {
         const response = await authFetch(`${apiBase}/caja/cierres?desde=${fecha.slice(0, 7)}-01&hasta=${fecha}`);
-        const body = await response.json();
+        const body = await leerJson(response);
         if (response.ok) setCierres(body.data || []);
       }
     } catch (error) {
@@ -61,7 +61,7 @@ export function useCaja() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ fecha, declarado: Object.fromEntries(METODOS_CAJA.map(({ key }) => [key, Number(declarado[key] || 0)])), observaciones })
       });
-      const body = await response.json();
+      const body = await leerJson(response);
       if (!response.ok) throw new Error(body.message || 'No se pudo cerrar la caja');
       setMessage(body.message);
       setDeclarado(VACIO);

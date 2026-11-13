@@ -37,6 +37,8 @@ export function desdeServidor(guardado, data, ahora = new Date()) {
   for (const serie of data?.series || []) {
     series[serie.serie] = {
       valor: Number(serie.valor),
+      // El tipo de vía de la serie (S3 asfaltada, S2 sin asfaltar): con él se elige la serie de la zona del día.
+      tipo_via: serie.tipo_via ?? null,
       disponibles: (serie.disponibles || []).map(Number).filter((numero) => !bloqueados.has(clave(serie.serie, numero))).sort((a, b) => a - b)
     };
   }
@@ -61,8 +63,47 @@ export function seriesConPocos(estado) {
     .map(([serie, datos]) => ({ serie, valor: datos.valor, quedan: datos.disponibles.length }));
 }
 
-/** Lo que se cobra por defecto: un ticket por puesto de cada serie del comerciante (series_cobro). */
-export const requeridosPorDefecto = (seriesCobro = []) => seriesCobro.map((item) => ({ serie: item.serie, valor: Number(item.valor), cantidad: Number(item.puestos) || 1 }));
+/**
+ * Lo que se cobra por defecto: los tickets de hoy (puestos_hoy, 12/11/2026: lo que se le cobra hoy, en la zona
+ * donde vende) o, si el servidor no los manda (un mes atrasado, un padrón viejo), un ticket por puesto de cada
+ * serie. Si hoy no corresponde ninguno (marcado "faltó") se sugieren 0: antes se volvía a uno por puesto.
+ */
+export function requeridosPorDefecto(seriesCobro = []) {
+  const conHoy = seriesCobro.some((item) => item.puestos_hoy !== undefined && item.puestos_hoy !== null);
+  return seriesCobro.map((item) => ({
+    serie: item.serie, valor: Number(item.valor), cantidad: conHoy ? Number(item.puestos_hoy || 0) : Number(item.puestos) || 1
+  }));
+}
+
+/**
+ * Zona del día elegida al cobrar: los tickets de hoy pasan todos a la serie de esa zona (S2 si vende en una zona
+ * sin asfaltar). Las otras series quedan en cero, por si el cobrador suma días adeudados.
+ */
+export function requeridosEnZona(seriesCobro = [], serieZona) {
+  const base = requeridosPorDefecto(seriesCobro);
+  if (!serieZona) return base;
+  const hoy = base.reduce((total, item) => total + item.cantidad, 0) || 1;
+  return [
+    { serie: serieZona.serie, valor: Number(serieZona.valor), cantidad: hoy },
+    ...base.filter((item) => item.serie !== serieZona.serie).map((item) => ({ ...item, cantidad: 0 }))
+  ];
+}
+
+/**
+ * Sin señal, la marca de hoy del celular manda sobre lo que trajo el padrón (12/11/2026): marcado "faltó", hoy no
+ * se le cobra ningún ticket. La zona del día de la marca la elige la pantalla de cobro (requeridosEnZona).
+ */
+export function seriesConMarcaDeHoy(seriesCobro = [], marca = null) {
+  if (!marca || marca.asistio !== false) return seriesCobro;
+  return seriesCobro.map((item) => ({ ...item, puestos_hoy: 0 }));
+}
+
+/** La serie del cobrador para un tipo de vía ({ serie, valor }), o null si no tiene tickets de ese tipo. */
+export function serieDeTipoVia(estado, tipoVia) {
+  if (!tipoVia) return null;
+  const encontrada = Object.entries(estadoGuardado(estado).series).find(([, datos]) => datos.tipo_via === tipoVia);
+  return encontrada ? { serie: encontrada[0], valor: Number(encontrada[1].valor) } : null;
+}
 
 export const montoDeRequeridos = (requeridos = []) => Number(requeridos.reduce((total, item) => total + item.valor * item.cantidad, 0).toFixed(2));
 

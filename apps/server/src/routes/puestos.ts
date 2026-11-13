@@ -29,7 +29,8 @@ router.post('/api/v1/puestos',
     serializeResponse: (body) => body?.data ?? body
   }),
   async (req, res) => {
-    const puesto = await insertPuesto(db, sinMarcaDelPadron(req.body));
+    const puesto = await insertPuesto(db, sinMarcaDelPadron(req.body), { soloZonaDelTitular: req.user?.rol !== 'super_admin' });
+    if (puesto.ya_registrado) return res.json({ data: puesto, message: 'El puesto ya estaba registrado' });
     return res.status(201).json({ data: puesto, message: 'Puesto asignado correctamente' });
   }
 );
@@ -51,7 +52,9 @@ router.post('/api/v1/puestos-mapa',
       direccion: req.body.direccion || req.body.sector || req.body.codigoPuesto,
       metros_cuadrados: req.body.metros_cuadrados ?? req.body.metros ?? 1,
       estado: req.body.estado // sin estado: ocupado si tiene titular, disponible si no
-    });
+    }, { soloZonaDelTitular: req.user?.rol !== 'super_admin' });
+    // Reenvío de la cola del mapa con la misma clave: el puesto ya existía y no se crea otro.
+    if (puesto.ya_registrado) return res.json({ data: puesto, message: 'El puesto ya estaba registrado' });
     return res.status(201).json({ data: puesto, message: 'Puesto geolocalizado registrado correctamente' });
   }
 );
@@ -67,14 +70,14 @@ router.put('/api/v1/puestos-mapa/:id',
     serializeResponse: (body) => body?.data ?? body
   }),
   async (req, res) => {
-    const puesto = await updatePuesto(db, req.params.id, sinMarcaDelPadron(req.body), { puedeCambiarZona: req.user?.rol === 'super_admin' });
+    const puesto = await updatePuesto(db, req.params.id, sinMarcaDelPadron(req.body), req.user?.rol === 'super_admin' ? {} : { puedeCambiarZona: false, soloUbicacion: true });
     return res.json({ data: puesto, message: 'Puesto geolocalizado actualizado correctamente' });
   }
 );
 
 router.post('/api/v1/puestos/:id/liberar',
   requireAuth,
-  requireRoles(['super_admin', 'cobrador']),
+  requireRoles(['super_admin']),
   auditMutation({
     db,
     accion: 'LIBERAR_PUESTO',
@@ -83,13 +86,14 @@ router.post('/api/v1/puestos/:id/liberar',
     serializeResponse: (body) => body?.data ?? body
   }),
   async (req, res) => {
-    return res.json({ data: await liberarPuesto(db, req.params.id), message: 'Puesto liberado: queda disponible para otro comerciante' });
+    const data = await liberarPuesto(db, req.params.id);
+    return res.json({ data, message: data.ya_libre ? 'El puesto ya estaba libre' : 'Puesto liberado: queda disponible para otro comerciante' });
   }
 );
 
 router.delete('/api/v1/puestos-mapa/:id',
   requireAuth,
-  requireRoles(['super_admin', 'cobrador']),
+  requireRoles(['super_admin']),
   auditMutation({
     db,
     accion: 'DAR_DE_BAJA_PUESTO_MAPA',
@@ -98,7 +102,8 @@ router.delete('/api/v1/puestos-mapa/:id',
     serializeResponse: (body) => body?.data ?? body
   }),
   async (req, res) => {
-    return res.json({ data: await deactivatePuesto(db, req.params.id), message: 'Puesto dado de baja lógicamente' });
+    const data = await deactivatePuesto(db, req.params.id);
+    return res.json({ data, message: data.ya_dado_de_baja ? 'El puesto ya estaba dado de baja' : 'Puesto dado de baja lógicamente' });
   }
 );
 
@@ -122,8 +127,17 @@ router.get('/api/v1/asistencias/observaciones', requireAuth, requireRoles(['supe
 
 // Una marca ({ puesto_id, fecha?, asistio, motivo?, observacion? }) o varias ({ marcas: [...] }, p. ej. las guardadas sin señal).
 // Reenviar la misma marca no duplica nada.
+// Un lote ({ marcas }) responde marca por marca: las inválidas vuelven en `rechazadas` sin frenar a las demás.
 router.post('/api/v1/asistencias', requireAuth, requireRoles(['super_admin', 'cobrador']), async (req, res) => {
-  const marcas = Array.isArray(req.body?.marcas) ? req.body.marcas : [req.body || {}];
-  const data = await marcarAsistencias(db, marcas, { usuarioId: req.user.id, audit: auditContext(req, 'MARCAR_ASISTENCIA_FERIAL') });
-  res.status(201).json({ data, message: `${data.length} marca(s) de asistencia guardadas` });
+  const opciones = { usuarioId: req.user.id, rol: req.user.rol, audit: auditContext(req, 'MARCAR_ASISTENCIA_FERIAL') };
+  if (!Array.isArray(req.body?.marcas)) {
+    const data = await marcarAsistencias(db, [req.body || {}], opciones);
+    return res.status(201).json({ data, message: `${data.length} marca(s) de asistencia guardadas` });
+  }
+  const { guardadas, rechazadas } = await marcarAsistencias(db, req.body.marcas, { ...opciones, parcial: true });
+  return res.status(201).json({
+    data: guardadas,
+    rechazadas,
+    message: `${guardadas.length} marca(s) de asistencia guardadas${rechazadas.length ? `, ${rechazadas.length} rechazada(s): ${rechazadas[0].error}` : ''}`
+  });
 });

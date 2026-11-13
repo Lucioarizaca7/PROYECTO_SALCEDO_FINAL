@@ -4,7 +4,9 @@ import { SitesMap } from '../components/features/map/SitesMap';
 import { useSitios } from '../hooks/useSitios';
 
 export function MapaPage() {
-  const { mapPuestos, catalogos } = useSisrec();
+  const { mapPuestos, catalogos, user } = useSisrec();
+  // Titular, liberar y baja: solo el super administrador (decisión del usuario, 11/11/2026).
+  const esAdmin = user?.rol === 'super_admin';
   const sitios = useSitios();
 
   return (
@@ -24,9 +26,10 @@ export function MapaPage() {
         searchMerchants={sitios.searchMerchants}
         onCreate={sitios.createSite}
         onUpdate={sitios.updateSite}
-        onDelete={sitios.deleteSite}
-        onAssign={sitios.assignSite}
-        onRelease={sitios.releaseSite}
+        onDelete={esAdmin ? sitios.deleteSite : undefined}
+        onAssign={esAdmin ? sitios.assignSite : undefined}
+        onRelease={esAdmin ? sitios.releaseSite : undefined}
+        soloZonaDelTitular={!esAdmin}
         onCollect={sitios.collectFromSite}
       />
     </section>

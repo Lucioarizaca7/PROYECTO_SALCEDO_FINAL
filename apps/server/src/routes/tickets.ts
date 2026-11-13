@@ -1,7 +1,7 @@
 // Tickets preimpresos: el administrador asigna, reasigna y devuelve lotes; el cobrador consulta los suyos y
 // anula los dañados. El cobro con ticket va por /cobros (campo tickets).
 import express from 'express';
-import { getSeriesTicket, getCobradoresTickets, getLotes, asignarLote, reasignarTickets, devolverTickets, ticketsDelCobrador, anularTickets } from '../db.js';
+import { getSeriesTicket, getCobradoresTickets, getLotes, getTicketsDelLote, asignarLote, reasignarTickets, devolverTickets, ticketsDelCobrador, anularTickets } from '../db.js';
 import { requireAuth, requireRoles } from '../auth.js';
 import { staffOnly, auditContext } from '../http/comunes.js';
 import { pool as db } from '../pg.js';
@@ -16,6 +16,12 @@ router.get('/api/v1/tickets/series', ...staffOnly, async (_req, res) => {
 router.get('/api/v1/tickets/lotes', requireAuth, requireRoles(['super_admin', 'auditor']), async (req, res) => {
   const data = await getLotes(db, { cobradorId: req.query.cobrador_id, estado: req.query.estado });
   return res.json({ data, total: data.length });
+});
+
+// Detalle de un lote: cada ticket usado, anulado o devuelto con su motivo. Solo quien ve los lotes.
+router.get('/api/v1/tickets/lotes/:id/tickets', requireAuth, requireRoles(['super_admin', 'auditor']), async (req, res) => {
+  const data = await getTicketsDelLote(db, req.params.id);
+  return res.json({ data, total: data.tickets.length });
 });
 
 router.get('/api/v1/tickets/cobradores', requireAuth, requireRoles(['super_admin', 'auditor']), async (_req, res) => {

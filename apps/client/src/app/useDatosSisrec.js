@@ -1,12 +1,12 @@
 import { useEffect, useState } from 'react';
-import { formatPEN } from '../lib/formato';
+import { fechaDeTexto, formatPEN } from '../lib/formato';
 import { periodoEnLima } from '../services/jornadaOffline';
 import { readMapSnapshot, saveMapSnapshot, syncPendingMapMutations } from '../services/mapaOffline';
-import { apiBase, authFetch } from '../services/session';
+import { apiBase, authFetch, leerJson } from '../services/session';
 
 const EMPTY_OPERATIONAL = { porZona: [], porRubro: [], porCobrador: [] };
 const EMPTY_FORECAST = { totalProyectado: 0, promedioDiario: 0, porZona: [], porRubro: [] };
-const EMPTY_RISK = { summary: { total: 0, bajo: 0, medio: 0, alto: 0, critico: 0 }, records: [] };
+const EMPTY_RISK = { calculado_el: null, actualizando: false, summary: { total: 0, bajo: 0, medio: 0, alto: 0, critico: 0 }, records: [] };
 
 const toDashboardStats = (stats = {}, sitios) => ({
   recaudacion: formatPEN(stats.recaudacion ?? stats.totalRecaudado ?? 0),
@@ -40,7 +40,7 @@ export function useDatosSisrec({ user, onSessionExpired }) {
       try {
         const response = await fetch(`${apiBase}/publico/resumen`, { signal: controller.signal });
         if (!response.ok) throw new Error('API no disponible');
-        const dashboard = await response.json();
+        const dashboard = await leerJson(response);
         setDashboardStats(toDashboardStats(dashboard.stats));
         setOperational(dashboard.operational || EMPTY_OPERATIONAL);
         setApiConnected(true);
@@ -59,7 +59,7 @@ export function useDatosSisrec({ user, onSessionExpired }) {
         // Un módulo que el rol no puede ver queda vacío en vez de vaciar todo el panel.
         if (response.status === 403) return { data: [], total: 0 };
         if (response.status === 401) throw Object.assign(new Error('Tu sesión expiró. Ingresa de nuevo.'), { sessionExpired: true });
-        const body = await response.json();
+        const body = await leerJson(response);
         if (!response.ok) throw new Error(body.message || `Error ${response.status}`);
         return body;
       };
@@ -80,7 +80,7 @@ export function useDatosSisrec({ user, onSessionExpired }) {
       setDashboardStats(toDashboardStats(dashboard.stats, puestos.total ?? (puestos.data || []).length));
       setOperational(dashboard.operational || EMPTY_OPERATIONAL);
       // Filas del directorio: [id, nombre, rubro, dni_ruc, zona, estado, fecha, tipo, código, correlativo].
-      setComerciantes((merchants.data || []).map((item) => [item.id, item.nombre, item.rubro, item.dni_ruc, item.zona, item.estado, new Date(item.fecha_registro).toLocaleDateString('es-PE'), item.tipo_comerciante || item.categoria, item.codigo, item.correlativo, item.carnet_emitido_en || null]));
+      setComerciantes((merchants.data || []).map((item) => [item.id, item.nombre, item.rubro, item.dni_ruc, item.zona, item.estado, (fechaDeTexto(item.fecha_registro)?.toLocaleDateString('es-PE') || ''), item.tipo_comerciante || item.categoria, item.codigo, item.correlativo, item.carnet_emitido_en || null]));
       setTariffRecords(tarifas.data || []);
       setCobros(payments.data || []);
       setMapPuestos(puestos.data || []);

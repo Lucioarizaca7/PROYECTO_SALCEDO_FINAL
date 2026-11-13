@@ -10,7 +10,6 @@ import { DeviceSessions } from './features/offline/DeviceSessions';
 import { ReviewPanel } from './features/offline/ReviewPanel';
 import { useJornada } from './features/offline/useJornada';
 import { useOfflineQueue } from './features/offline/useOfflineQueue';
-import { useColaImpresion } from './hooks/useColaImpresion';
 import { useNetworkStatus } from './hooks/useNetworkStatus';
 import { ComerciantesPage } from './pages/ComerciantesPage';
 import { AnaliticaPage, AuditoriaPage, ReportesPage } from './pages/ConsultaPages';
@@ -57,7 +56,6 @@ function SisrecRoutes() {
   // Fase 2: padrón de la jornada en el celular y cola de cobros sin señal.
   const jornada = useJornada({ user });
   const offlineQueue = useOfflineQueue({ user, onSynced: () => datos.refresh() });
-  useColaImpresion();
   // Al cerrar sesión se vuelve a la página principal, no al formulario de ingreso.
   // (React Router navega como transición: el usuario se borra antes de que cambie la ruta.)
   const [leaving, setLeaving] = useState(false);

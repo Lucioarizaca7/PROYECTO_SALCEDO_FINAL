@@ -13,7 +13,7 @@
 import { createHash, randomInt, timingSafeEqual } from 'node:crypto';
 
 import { config } from './config.js';
-import { buscarComerciantePorCodigo, calcularLiquidacion, calcularDeudaAcumulada, esDocumentoTemporal } from './db.js';
+import { buscarComerciantePorCodigo, calcularLiquidacion, calcularDeudaAcumulada, esDocumentoTemporal, textoTicketsCobro } from './db.js';
 import { withTransaction } from './pg.js';
 import { tokenDescarga } from './reciboPdf.js';
 import { AppError, NotFoundError, ValidationError } from './errors.js';
@@ -143,10 +143,23 @@ async function obtenerDatosPortal(db, comercianteId) {
     WHERE c.id = $1`, [comercianteId]);
   const { rows: pagos } = await db.query(`
     SELECT co.id, to_char(co.fecha_cobro_cliente AT TIME ZONE '${config.timeZone}', 'YYYY-MM-DD HH24:MI') AS fecha,
-           co.concepto, co.monto, co.metodo_pago, co.estado, cp.numero_correlativo AS comprobante
+           co.concepto, co.monto, co.metodo_pago,
+           -- Un cobro observado y sin revisar se muestra "En revisión", no "Válido": la municipalidad aún puede anularlo.
+           CASE WHEN co.estado = 'confirmado' AND EXISTS (
+                  SELECT 1 FROM cobros_observados ob WHERE ob.transaccion_id = co.id AND ob.estado = 'pendiente')
+                THEN 'en_revision' ELSE co.estado END AS estado,
+           cp.numero_correlativo AS comprobante, co.tickets
     FROM transacciones co LEFT JOIN comprobantes cp ON cp.id = co.comprobante_id
     WHERE co.comerciante_id = $1 ORDER BY co.fecha_cobro_cliente DESC LIMIT $2`, [comercianteId, PAGOS_EN_PORTAL]);
-  const liquidacion = await calcularLiquidacion(db, comercianteId);
+  // Sin tarifa vigente el portal igual abre (antes respondía 400 y el comerciante no veía ni sus recibos): la
+  // deuda del mes va en 0 con sin_tarifa y la pantalla le pide consultar en la municipalidad.
+  let liquidacion;
+  try {
+    liquidacion = await calcularLiquidacion(db, comercianteId);
+  } catch (error) {
+    if (!error.sinTarifa) throw error;
+    liquidacion = { periodo: null, monto_total: 0, monto_pagado: 0, saldo: 0, estado: 'sin_tarifa', sin_tarifa: true };
+  }
   const acumulada = await calcularDeudaAcumulada(db, comercianteId);
 
   return {
@@ -158,14 +171,19 @@ async function obtenerDatosPortal(db, comercianteId) {
       rubro: merchant.rubro,
       zona: merchant.zona
     },
-    // Cada recibo con su enlace de descarga firmado (30 minutos): solo el dueño lo recibe.
-    pagos: pagos.map((pago) => ({ ...pago, descarga: pago.comprobante ? tokenDescarga(pago.id) : null })),
+    // Cada recibo con su enlace de descarga firmado (30 minutos): solo el dueño lo recibe. Los tickets
+    // preimpresos van en texto ("S3 N° 000012") para que el comerciante empareje el papel que recibió con su
+    // recibo, también el de un cobro hecho sin señal (decisión del usuario, 13/11/2026).
+    pagos: pagos.map(({ tickets, ...pago }) => ({
+      ...pago, tickets: textoTicketsCobro(tickets), descarga: pago.comprobante ? tokenDescarga(pago.id) : null
+    })),
     deuda: {
       periodo: liquidacion.periodo,
       monto_total: Number(liquidacion.monto_total || 0),
       monto_pagado: Number(liquidacion.monto_pagado || 0),
       saldo: Number(liquidacion.saldo || 0),
       estado: liquidacion.estado,
+      sin_tarifa: Boolean(liquidacion.sin_tarifa),
       // Meses anteriores con saldo (desde el inicio de cobro) y total adeudado.
       meses_impagos: acumulada.periodos.filter((item) => item.saldo > 0).map(({ periodo, saldo }) => ({ periodo, saldo })),
       deuda_vencida: acumulada.deuda_vencida,

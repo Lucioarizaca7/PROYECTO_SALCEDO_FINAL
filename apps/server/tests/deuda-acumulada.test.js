@@ -21,7 +21,7 @@ const restarMeses = (periodo, n) => {
 async function permanenteDesde(db, altaPeriodo, montoMensual = 30) {
   const nombre = `rubro deuda ${process.pid} ${Date.now()} ${Math.random().toString(16).slice(2, 6)}`;
   const rubroId = (await db.query('INSERT INTO rubros (nombre) VALUES ($1) RETURNING id', [nombre])).rows[0].id;
-  await insertTarifa(db, { rubro_id: rubroId, tipo_tarifa: 'fija', monto_fijo: montoMensual, unidad_medida: 'mensual', vigencia_inicio: '2020-01-01' });
+  await insertTarifa(db, { rubro_id: rubroId, tipo_tarifa: 'fija', monto_fijo: montoMensual, unidad_medida: 'mensual', vigencia_inicio: '2020-01-01' }, { permitirInicioPasado: true });
   const comerciante = await insertComerciante(db, {
     dni_ruc: String(documento += 1), nombre: `Permanente Deuda ${documento}`, rubro_id: rubroId, zona_id: 1,
     tipo_comerciante: 'permanente', estado: 'activo', usuario_creador: 1

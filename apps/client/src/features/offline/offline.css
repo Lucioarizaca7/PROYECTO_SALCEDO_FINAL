@@ -226,3 +226,6 @@
   align-content: start;
   min-width: 0;
 }
+
+/* Mensaje del servidor al sincronizar (en revisión, repetido). */
+.field-queue-note { color: var(--civic-muted, #5C6577); font-size: 12px; overflow-wrap: anywhere; }

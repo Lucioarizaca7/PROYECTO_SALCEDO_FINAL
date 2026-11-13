@@ -3,12 +3,14 @@ import { canSee, navItems, pathOf } from '../app/navegacion';
 import { useSisrec } from '../app/SisrecContext';
 import { DashboardSkeleton } from '../components/ui/DashboardSkeleton';
 import { KpiCard } from '../components/ui/KpiCard';
-import { formatPEN } from '../lib/formato';
+import { fechaHoraEnLima, formatPEN, textoPuntajeRiesgo } from '../lib/formato';
 
 export function PanelPage() {
   const { user, loading, dashboardStats, operational, mapPuestos, auditRecords, riskData } = useSisrec();
   if (loading) return <DashboardSkeleton />;
   const veAuditoria = canSee(navItems.find((item) => item.key === 'auditoria'), user?.rol);
+  // El auditor no tiene el mapa: el enlace lo devolvía al panel.
+  const veMapa = canSee(navItems.find((item) => item.key === 'mapa'), user?.rol);
   // Alerta = riesgo alto o crítico, el mismo criterio con que el servidor marca `alerta` en la métrica.
   const alertas = (riskData.records || []).filter((item) => ['alto', 'critico'].includes(item.nivel_riesgo));
 
@@ -51,7 +53,7 @@ export function PanelPage() {
               <div className="panel-title">Mapa de sitios</div>
               <div className="panel-subtitle">Distribución por estado de pago</div>
             </div>
-            <Link className="view-all" to={pathOf('mapa')}>Ver mapa →</Link>
+            {veMapa && <Link className="view-all" to={pathOf('mapa')}>Ver mapa →</Link>}
           </div>
           <div className="activity-list dashboard-site-stats">
             <div className="metric-line"><span>Puestos registrados</span><strong>{mapPuestos.length}</strong></div>
@@ -74,7 +76,7 @@ export function PanelPage() {
               {auditRecords.slice(0, 5).map((item) => (
                 <div className="activity-item" key={item.id}>
                   <span className="activity-bullet"></span>
-                  <div><strong>{item.accion} · {item.entidad}</strong><small>{item.usuario || `Usuario ${item.usuario_id}`} · {new Date(item.fecha).toLocaleString('es-PE')}</small></div>
+                  <div><strong>{item.accion} · {item.entidad}</strong><small>{item.usuario || `Usuario ${item.usuario_id}`} · {fechaHoraEnLima(item.fecha)}</small></div>
                 </div>
               ))}
               {!auditRecords.length && <div className="empty-state">Todavia no hay actividad de auditoria para mostrar.</div>}
@@ -86,7 +88,7 @@ export function PanelPage() {
           <div className="panel-heading">
             <div>
               <div className="panel-title">Alertas importantes</div>
-              <div className="panel-subtitle">Requieren atención del equipo</div>
+              <div className="panel-subtitle">Requieren atención del equipo{textoPuntajeRiesgo(riskData) && <> · {textoPuntajeRiesgo(riskData)}</>}</div>
             </div>
             <span className="status pending">{alertas.length} {alertas.length === 1 ? 'alerta' : 'alertas'}</span>
           </div>

@@ -76,6 +76,7 @@ function CierreHecho({ cierre, posteriores }) {
         </table>
       </div>
       <p><span className={`status ${claseDiferencia(cierre.diferencia)}`}>{textoDiferencia(cierre.diferencia)}</span></p>
+      {cierre.observaciones && <p className="panel-subtitle">Observaciones: {cierre.observaciones}</p>}
       {posteriores?.cobros > 0 && (
         <div className="form-message">Después del cierre entraron {posteriores.cobros} cobro(s) por {formatPEN(posteriores.monto)} (sincronizados tarde). Entréguelos aparte.</div>
       )}
@@ -117,7 +118,7 @@ export function CajaPage() {
                   <input type="number" min="0" step="0.01" inputMode="decimal" placeholder={`Lo que tengo en ${label}`} value={declarado[key]} onChange={(event) => setDeclarado({ ...declarado, [key]: event.target.value })} />
                 </label>
               ))}
-              <input placeholder="Observaciones (opcional)" value={caja.observaciones} onChange={(event) => caja.setObservaciones(event.target.value)} />
+              <input placeholder="Observaciones (opcional)" maxLength={500} value={caja.observaciones} onChange={(event) => caja.setObservaciones(event.target.value)} />
             </div>
             <p className="caja-diferencia"><span className={`status ${claseDiferencia(caja.diferencia)}`}>{textoDiferencia(caja.diferencia)}</span></p>
             <TicketsDelDia tickets={resumen.tickets} />
@@ -128,7 +129,7 @@ export function CajaPage() {
       {caja.veTodos && (
         <div className="table-card">
           <table>
-            <thead><tr><th>Día</th><th>Cobrador</th><th>Cobros</th><th>Esperado</th><th>Declarado</th><th>Diferencia</th><th>Tickets</th></tr></thead>
+            <thead><tr><th>Día</th><th>Cobrador</th><th>Cobros</th><th>Esperado</th><th>Declarado</th><th>Diferencia</th><th>Tickets</th><th>Observaciones</th></tr></thead>
             <tbody>
               {caja.cierres.length ? caja.cierres.map((cierre) => {
                 const esperado = METODOS_CAJA.reduce((suma, { key }) => suma + cierre[`esperado_${key}`], 0);
@@ -139,9 +140,10 @@ export function CajaPage() {
                     <td>{formatPEN(esperado)}</td><td>{formatPEN(declaradoTotal)}</td>
                     <td><span className={`status ${claseDiferencia(cierre.diferencia)}`}>{textoDiferencia(cierre.diferencia)}</span></td>
                     <td>{cierre.tickets ? (cierre.tickets.alertas ? <span className="status pending">{cierre.tickets.alertas} alerta(s)</span> : <span className="status paid">Sin alertas</span>) : '—'}</td>
+                    <td>{cierre.observaciones || '—'}</td>
                   </tr>
                 );
-              }) : <tr><td colSpan="7">No hay cierres de caja en este mes.</td></tr>}
+              }) : <tr><td colSpan="8">No hay cierres de caja en este mes.</td></tr>}
             </tbody>
           </table>
         </div>

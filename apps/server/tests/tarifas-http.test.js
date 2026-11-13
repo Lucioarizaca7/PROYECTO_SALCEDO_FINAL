@@ -42,17 +42,22 @@ test('crear una tarifa avisa del cierre de la anterior, lo audita y un cruce res
   const rubro = await pool.query('INSERT INTO rubros (nombre) VALUES ($1) RETURNING id', [`Rubro http ${process.pid} ${Date.now()}`]);
   const tarifa = (extra) => api('/tarifas', { method: 'POST', token, body: { rubro_id: rubro.rows[0].id, tipo_tarifa: 'fija', monto_fijo: 10, unidad_medida: 'mensual', ...extra } });
 
-  const primera = await tarifa({ vigencia_inicio: '2026-01-01' });
+  // Una tarifa nueva no empieza antes de hoy (11/11/2026): cerraría la anterior hacia atrás.
+  const pasada = await tarifa({ vigencia_inicio: '2026-01-01' });
+  assert.equal(pasada.status, 400);
+  assert.match(pasada.body.message, /no puede empezar antes de hoy/);
+
+  const primera = await tarifa({ vigencia_inicio: '2031-01-01' });
   assert.equal(primera.status, 201);
   assert.equal(primera.body.message, 'Tarifa creada correctamente');
 
-  const segunda = await tarifa({ vigencia_inicio: '2026-03-01' });
+  const segunda = await tarifa({ vigencia_inicio: '2031-03-01' });
   assert.equal(segunda.status, 201);
-  assert.equal(segunda.body.message, 'Tarifa creada. La anterior termina el 2026-02-28');
+  assert.equal(segunda.body.message, 'Tarifa creada. La anterior termina el 2031-02-28');
 
-  const cruce = await tarifa({ vigencia_inicio: '2026-03-01' });
+  const cruce = await tarifa({ vigencia_inicio: '2031-03-01' });
   assert.equal(cruce.status, 409);
-  assert.match(cruce.body.message, /desde el 2026-03-01 en adelante/);
+  assert.match(cruce.body.message, /desde el 2031-03-01 en adelante/);
 
   // La auditoría se escribe justo después de responder, sin que la respuesta la espere.
   let auditoria;
@@ -60,5 +65,5 @@ test('crear una tarifa avisa del cierre de la anterior, lo audita y un cruce res
     if (intento) await new Promise((resolve) => setTimeout(resolve, 100));
     auditoria = await pool.query(`SELECT payload_nuevo FROM auditoria_logs WHERE accion = 'CREAR_TARIFA' AND payload_nuevo->>'id' = $1`, [String(segunda.body.data.id)]);
   }
-  assert.deepEqual(auditoria.rows[0].payload_nuevo.tarifas_cerradas, [{ id: primera.body.data.id, vigencia_fin: '2026-02-28' }]);
+  assert.deepEqual(auditoria.rows[0].payload_nuevo.tarifas_cerradas, [{ id: primera.body.data.id, vigencia_fin: '2031-02-28' }]);
 });

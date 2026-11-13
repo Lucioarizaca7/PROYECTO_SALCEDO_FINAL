@@ -126,7 +126,7 @@ test('calcularLiquidacion respeta la política de no devengo para ferial sin asi
 test('al eventual se le cobra un día de la tarifa de su rubro, solo una vez por día', async () => {
   const db = await initializeDatabase();
   // Tarifa propia de la zona (tiene prioridad sobre la general): S/ 6 por día cobrado.
-  await insertTarifa(db, { rubro_id: 3, zona_id: 1, tipo_tarifa: 'fija', monto_fijo: 6, monto_variable: 0, unidad_medida: 'semanal', vigencia_inicio: '2026-01-01', version: 1 });
+  await insertTarifa(db, { rubro_id: 3, zona_id: 1, tipo_tarifa: 'fija', monto_fijo: 6, monto_variable: 0, unidad_medida: 'semanal', vigencia_inicio: '2026-01-01', version: 1 }, { permitirInicioPasado: true });
   const comerciante = await insertComerciante(db, {
     dni_ruc: '75163744', nombre: 'Ambulante Eventual', rubro_id: 3, zona_id: 1,
     categoria: 'eventual', tipo_comerciante: 'eventual', estado: 'activo', usuario_creador: 1
@@ -215,7 +215,7 @@ test('updateTarifa rechaza actualizaciones con versión obsoleta', async () => {
     vigencia_inicio: '2026-01-01',
     vigencia_fin: '2026-12-31',
     version: 1
-  });
+  }, { permitirInicioPasado: true });
 
   await assert.rejects(async () => {
     await updateTarifa(db, tarifa.id, { monto_fijo: 25, version: 99 });

@@ -306,3 +306,23 @@ test('reconoce hojas de control de asistencia por bloque sin inventar DNI ni met
   assert.equal(preview.validRows, 0);
   assert.match(preview.sheets[0].reason, /faltan DNI\/RUC y metraje/);
 });
+
+test('el rubro se busca exacto: uno que no existe queda en "otros" con aviso, sin caer en uno parecido', async () => {
+  const db = await initializeDatabase();
+  const zona = await zonaNueva(db, 'asfaltada');
+  const preview = await previewPadronSheets(libro([
+    ['41230001', 'Rubro Parecido', 'RB-01', 'BLOQUE R', zona.nombre, 'ferial', 'Ropa de bebé', null, 'Presente'],
+    ['41230002', 'Rubro Exacto', 'RB-02', 'BLOQUE R', zona.nombre, 'ferial', 'ZAPATILLAS', null, 'Presente']
+  ]), { filename: 'padron.xlsx', db });
+  const rubro = async (nombre) => Number((await db.query('SELECT id FROM rubros WHERE nombre = $1', [nombre])).rows[0].id);
+
+  assert.equal(preview.validRows, 2, 'el aviso no impide importar');
+  const avisos = preview.warnings.filter((item) => item.message.includes('Ropa de bebé'));
+  assert.equal(avisos.length, 1);
+  assert.match(avisos[0].message, /queda en "otros"/);
+
+  const result = await importPadronPreview(db, preview, 1);
+  assert.equal(result.createdMerchants, 2);
+  assert.equal(Number((await porDocumento(db, '41230001')).rubro_id), await rubro('otros'), 'antes caía en "ropa"');
+  assert.equal(Number((await porDocumento(db, '41230002')).rubro_id), await rubro('zapatillas'));
+});

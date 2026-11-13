@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { initializeDatabase, getDbStats, getOperationalDashboard, buildReportCsv, getComerciantePreferencias, updateComerciantePreferencias, insertZona, getZonas, insertCalle, getCalles, updateCalle, insertComerciante, getRiskDashboard, todayInLima, indicadoresPanel } from '../src/db.js';
+import { initializeDatabase, getDbStats, getOperationalDashboard, buildReportCsv, getComerciantePreferencias, updateComerciantePreferencias, insertZona, getZonas, insertCalle, getCalles, updateCalle, insertComerciante, getRiskDashboard, esperarRecalculoRiesgo, todayInLima, indicadoresPanel } from '../src/db.js';
 
 test('initializeDatabase crea las tablas principales del modelo', async () => {
   const db = await initializeDatabase();
@@ -29,21 +29,23 @@ test('getDbStats devuelve números básicos del sistema', async () => {
   assert.ok(stats.totalCobros >= 0);
 });
 
-test('las preferencias del comerciante se guardan como clave/valor y se reemplazan', async () => {
+test('las preferencias del comerciante se guardan como clave/valor y solo cambian las enviadas', async () => {
   const db = await initializeDatabase();
   const merchant = (await db.query('SELECT id FROM comerciantes ORDER BY id LIMIT 1')).rows[0];
+  await updateComerciantePreferencias(db, merchant.id, { notificaciones_activadas: 'true' });
 
-  const updated = await updateComerciantePreferencias(db, merchant.id, {
-    metodo_pago_preferido: 'yape',
-    monto_sugerido: 75.5
-  });
-  assert.equal(updated.length, 2);
+  await updateComerciantePreferencias(db, merchant.id, { metodo_pago_preferido: 'yape', monto_sugerido: 75.5 });
+  // Cada cobro guarda la sugerencia express: antes se borraban las demás claves.
+  await updateComerciantePreferencias(db, merchant.id, { monto_sugerido: 3 });
 
   const stored = await getComerciantePreferencias(db, merchant.id);
   const asMap = Object.fromEntries(stored.map((item) => [item.clave, item.valor]));
   assert.equal(asMap.metodo_pago_preferido, 'yape');
-  assert.equal(asMap.monto_sugerido, '75.5');
+  assert.equal(asMap.monto_sugerido, '3');
+  assert.equal(asMap.notificaciones_activadas, 'true');
+  assert.equal(stored.filter((item) => item.clave === 'monto_sugerido').length, 1);
 
+  await assert.rejects(updateComerciantePreferencias(db, merchant.id, { 'clave rara; DROP': 1 }), /no es válida/);
   await assert.rejects(updateComerciantePreferencias(db, 999999, {}), { name: 'NotFoundError' });
 });
 
@@ -105,7 +107,14 @@ test('el riesgo de morosidad se recalcula cada día y no muestra a los dados de 
   [vigente.id, deBaja.id]);
   await db.query("UPDATE modelos_ia_metricas SET generado_en = now() - interval '3 days' WHERE modelo = 'riesgo_morosidad'");
 
+  // El puntaje viejo se muestra mientras se recalcula por detrás (decisión del 11/11/2026), sin los de baja.
+  const mientras = await getRiskDashboard(db, { limit: 20 });
+  assert.equal(mientras.actualizando, true);
+  assert.ok(mientras.records.every((item) => Number(item.comerciante_id) !== Number(deBaja.id)));
+  await esperarRecalculoRiesgo();
+
   const riesgo = await getRiskDashboard(db, { limit: 20 });
+  assert.equal(riesgo.actualizando, false);
   assert.ok(riesgo.records.length > 0);
   assert.ok(riesgo.records.every((item) => item.motivo_principal !== 'puntaje viejo'));
   assert.ok(riesgo.records.every((item) => Number(item.comerciante_id) !== Number(deBaja.id)));
