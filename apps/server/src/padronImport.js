@@ -124,11 +124,18 @@ function numericArea(value) {
   return normalized ? Number(normalized[0]) : 0;
 }
 
-function resolveCatalogId(items, value, fallbackId) {
+// Rubro que trae el NOMBRE DEL ARCHIVO ("FERIA ZAPATILLAS 2026.xlsx" -> zapatillas): se usa solo cuando la fila
+// no trae rubro. Basta con que el nombre del archivo contenga el del rubro.
+function rubroDelArchivo(rubros, filename) {
+  const target = normalize(filename);
+  return target ? rubros.find((item) => target.includes(normalize(item.nombre)))?.id ?? null : null;
+}
+
+// El rubro de una celda se busca por nombre exacto, igual que la zona. Antes la búsqueda aproximada mandaba
+// "Ropa de bebé" al rubro "ropa" sin avisar (revisión del 11/11/2026).
+function rubroExacto(rubros, value) {
   const target = normalize(value);
-  const found = items.find((item) => normalize(item.nombre) === target)
-    || items.find((item) => target && (normalize(item.nombre).includes(target) || target.includes(normalize(item.nombre))));
-  return found?.id ?? fallbackId;
+  return target ? rubros.find((item) => normalize(item.nombre) === target)?.id ?? null : null;
 }
 
 // La zona se busca por nombre exacto (sin mayúsculas, tildes ni espacios de más): con la búsqueda aproximada de
@@ -193,7 +200,8 @@ export function descartarVistaPrevia(token) {
 export async function previewPadronSheets(sheets, { filename = '', db }) {
   const rubros = await getRubros(db);
   const zonas = await getZonas(db);
-  const defaultRubroId = resolveCatalogId(rubros, filename, null);
+  const defaultRubroId = rubroDelArchivo(rubros, filename);
+  const otrosRubroId = rubroExacto(rubros, 'otros');
   const defaultZonaId = zonas[0]?.id;
   // En una zona con tipo de vía el cobro es por día cobrado y no usa metros: ahí el metraje es opcional.
   const zonasConVia = new Set(zonas.filter((zona) => zona.tipo_via).map((zona) => Number(zona.id)));
@@ -245,8 +253,19 @@ export async function previewPadronSheets(sheets, { filename = '', db }) {
       const rawCategory = cellText(value(detected.mapping.category));
       const category = validCategory(rawCategory, 'ferial');
       const absence = isAbsent(value(detected.mapping.status));
-      const rubroValue = cellText(value(detected.mapping.rubro)) || (defaultRubroId ? filename : sheet.name);
-      const rubroId = resolveCatalogId(rubros, rubroValue, defaultRubroId);
+      // Rubro: el de la columna, por nombre exacto; si viene vacía, el del nombre del archivo o el de la hoja.
+      // Uno que no está registrado deja al comerciante en "otros" y la vista previa lo avisa (decisión del
+      // usuario, 11/11/2026), para corregirlo antes de confirmar.
+      const rubroCell = cellText(value(detected.mapping.rubro));
+      let rubroId = rubroCell ? rubroExacto(rubros, rubroCell) : defaultRubroId ?? rubroExacto(rubros, sheet.name);
+      let rubroAviso = null;
+      if (!rubroId && otrosRubroId) {
+        rubroId = otrosRubroId;
+        rubroAviso = rubroCell
+          ? `El rubro "${rubroCell}" no está registrado: el comerciante queda en "otros". Corríjalo en el libro o cree el rubro antes de confirmar.`
+          : 'Sin rubro: el comerciante queda en "otros".';
+      }
+      const rubroValue = rubroCell || sheet.name;
       // Zona: la de la columna, o la del nombre de la hoja si la columna viene vacía (libros con una hoja por
       // zona). Si ninguna está registrada, el puesto queda en la primera zona, paga con su tarifa y se marca
       // "zona por regularizar" con lo que traía el libro (decisión del 28/10/2026; antes se asignaba sin avisar).
@@ -297,9 +316,12 @@ export async function previewPadronSheets(sheets, { filename = '', db }) {
         reactivates: false,
         regularizes: false,
         errors: rowErrors,
-        warnings: zonaPorRegularizar === null || !zonaId ? [] : [zoneCell
-          ? `La zona "${zoneCell}" no está registrada: el puesto queda en ${nombreZona(zonas, zonaId)} y se marca "zona por regularizar".`
-          : `Sin zona: el puesto queda en ${nombreZona(zonas, zonaId)} y se marca "zona por regularizar".`]
+        warnings: [
+          ...(zonaPorRegularizar === null || !zonaId ? [] : [zoneCell
+            ? `La zona "${zoneCell}" no está registrada: el puesto queda en ${nombreZona(zonas, zonaId)} y se marca "zona por regularizar".`
+            : `Sin zona: el puesto queda en ${nombreZona(zonas, zonaId)} y se marca "zona por regularizar".`]),
+          ...(rubroAviso ? [rubroAviso] : [])
+        ]
       });
       sheetRows += 1;
     }

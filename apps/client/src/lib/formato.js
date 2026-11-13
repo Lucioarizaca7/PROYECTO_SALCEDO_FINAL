@@ -18,6 +18,42 @@ export const fechaLargaEnLima = (date = new Date()) => {
   return texto.charAt(0).toUpperCase() + texto.slice(1);
 };
 
+// Fecha y hora del cobro en Salcedo ("11/11/2026, 09:42"), sea un Date, un ISO o un "AAAA-MM-DD HH:MM:SS".
+const fechaHora = new Intl.DateTimeFormat('es-PE', { timeZone: 'America/Lima', day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+export const fechaHoraEnLima = (valor) => {
+  const fecha = valor instanceof Date ? valor : fechaDeTexto(valor);
+  return fecha && !Number.isNaN(fecha.getTime()) ? fechaHora.format(fecha) : '';
+};
+
+// "2026-11-11 09:42:00" (como lo devuelve la API) no lo entiende Safari del iPhone: sale "Invalid Date".
+// Con la T en medio sí; sin zona se lee en la hora del celular, que en Salcedo es la de Lima.
+export const fechaDeTexto = (valor) => {
+  if (!valor) return null;
+  const texto = String(valor).trim();
+  return new Date(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}/.test(texto) ? texto.replace(' ', 'T') : texto);
+};
+
+// Línea bajo el riesgo de morosidad: de cuándo es el puntaje y si se está recalculando por detrás
+// (la primera carga del día muestra el del día anterior mientras tanto).
+export const textoPuntajeRiesgo = ({ calculado_el: calculadoEl, actualizando } = {}) => {
+  const fecha = fechaHoraEnLima(calculadoEl);
+  if (!fecha) return actualizando ? 'Calculando el puntaje…' : '';
+  return `Puntaje del ${fecha}${actualizando ? ' · actualizando…' : ''}`;
+};
+
+/** Texto del resultado de la verificación de la cadena de hashes de la auditoría (GET /auditoria/verificacion). */
+export function textoVerificacion(resultado) {
+  if (!resultado) return '';
+  if (resultado.cargando) return 'Verificando…';
+  if (resultado.error) return resultado.error;
+  return resultado.valid
+    ? `Cadena íntegra: ${resultado.total} registro(s) enlazados sin cambios.`
+    : `La cadena se rompe en el registro ${resultado.broken_at}: alguien alteró la auditoría desde ahí.`;
+}
+
+const METODOS = { efectivo: 'Efectivo', yape: 'Yape', plin: 'Plin', pos: 'POS' };
+export const textoMetodo = (metodo) => METODOS[String(metodo || '').toLowerCase()] || metodo || '';
+
 export const getInitials = (nombre) => {
   const words = String(nombre || '').trim().split(/\s+/).filter(Boolean);
   if (!words.length) return 'U';
@@ -31,7 +67,9 @@ export function textoTarifa(balance = {}) {
   const dias = Number(balance.dias_asistidos || 0);
   // Sin días cobrados no hay tarifa que aplicar: "S/ 0" parecía una tarifa gratis.
   if (!dias && balance.no_devengo) return 'Sin días cobrados en el mes';
-  if (!dias) return `S/ ${balance.tarifa?.monto_fijo ?? 0}`;
+  // Cuota por puesto (desde noviembre de 2026): S/ 30 × 2 puestos.
+  const cantidad = Number(balance.cantidad_puestos || 1);
+  if (!dias) return `S/ ${balance.tarifa?.monto_fijo ?? 0}${cantidad > 1 ? ` × ${cantidad} puestos` : ''}`;
   // Un puesto que cambió de zona en el mes trae una fila por zona: se cuentan puestos, no filas.
   const totalPuestos = new Set(puestos.map((item) => item.puesto_id)).size;
   const enPuestos = totalPuestos > 1 ? ` en ${totalPuestos} puestos` : '';

@@ -2,9 +2,10 @@ import { useSisrec } from '../app/SisrecContext';
 import { AsistenciaFerialPanel } from '../features/offline/AsistenciaFerialPanel';
 import { FieldWorkPanel } from '../features/offline/FieldWorkPanel';
 import { QrScanner } from '../features/payments/QrScanner';
-import { printThermalReceipt, shareViaWhatsApp } from '../features/payments/recibo';
+import { imprimirReciboEnNavegador, lineasRecibo, shareViaWhatsApp } from '../features/payments/recibo';
+import { enviarReciboOficial } from '../features/payments/reciboOficial';
 import { usePagos } from '../hooks/usePagos';
-import { textoTarifa } from '../lib/formato';
+import { textoMetodo, textoTarifa } from '../lib/formato';
 import { textoTicket } from '../services/ticketsOffline';
 import '../features/payments/pagos.css';
 
@@ -68,6 +69,8 @@ function TicketsDelCobro({ pagos }) {
         ))}
       </div>
       {tickets.anulacionesPendientes > 0 && <small>{tickets.anulacionesPendientes} anulación(es) por subir.</small>}
+      {/* Respuesta del servidor al subir anulaciones (p. ej. un ticket que ya no es del cobrador). */}
+      {tickets.mensaje && <small className="form-message">{tickets.mensaje}</small>}
     </div>
   );
 }
@@ -81,44 +84,62 @@ function AvisoPocosTickets({ tickets }) {
   );
 }
 
-function ReceiptCard({ receipt, printStatus, setPrintStatus }) {
-  const shareText = () => (navigator.share
-    ? navigator.share({ title: `Recibo ${receipt.comprobante}`, text: `Recibo ${receipt.comprobante} por S/ ${receipt.monto.toFixed(2)}` })
-    : navigator.clipboard?.writeText(`Recibo ${receipt.comprobante} - S/ ${receipt.monto.toFixed(2)}`));
+// Zona del día (12/11/2026): si hoy vende en otra zona porque faltaron otros, se cobra con la tarifa de esa zona.
+// Queda en la auditoría y el administrador la ve en Observaciones.
+function ZonaDelDia({ pagos, merchant }) {
+  const via = (zona) => (zona.tipo_via === 'asfaltada' ? 'asfaltada' : zona.tipo_via === 'sin_asfaltar' ? 'sin asfaltar' : 'sin tipo de vía');
+  return (
+    <label className="zona-del-dia">
+      <span>Zona de hoy</span>
+      <select aria-label="Zona de hoy" value={pagos.zonaDia} onChange={(event) => pagos.setZonaDia(event.target.value)}>
+        <option value="">Sin cambio: la ya marcada hoy o la de su puesto{merchant?.zona ? ` (${merchant.zona})` : ''}</option>
+        {pagos.zonas.map((zona) => <option key={zona.id} value={zona.id}>{zona.nombre} · {via(zona)}</option>)}
+      </select>
+      {pagos.zonaDia && <small>Hoy se cobra con la tarifa de esa zona. Queda registrado para la oficina.</small>}
+    </label>
+  );
+}
+
+// El recibo en pantalla, con las mismas filas que la imagen que se manda por WhatsApp (lineasRecibo).
+function ReceiptCard({ receipt }) {
+  const recibo = lineasRecibo(receipt);
   return (
     <div className="receipt-card" id="receiptCard">
-      <div className="receipt-header"><strong>SISREC SALCEDO</strong><span>RECIBO DE PAGO</span></div>
-      <div className="receipt-number">{receipt.comprobante}</div>
-      {receipt.provisional && <div className="receipt-provisional">Recibo provisional: el número oficial se asigna al sincronizar.</div>}
+      <div className="receipt-header"><strong>{recibo.titulo}</strong><span>{recibo.subtitulo}</span></div>
+      <div className="receipt-number">{recibo.numero}</div>
+      {recibo.aviso && <div className="receipt-provisional">{recibo.aviso}</div>}
       <div className="receipt-lines">
-        <div><span>Comerciante</span><strong>{receipt.comerciante}</strong></div>
-        <div><span>Fecha</span><strong>{new Date().toLocaleString('es-PE')}</strong></div>
-        <div><span>Concepto</span><strong>{receipt.concepto}</strong></div>
-        <div><span>Método</span><strong>{receipt.metodo_pago}</strong></div>
-        <div><span>Cobrador</span><strong>{receipt.cobrador}</strong></div>
-        <div><span>Operación</span><strong>{receipt.codigo_operacion || 'No aplica'}</strong></div>
-        {receipt.tickets?.length > 0 && <div><span>Tickets</span><strong>{receipt.tickets.map((ticket) => ticket.texto || textoTicket(ticket.serie, ticket.numero)).join(', ')}</strong></div>}
-        <div><span>Hash</span><strong>{receipt.hash_idempotencia || 'N/A'}</strong></div>
-        <div className="receipt-total"><span>Total pagado</span><strong>S/ {receipt.monto.toFixed(2)}</strong></div>
+        {recibo.filas.map(([etiqueta, valor]) => <div key={etiqueta}><span>{etiqueta}</span><strong>{valor}</strong></div>)}
+        <div className="receipt-total"><span>Total pagado</span><strong>{recibo.total}</strong></div>
       </div>
+      {recibo.qr && (
+        <div className="receipt-verify">
+          <img src={recibo.qr} alt={`QR para verificar el recibo ${recibo.numero}`} width="120" height="120" />
+          <a href={recibo.verificacion} target="_blank" rel="noreferrer">Verificar recibo</a>
+        </div>
+      )}
       <div className="receipt-actions">
-        <button className="secondary-button" type="button" onClick={() => printThermalReceipt(receipt, setPrintStatus)}>{printStatus.isPrinting ? 'Imprimiendo...' : 'Imprimir térmica / PDF'}</button>
-        <button className="secondary-button" type="button" onClick={() => shareViaWhatsApp(receipt)}>WhatsApp</button>
-        <button className="secondary-button" type="button" onClick={shareText}>Compartir</button>
+        {/* Sin impresora térmica (12/11/2026): el recibo se manda por WhatsApp como imagen o se guarda en PDF. */}
+        <button className="primary-button" type="button" onClick={() => shareViaWhatsApp(receipt)}>Enviar por WhatsApp</button>
+        <button className="secondary-button" type="button" onClick={imprimirReciboEnNavegador}>Guardar PDF</button>
       </div>
     </div>
   );
 }
 
-function RecentPayments({ cobros, puedeAnular, onAnular }) {
+function RecentPayments({ cobros, puedeAnular, onAnular, onEnviarRecibo }) {
   return (
     <div className="panel payment-history">
       <div className="panel-heading"><div><div className="panel-title">Cobros recientes</div><div className="panel-subtitle">Estado actualizado al instante</div></div></div>
       {cobros.slice(0, 6).map((item, index) => (
         <div className="payment-row" key={item.comprobante || index}>
-          <div><strong>{item.comprobante || `#${item.id}`}</strong><span>{item.comerciante} · {item.metodo_pago}</span></div>
+          <div><strong>{item.comprobante || `#${item.id}`}</strong><span>{item.comerciante} · {textoMetodo(item.metodo_pago)}</span></div>
           <div><strong>{typeof item.monto === 'number' ? `S/ ${item.monto.toFixed(2)}` : item.monto}</strong><span className={`status ${item.estado === 'observado' ? 'pending' : item.estado === 'anulado' ? 'danger' : 'paid'}`}>{item.estado}</span></div>
-          {item.estado === 'anulado' && item.motivo_anulacion && <small className="payment-void-reason">Anulado: {item.motivo_anulacion}</small>}
+          {item.observaciones && <small className="payment-note">Nota del cobrador: {item.observaciones}</small>}
+          {item.estado === 'observado' && item.observacion && <small className="payment-note">En revisión: {item.observacion}</small>}
+          {item.estado === 'anulado' && item.motivo_anulacion && <small className="payment-void-reason">Anulado{item.anulado_por ? ` por ${item.anulado_por}` : ''}: {item.motivo_anulacion}</small>}
+          {/* El recibo oficial con su QR, para volver a mandarlo por WhatsApp (12/11/2026). */}
+          {item.comprobante && <button className="secondary-button compact payment-resend" type="button" onClick={() => onEnviarRecibo(item.comprobante)}>Enviar recibo por WhatsApp</button>}
           {puedeAnular && item.estado === 'confirmado' && <button className="secondary-button payment-void" type="button" onClick={() => onAnular(item)}>Anular</button>}
         </div>
       ))}
@@ -175,21 +196,22 @@ export function PagosPage() {
           <UnpaidMonths balance={balance} onSelect={pagos.elegirPeriodo} />
           <DebtBreakdown balance={balance} />
           <div className="step-label">03 · Confirmar cobro</div>
+          {pagos.muestraZonaDia && <ZonaDelDia pagos={pagos} merchant={merchant} />}
           {pagos.usaTickets && <TicketsDelCobro pagos={pagos} />}
           <div className="payment-fields">
-            <input required min="0.01" max={balance?.saldo || undefined} step="0.01" type="number" placeholder="Monto a cobrar" aria-label="Monto a cobrar" readOnly={pagos.usaTickets} title={pagos.usaTickets ? 'El monto es lo que valen los tickets a entregar' : undefined} value={form.monto} onChange={(event) => setForm({ ...form, monto: event.target.value })} />
+            <input required min="0.01" max={pagos.cobraHoy ? undefined : balance?.saldo || undefined} step="0.01" type="number" placeholder="Monto a cobrar" aria-label="Monto a cobrar" readOnly={pagos.usaTickets} title={pagos.usaTickets ? 'El monto es lo que valen los tickets a entregar' : undefined} value={form.monto} onChange={(event) => setForm({ ...form, monto: event.target.value })} />
             <select value={form.metodo_pago} onChange={(event) => setForm({ ...form, metodo_pago: event.target.value })}><option value="efectivo">Efectivo</option><option value="yape">Yape</option><option value="plin">Plin</option><option value="pos">POS</option></select>
           </div>
           {form.metodo_pago !== 'efectivo' && <input required placeholder="Código de operación digital" value={form.codigo_operacion} onChange={(event) => setForm({ ...form, codigo_operacion: event.target.value })} />}
-          <input placeholder="Observaciones (opcional)" value={form.observaciones} onChange={(event) => setForm({ ...form, observaciones: event.target.value })} />
+          <input placeholder="Observaciones (opcional)" maxLength={500} value={form.observaciones} onChange={(event) => setForm({ ...form, observaciones: event.target.value })} />
           {pagos.message && <div className="form-message">{pagos.message}</div>}
-          <button className="primary-button payment-submit" disabled={!merchant || !balance || balance.saldo <= 0} type="submit">Confirmar y emitir comprobante</button>
-          {pagos.receipt && <ReceiptCard receipt={pagos.receipt} printStatus={pagos.printStatus} setPrintStatus={pagos.setPrintStatus} />}
+          <button className="primary-button payment-submit" disabled={!merchant || !balance || (balance.saldo <= 0 && !pagos.cobraHoy)} type="submit">Confirmar y emitir comprobante</button>
+          {pagos.receipt && <ReceiptCard receipt={pagos.receipt} />}
         </form>
         <div className="payment-side">
           <FieldWorkPanel isOnline={isOnline} jornada={jornada} queue={offlineQueue} />
           <AsistenciaFerialPanel isOnline={isOnline} jornada={jornada} />
-          <RecentPayments cobros={cobros} puedeAnular={pagos.puedeAnular} onAnular={pagos.anularCobro} />
+          <RecentPayments cobros={cobros} puedeAnular={pagos.puedeAnular} onAnular={pagos.anularCobro} onEnviarRecibo={pagos.enviarRecibo} />
         </div>
       </div>
       {pagos.showQrScanner && <QrScanner onScan={pagos.scanQr} onClose={() => pagos.setShowQrScanner(false)} />}

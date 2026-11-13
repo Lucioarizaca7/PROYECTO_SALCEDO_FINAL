@@ -54,7 +54,8 @@ export function mapPaymentStatus(site) {
 const NO_DEVENGO_TEXT = {
   ferial_sin_asistencia: 'Ferial: no devenga por inasistencia',
   sin_asistencia: 'Cobro por día: sin días cobrados en el mes',
-  eventual: 'Eventual: se cobra solo el día que vende'
+  eventual: 'Eventual: se cobra solo el día que vende',
+  dado_de_baja: 'Dado de baja: no paga este mes'
 };
 
 /** Una línea legible del estado de cuenta del puesto en el mes. */
@@ -63,7 +64,8 @@ export function paymentStatusText(site) {
   switch (site.estado_pago) {
     case 'pendiente': return `${site.cobro_diario ? 'Saldo de hoy' : 'Saldo del mes'}: ${saldo}`;
     case 'pagado': return site.cobro_diario ? 'Pagado hoy' : 'Mes pagado';
-    case 'incluido': return `Su deuda se cobra en el puesto ${site.puesto_principal}`;
+    // Cada puesto paga su cuota (12/11/2026), pero se cobra junta en el puesto principal.
+    case 'incluido': return `Su cuota se cobra junto con la del puesto ${site.puesto_principal}`;
     case 'no_devenga': return NO_DEVENGO_TEXT[site.motivo] || 'No devenga este mes';
     case 'ausente': return 'Ferial ausente: no devenga';
     case 'libre': return 'Puesto libre, sin titular';

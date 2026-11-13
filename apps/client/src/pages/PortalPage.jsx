@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { apiBase } from '../services/session';
+import { apiBase, leerJson } from '../services/session';
+import { textoMetodo } from '../lib/formato';
 import { QrScanner } from '../features/payments/QrScanner';
 import { llaveDelFragmento, llaveDesdeQr } from '../features/portal/llaveQr';
 
@@ -27,7 +28,7 @@ export function PortalPage() {
     setConsultando(true);
     try {
       const response = await fetch(`${apiBase}/portal/login`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(credencial) });
-      const body = await response.json();
+      const body = await leerJson(response);
       if (!response.ok) throw new Error(body.message || 'No se pudo consultar el portal');
       setData(body.data);
     } catch (portalError) {
@@ -60,7 +61,10 @@ export function PortalPage() {
     else setError('Ese QR no es el del reverso de tu carnet. Voltea el carnet y escanea el QR que está junto a la llave.');
   };
 
-  const reminder = data ? `Recordatorio SISREC: saldo pendiente S/ ${data.deuda.saldo.toFixed(2)}` : '';
+  // La deuda que importa es la total (meses anteriores + mes en curso): con solo el mes en curso, alguien
+  // con meses atrasados veía "Cuenta al día".
+  const deudaTotal = data ? Number(data.deuda.deuda_total ?? (Number(data.deuda.saldo || 0) + Number(data.deuda.deuda_vencida || 0))) : 0;
+  const reminder = data ? `Recordatorio SISREC: deuda pendiente S/ ${deudaTotal.toFixed(2)}` : '';
 
   return (
     <section className="portal-screen">
@@ -73,8 +77,8 @@ export function PortalPage() {
           <div className="eyebrow">PORTAL DEL COMERCIANTE</div>
           <h1>Mira tus pagos y tu deuda</h1>
           <p>Necesitas el carnet que te dieron en la municipalidad.</p>
-          <label htmlFor="portal-identificador">DNI o código CM</label>
-          <input id="portal-identificador" required autoComplete="username" placeholder="41258796 o CM-012" value={identifier} onChange={(event) => setIdentifier(event.target.value)} />
+          <label htmlFor="portal-identificador">DNI o código del carnet</label>
+          <input id="portal-identificador" required autoComplete="username" placeholder="41258796 o COM-0012-…" value={identifier} onChange={(event) => setIdentifier(event.target.value)} />
           <label htmlFor="portal-llave">Llave del carnet (reverso)</label>
           <input id="portal-llave" required autoComplete="current-password" autoCapitalize="characters" spellCheck="false" maxLength={14} placeholder="XXXX-XXXX-XX" value={llave} onChange={(event) => setLlave(event.target.value.toUpperCase())} />
           {error && <div className="form-error" role="alert">{error}</div>}
@@ -89,8 +93,14 @@ export function PortalPage() {
         <div className="portal-content">
           <div className="page-heading">
             <div><div className="eyebrow">MI CUENTA / INFORMACIÓN MUNICIPAL</div><h1>Hola, {data.comerciante.nombre}</h1><p>{data.comerciante.codigo} · {data.comerciante.rubro} · {data.comerciante.zona}{data.comerciante.documento ? ` · Doc. ${data.comerciante.documento}` : ''}</p></div>
-            <span className="status pending">{data.deuda.saldo > 0 ? `Saldo: S/ ${data.deuda.saldo.toFixed(2)}` : 'Cuenta al día'}</span>
+            {data.deuda.sin_tarifa && !deudaTotal
+              ? <span className="status pending">Sin tarifa vigente</span>
+              : <span className={`status ${deudaTotal > 0 ? 'pending' : 'paid'}`}>{deudaTotal > 0 ? `Debe: S/ ${deudaTotal.toFixed(2)}` : 'Cuenta al día'}</span>}
           </div>
+          {/* Sin tarifa vigente el servidor no puede calcular el mes: no se dice "al día" (podría no estarlo). */}
+          {data.deuda.sin_tarifa ? (
+            <div className="offline-banner" role="status">Aún no hay una tarifa vigente para su puesto: consulte en la municipalidad. Sus pagos y recibos están abajo.</div>
+          ) : (
           <div className="portal-debt panel">
             <div><span>Periodo</span><strong>{data.deuda.periodo}</strong></div>
             <div><span>Total</span><strong>S/ {data.deuda.monto_total.toFixed(2)}</strong></div>
@@ -98,6 +108,7 @@ export function PortalPage() {
             <div><span>Saldo pendiente</span><strong>S/ {data.deuda.saldo.toFixed(2)}</strong></div>
             {data.deuda.deuda_vencida > 0 && <div><span>Meses anteriores</span><strong>S/ {data.deuda.deuda_vencida.toFixed(2)}</strong></div>}
           </div>
+          )}
           {data.deuda.meses_impagos?.length > 0 && (
             <div className="table-card">
               <table>
@@ -111,18 +122,23 @@ export function PortalPage() {
           )}
           <div className="table-card">
             <table>
-              <thead><tr><th>Fecha</th><th>Concepto</th><th>Monto</th><th>Método</th><th>Comprobante</th><th>Acción</th></tr></thead>
+              <thead><tr><th>Fecha</th><th>Concepto</th><th>Monto</th><th>Método</th><th>Comprobante</th><th>Estado</th><th>Acción</th></tr></thead>
               <tbody>
                 {data.pagos.length ? data.pagos.map((payment) => (
-                  <tr key={payment.id}><td>{payment.fecha}</td><td>{payment.concepto}</td><td>S/ {Number(payment.monto).toFixed(2)}</td><td>{payment.metodo_pago}</td><td>{payment.comprobante}</td><td>{payment.descarga ? <a className="table-action" href={`${apiBase}/portal/recibos/${payment.descarga}/pdf`} download>Descargar PDF</a> : '—'}</td></tr>
-                )) : <tr><td colSpan="6">Aún no tienes pagos registrados.</td></tr>}
+                  <tr key={payment.id} className={payment.estado === 'anulado' ? 'fila-anulada' : undefined}>
+                    <td>{payment.fecha}</td><td>{payment.concepto}</td><td>S/ {Number(payment.monto).toFixed(2)}</td><td>{textoMetodo(payment.metodo_pago)}</td><td>{payment.comprobante}{payment.tickets && <small className="portal-tickets">Ticket: {payment.tickets}</small>}</td>
+                    {/* Un pago anulado no cuenta como pagado: se dice, en vez de mostrarlo como válido. */}
+                    <td><span className={`status ${payment.estado === 'anulado' ? 'danger' : payment.estado === 'confirmado' ? 'paid' : 'pending'}`}>{payment.estado === 'anulado' ? 'Anulado' : payment.estado === 'confirmado' ? 'Válido' : 'En revisión'}</span></td>
+                    <td>{payment.descarga ? <a className="table-action" href={`${apiBase}/portal/recibos/${payment.descarga}/pdf`} download>Descargar PDF</a> : '—'}</td>
+                  </tr>
+                )) : <tr><td colSpan="7">Aún no tienes pagos registrados.</td></tr>}
               </tbody>
             </table>
           </div>
-          {data.deuda.saldo > 0 && (
+          {deudaTotal > 0 && (
             <div className="portal-reminder">
               <strong>Recordatorio de deuda</strong>
-              <span>Tu saldo pendiente es de S/ {data.deuda.saldo.toFixed(2)}.</span>
+              <span>Tu deuda pendiente es de S/ {deudaTotal.toFixed(2)}{data.deuda.deuda_vencida > 0 ? `, de la que S/ ${Number(data.deuda.deuda_vencida).toFixed(2)} es de meses anteriores` : ''}.</span>
               <button className="secondary-button" type="button" onClick={() => window.open(`https://wa.me/?text=${encodeURIComponent(reminder)}`, '_blank')}>Enviar recordatorio por WhatsApp</button>
             </div>
           )}

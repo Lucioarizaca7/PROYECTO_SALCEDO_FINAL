@@ -24,7 +24,6 @@
 - `features/offline`: `useJornada`, `useOfflineQueue`, `ReviewPanel`, `DeviceSessions`, `FieldWorkPanel`.
 - `components/features/map`: `SitesMap` (Leaflet), `SitesMap25D` (mapbox-gl) y `sitesGeo.js`, que es lógica pura y tiene pruebas.
 - `services`: `session.js` (tokens, `authFetch`, renovación), `offlineQueue.js` + `offlineStore.js` (IndexedDB, huella SHA-256), `jornadaOffline.js` y `mapaOffline.js` + `colaMapa.js` (cambios del mapa sin señal; los rechazados se ven en `CambiosRechazadosMapa`).
-- `utils`: `bluetoothPrint.js`, `offlinePrintQueue.js`, `testable/receiptFormatter.js`.
 
 ## Flujo de datos
 
@@ -45,7 +44,7 @@ Mapa / Padrón:  zonas ─┐
                 tarifas ──────┘                                    └─ calcularLiquidacion (mes)
 
 Cobros: POST /cobros → registrarCobro (withTransaction, codigo_operacion)
-        → transacciones + comprobantes → PDF (/comprobantes/:id/pdf) o impresora Bluetooth
+        → transacciones + comprobantes → PDF (/comprobantes/:id/pdf), imagen por WhatsApp o PDF del portal
 
 Offline: GET /jornada/paquete → IndexedDB → cola → POST /cobros/sincronizar-lote
          → SUCCESS / IGNORED (repetido) / OBSERVED (cobros_observados → revisión)
@@ -61,9 +60,10 @@ Roles: `super_admin`, `cobrador`, `auditor`, `comerciante`. `staffOnly` = los tr
 |---|---|---|
 | Salud / público | `GET /health`, `GET /publico/resumen` | públicas |
 | Panel y analítica | `GET /dashboard`, `/analitica/prediccion`, `/analitica/riesgo`, `/reportes` | lectura del personal |
-| Catálogos | `GET /roles`, `/catalogos`; CRUD `/zonas`, `/calles` | super_admin |
+| Catálogos | `GET /roles`, `/catalogos`, `/calles` (lectura del personal); CRUD `/zonas`, `/calles` | super_admin |
 | Comerciantes | CRUD `/comerciantes`, `POST /comerciantes/importar-padron`, `GET /comerciantes/plantilla-padron`, `/comerciantes/:id/preferencias` | super_admin (las preferencias también cobrador); el auditor solo descarga la plantilla |
-| Puestos | `GET /puestos?incluirInactivos=1`, `POST /puestos`, `POST/PUT/DELETE /puestos-mapa`, `POST /puestos/:id/liberar` | super_admin, cobrador |
+| Puestos | `GET /puestos?incluirInactivos=1`, `POST /puestos`, `POST/PUT /puestos-mapa` (el cobrador solo la ubicación) | super_admin, cobrador |
+| Puestos (titular y baja) | `POST /puestos/:id/liberar`, `DELETE /puestos-mapa/:id` | super_admin |
 | Tarifas | `GET/POST/PUT /tarifas` | según la ruta (ver `routes/tarifas.ts`) |
 | Liquidación | `GET /liquidaciones/:comercianteId`, `GET /comerciantes/:id/saldo` | lectura |
 | Cobros | `GET/POST /cobros`, `POST /cobros/sincronizar`, `/cobros/sincronizar-lote`, `/cobros/observados(/:id/resolver)`, `/cobros/sincronizacion/errores` | cobrador, super_admin |
@@ -72,7 +72,7 @@ Roles: `super_admin`, `cobrador`, `auditor`, `comerciante`. `staffOnly` = los tr
 | Parámetros | `GET /parametros`, `PUT /parametros/inicio_cobro` | super_admin |
 | Caja (`routes/caja.ts`) | `GET /caja/resumen`, `POST /caja/cierre`, `GET /caja/cierres` | cobrador ve solo la suya; cierres: super_admin, auditor |
 | Tickets (`routes/tickets.ts`) | `GET /tickets/series`, `/tickets/lotes`, `/tickets/cobradores`, `/tickets/mios`; `POST /tickets/lotes`, `/tickets/lotes/:id/reasignar`, `/tickets/lotes/:id/devolver`, `/tickets/anulaciones` | lotes: solo super_admin (auditor consulta); mios y anulaciones: cobrador, super_admin |
-| Recibo | `GET /comprobantes/:id/pdf` (personal), `GET /portal/recibos/:token/pdf` (enlace firmado de 30 min), `GET /publico/verificar/:token` (QR) | `src/reciboPdf.js` |
+| Recibo | `GET /comprobantes/:id/pdf` y `GET /comprobantes/:id/recibo` (el recibo oficial con QR para reenviarlo por WhatsApp; el cobrador solo los suyos), `GET /portal/recibos/:token/pdf` (enlace firmado de 30 min), `GET /publico/verificar/:token` (QR) | `src/reciboPdf.js` |
 | Jornada | `GET /jornada/paquete` | cobrador |
 | Auditoría | `GET /auditoria`, `/auditoria/verificacion` | lectura |
 | Autenticación | `POST /auth/login`, `/auth/refresh`, `/auth/logout`, `GET/DELETE /auth/sesiones` | — |
@@ -102,3 +102,14 @@ Para ver los roles exactos de una ruta: `grep -rn "'/api/v1/<ruta>" apps/server/
 - **0018:** `puestos.zona_por_regularizar` (puesto del padrón sin zona o con zona no registrada).
 - **0019:** `asistencias_feriales.zona_id` y `puestos_zona_cambios`: cada día marcado guarda la zona que tenía el puesto.
 - **0020:** trigger `tarifa_sin_cruces`: dos tarifas activas del mismo rubro, zona y tipo de vía no cruzan fechas.
+- **0021:** `zonas_via_cambios`, `via_de_zona()` y `asistencias_feriales.tipo_via`: cada día marcado guarda el tipo de vía que tenía su zona.
+- **0022:** `puestos.clave_cliente` (única si no es NULL): alta de puesto idempotente desde la cola del mapa.
+- **0023:** `comerciantes_tipo_cambios` (trigger `trg_comerciante_cambia_tipo`): cada mes pasado se liquida con el tipo que tenía.
+- **0024:** `transacciones.tarifa_id` acepta NULL: cobro sin señal de un comerciante sin tarifa, siempre observado.
+- **0025:** `comerciantes_datos_cambios` (rubro y zona), `puestos_metros_cambios` y `metros_de_puesto()`: un mes pasado se liquida con los datos de su día 1.
+- **0026:** cierra como anuladas las revisiones pendientes (`cobros_observados`) de cobros ya anulados.
+- **0027:** `comerciantes_estado_cambios` (trigger en `comerciantes.estado`): un mes de baja entero no paga la cuota mensual.
+- **0028:** `transacciones.zona_cobro_id` y `rubro_cobro_id`: cada cobro guarda la zona y el rubro del día del cobro; los existentes se rellenan con la historia de la 0025.
+- **0029:** repara en `comerciantes_estado_cambios` las reactivaciones de la importación del padrón que la 0027 no pudo reconstruir (sin datos nuevos ni restricciones).
+- **0030:** quita la marca de asistencia que puso un cobro sin señal con fecha fuera de rango, si su revisión sigue pendiente (desde ahora `registrarCobro` no la pone).
+- **0031:** zona del día (el cambio de zona de un puesto ya no pisa la zona elegida en una marca) y `puestos_tenencia` (qué puestos tuvo cada comerciante cada día), para cobrar por puesto desde noviembre de 2026.

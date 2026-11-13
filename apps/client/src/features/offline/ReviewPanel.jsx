@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 
+import { textoMetodo } from '../../lib/formato';
+import { textoTicket } from '../../services/ticketsOffline';
 import { apiBase, authFetch } from '../../services/session';
 
 const formatPEN = (value) => new Intl.NumberFormat('es-PE', { style: 'currency', currency: 'PEN' }).format(Number(value) || 0);
@@ -93,7 +95,7 @@ export function ReviewPanel({ canResolve, onResolved }) {
                 <tr key={item.id}>
                   <td>{item.procesado || item.recibido}</td>
                   <td>{item.device_id}</td>
-                  <td>{item.payload?.comerciante_id ?? '—'}</td>
+                  <td>{item.comerciante || item.payload?.comerciante || (item.payload?.comerciante_id ? `#${item.payload.comerciante_id}` : '—')}</td>
                   <td>{formatPEN(item.payload?.monto)}</td>
                   <td>{item.payload?.metodo_pago || '—'}</td>
                   <td>{item.error}</td>
@@ -118,9 +120,11 @@ export function ReviewPanel({ canResolve, onResolved }) {
                 <div><span>Comprobante</span><strong>{row.comprobante}</strong></div>
                 <div><span>Monto cobrado</span><strong>{formatPEN(row.monto)}</strong></div>
                 <div><span>Saldo al sincronizar</span><strong>{formatPEN(row.saldo_al_sincronizar)}</strong></div>
-                <div><span>Método</span><strong>{row.metodo_pago}{row.codigo_operacion && row.metodo_pago !== 'efectivo' ? ` · ${row.codigo_operacion}` : ''}</strong></div>
+                <div><span>Método</span><strong>{textoMetodo(row.metodo_pago)}{row.codigo_operacion && row.metodo_pago !== 'efectivo' ? ` · ${row.codigo_operacion}` : ''}</strong></div>
               </div>
+              {row.tickets?.length > 0 && <p className="panel-subtitle">Tickets declarados: {row.tickets.map((ticket) => textoTicket(ticket.serie, ticket.numero)).join(', ')}</p>}
               <p className="review-reason">{row.motivo}</p>
+              {row.observaciones && <p className="panel-subtitle">Nota del cobrador: {row.observaciones}</p>}
               {row.estado === 'pendiente' ? (
                 canResolve ? (
                   <div className="review-actions">

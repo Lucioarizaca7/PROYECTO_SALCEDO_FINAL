@@ -7,7 +7,9 @@ import test, { after, before } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { app, startServer } from '../src/index.ts';
+import jwt from 'jsonwebtoken';
 import { loginUser } from '../src/auth.ts';
+import { config } from '../src/config.ts';
 import { MAX_COBROS_LISTADO, calcularLiquidacion, celdaCsv, closeDatabase, currentPeriod, findUserByEmail, getAuditTrail, getComerciantes, getReportRows, getZonas, insertPuesto, registrarCobro } from '../src/db.js';
 import { pool } from '../src/pg.js';
 
@@ -68,8 +70,9 @@ test('toda ruta GET de la API exige token, salvo las públicas declaradas', asyn
   const routes = registeredGetRoutes();
   // 27 rutas GET al dividir index.ts en routers, más /cobros/tiempos, /asistencias, /parametros, /caja/resumen, /caja/cierres, /asistencias/observaciones y las dos
   // públicas del recibo (fase 3), /tickets/series, /tickets/lotes, /tickets/cobradores, /tickets/mios y
-  // /comerciantes/plantilla-padron. Si cambia, revise que las nuevas pidan token.
-  assert.equal(routes.length, 40, `cambió el número de rutas GET: ${routes.length}`);
+  // /comerciantes/plantilla-padron, /tickets/lotes/:id/tickets y /comprobantes/:id/recibo (12/11/2026). Si cambia,
+  // revise que las nuevas pidan token.
+  assert.equal(routes.length, 42, `cambió el número de rutas GET: ${routes.length}`);
 
   const open = [];
   for (const path of routes) {
@@ -137,6 +140,8 @@ test('solo el administrador asigna, reasigna y devuelve lotes de tickets', async
   }
   const lotes = await fetch(`${baseUrl}/api/v1/tickets/lotes`, { headers });
   assert.equal(lotes.status, 403, 'el cobrador no ve los lotes de los demás');
+  const detalle = await fetch(`${baseUrl}/api/v1/tickets/lotes/1/tickets`, { headers });
+  assert.equal(detalle.status, 403, 'el cobrador tampoco ve el detalle de un lote');
   const mios = await fetch(`${baseUrl}/api/v1/tickets/mios`, { headers });
   assert.equal(mios.status, 200, 'el cobrador ve sus propios tickets');
 });
@@ -202,6 +207,12 @@ test('POST /cobros usa el cobrador del token, rechaza "manual" y audita en la mi
   const body = await response.json();
   assert.equal(response.status, 201, body.message);
   assert.equal(body.data.cobrador_id, Number(cobrador.id));
+  // El recibo de WhatsApp se puede verificar (12/11/2026): el enlace abre número, monto y estado; el QR es una imagen.
+  const token = decodeURIComponent(body.data.url_verificacion.split('/verificar/')[1]);
+  const verificado = await (await fetch(`${baseUrl}/api/v1/publico/verificar/${encodeURIComponent(token)}`)).json();
+  assert.equal(verificado.data.numero, body.data.comprobante);
+  assert.equal(verificado.data.estado, 'confirmado');
+  assert.match(body.data.qr_verificacion, /^data:image\/png;base64,/);
 
   const audit = await getAuditTrail(pool, { entidad: 'cobros' });
   const entry = audit.find((item) => item.accion === 'REGISTRAR_COBRO' && item.detalle.includes(body.data.comprobante));
@@ -255,6 +266,16 @@ test('GET /cobros: el cobrador ve solo sus cobros; el administrador ve todos, co
   assert.ok(vistosPorAdmin.some((item) => item.id === delCobrador.id) && vistosPorAdmin.some((item) => item.id === delAdmin.id));
   assert.equal((await listar(tokens.admin, '?limit=1')).length, 1);
   assert.ok((await listar(tokens.admin, '?limit=999999')).length <= MAX_COBROS_LISTADO, 'el tope no se puede pasar');
+
+  // /reportes sigue la misma regla: el cobrador ve solo sus cobros, aunque pida los de otro.
+  const reporte = async (token, query) => (await (await fetch(`${baseUrl}/api/v1/reportes${query}`, { headers: { Authorization: `Bearer ${token}` } })).json()).data;
+  const reportePropio = await reporte(tokens.cobrador, `?cobrador_id=${admin.id}`);
+  assert.ok(reportePropio.every((item) => item.cobrador === cobrador.nombre), 'el reporte del cobrador trae solo sus cobros');
+  assert.ok(!reportePropio.some((item) => item.id === delAdmin.id));
+  // El historial de un comerciante (sugerencia de monto) sí trae los cobros de todos.
+  const historial = await reporte(tokens.cobrador, `?comerciante_id=${merchant.id}`);
+  assert.ok(historial.some((item) => item.id === delAdmin.id) && historial.every((item) => Number(item.comerciante_id) === Number(merchant.id)));
+  assert.ok((await reporte(tokens.admin, `?cobrador_id=${admin.id}`)).some((item) => item.id === delAdmin.id));
 });
 
 test('el reporte CSV no deja fórmulas ejecutables (inyección CSV)', () => {
@@ -302,4 +323,98 @@ test('un cobro de las 19:30 del 31 de octubre en Salcedo cuenta para octubre', a
   assert.ok(octubre.some((row) => row.id === cobro.id), 'debe aparecer en el reporte de octubre');
   assert.ok(!noviembre.some((row) => row.id === cobro.id), 'no debe aparecer en el reporte de noviembre');
   assert.equal(octubre.find((row) => row.id === cobro.id).fecha, '2026-10-31 19:30:00');
+});
+
+test('un token firmado con otro algoritmo se rechaza aunque use el mismo secreto', async () => {
+  const datos = { id: 1, email: 'admin@salcedo.gob.pe', rol: 'super_admin' };
+  const pedir = (token) => fetch(`${baseUrl}/api/v1/dashboard`, { headers: { Authorization: `Bearer ${token}` } });
+  assert.equal((await pedir(jwt.sign(datos, config.jwtSecret, { algorithm: 'HS256', expiresIn: '5m' }))).status, 200);
+  assert.equal((await pedir(jwt.sign(datos, config.jwtSecret, { algorithm: 'HS512', expiresIn: '5m' }))).status, 401);
+});
+
+test('la auditoría pagina en el servidor y el cobrador no puede consultarla', async () => {
+  const pedir = (rol, query) => fetch(`${baseUrl}/api/v1/auditoria?${query}`, { headers: { Authorization: `Bearer ${tokens[rol]}` } });
+  const respuesta = await pedir('auditor', 'page=1&limit=2');
+  assert.equal(respuesta.status, 200);
+  const body = await respuesta.json();
+  assert.ok(body.data.length <= 2);
+  assert.ok(body.total >= body.data.length, 'el total cuenta todo lo filtrado, no solo la página');
+  assert.equal((await pedir('cobrador', 'page=1')).status, 403);
+});
+
+test('el cobrador solo corrige la ubicación de un puesto: titular, liberar y baja son del administrador', async () => {
+  const [zonaA, zonaB] = await getZonas(pool);
+  const [titular, otro] = (await pool.query(`SELECT id, zona_id FROM comerciantes WHERE estado = 'activo' AND zona_id = $1 ORDER BY id LIMIT 2`, [zonaA.id])).rows;
+  assert.ok(titular && otro, 'la semilla trae dos comerciantes en la primera zona');
+  const puesto = await insertPuesto(pool, { zona_id: zonaA.id, direccion: `Puesto permisos ${Date.now()}`, metros_cuadrados: 4, comerciante_id: titular.id });
+  const pedir = (token, metodo, ruta, body) => fetch(`${baseUrl}/api/v1${ruta}`, {
+    method: metodo, headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: body ? JSON.stringify(body) : undefined
+  });
+
+  const cambioTitular = await pedir(tokens.cobrador, 'PUT', `/puestos-mapa/${puesto.id}`, { comerciante_id: otro.id });
+  assert.equal(cambioTitular.status, 403, 'la deuda pasaría a otro comerciante');
+  assert.match((await cambioTitular.json()).message, /titular/);
+  assert.equal((await pedir(tokens.cobrador, 'PUT', `/puestos-mapa/${puesto.id}`, { metros_cuadrados: 1 })).status, 403);
+  assert.equal((await pedir(tokens.cobrador, 'POST', `/puestos/${puesto.id}/liberar`)).status, 403);
+  assert.equal((await pedir(tokens.cobrador, 'DELETE', `/puestos-mapa/${puesto.id}`)).status, 403);
+  // Reenviar el puesto completo, como hace la cola del mapa, con otra ubicación: sí se acepta.
+  const mover = await pedir(tokens.cobrador, 'PUT', `/puestos-mapa/${puesto.id}`, {
+    comerciante_id: titular.id, zona_id: zonaA.id, metros_cuadrados: '4', latitud: -15.881, longitud: -70.021
+  });
+  assert.equal(mover.status, 200);
+
+  // Un puesto nuevo con titular va en la zona del comerciante.
+  const enOtraZona = await pedir(tokens.cobrador, 'POST', '/puestos-mapa', { comerciante_id: titular.id, zona_id: zonaB.id, direccion: `Otra zona ${Date.now()}`, metros_cuadrados: 4 });
+  assert.equal(enOtraZona.status, 403);
+  const enSuZona = await pedir(tokens.cobrador, 'POST', '/puestos-mapa', { comerciante_id: titular.id, zona_id: zonaA.id, direccion: `Su zona ${Date.now()}`, metros_cuadrados: 4 });
+  assert.equal(enSuZona.status, 201);
+
+  const fila = (await pool.query('SELECT comerciante_id, estado FROM puestos WHERE id = $1', [puesto.id])).rows[0];
+  assert.equal(Number(fila.comerciante_id), Number(titular.id));
+  assert.equal(fila.estado, 'ocupado');
+
+  assert.equal((await pedir(tokens.admin, 'PUT', `/puestos-mapa/${puesto.id}`, { comerciante_id: otro.id })).status, 200);
+  assert.equal((await pedir(tokens.admin, 'POST', `/puestos/${puesto.id}/liberar`)).status, 200);
+  assert.equal((await pedir(tokens.admin, 'DELETE', `/puestos-mapa/${puesto.id}`)).status, 200);
+});
+
+test('calles, catálogos y roles solo los ve el personal: el rol comerciante recibe 403', async () => {
+  for (const ruta of ['/api/v1/calles', '/api/v1/catalogos', '/api/v1/roles']) {
+    const pedir = (rol) => fetch(`${baseUrl}${ruta}`, { headers: { Authorization: `Bearer ${tokens[rol]}` } });
+    assert.equal((await pedir('comerciante')).status, 403, ruta);
+    assert.equal((await pedir('cobrador')).status, 200, ruta);
+  }
+});
+
+test('una notificación manual tiene tope de largo y queda en la auditoría', async () => {
+  const [comerciante] = await getComerciantes(pool, { limit: 1 });
+  const enviar = (cuerpo) => fetch(`${baseUrl}/api/v1/notificaciones`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${tokens.cobrador}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ comerciante_id: comerciante.id, canal: 'whatsapp', ...cuerpo })
+  });
+  assert.equal((await enviar({ mensaje: 'x'.repeat(1001) })).status, 400, 'antes no tenía tope');
+  assert.equal((await enviar({ mensaje: 'Recordatorio', tipo: 'Tipo <b>raro</b>' })).status, 400);
+
+  const creada = await enviar({ mensaje: `Recordatorio de prueba ${process.pid}` });
+  assert.equal(creada.status, 201);
+  // auditMutation graba después de responder: se espera un momento.
+  let auditada = false;
+  for (let intento = 0; intento < 20 && !auditada; intento += 1) {
+    auditada = (await getAuditTrail(pool, { entidad: 'notificaciones', limit: 20 })).some((fila) => fila.accion === 'CREAR_NOTIFICACION');
+    if (!auditada) await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  assert.ok(auditada, 'antes se grababa sin auditoría');
+});
+
+test('POST /puestos-mapa con la misma clave: 201 la primera vez, 200 y el mismo puesto al reenviar', async () => {
+  const cuerpo = { zona_id: 1, metros_cuadrados: 4, direccion: `Reenvío mapa ${process.pid}`, clave_cliente: `http-${process.pid}-${Date.now()}` };
+  const enviar = () => fetch(`${baseUrl}/api/v1/puestos-mapa`, {
+    method: 'POST', headers: { Authorization: `Bearer ${tokens.cobrador}`, 'Content-Type': 'application/json' }, body: JSON.stringify(cuerpo)
+  });
+  const primero = await enviar();
+  assert.equal(primero.status, 201);
+  const reenvio = await enviar();
+  assert.equal(reenvio.status, 200, 'antes creaba otro puesto igual');
+  assert.equal((await reenvio.json()).data.id, (await primero.json()).data.id);
 });

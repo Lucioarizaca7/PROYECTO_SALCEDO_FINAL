@@ -67,7 +67,7 @@ PostgreSQL ─► db.js (reglas + SQL, recibe `db` primero) ─► routes/<modul
 | Tarifa aplicable | `findApplicableTariff` | elegir tarifa a mano |
 | Tickets de un cobro | `seriesDelComerciante` + `validarTicketsCobro` | validar tickets en la ruta |
 | Fecha y periodo | `todayInLima()` / `currentPeriod()`; en el cliente `periodoEnLima()` | `new Date().toISOString().slice(…)` |
-| Llamadas HTTP del cliente | `authFetch` | `fetch` con el token a mano, otro cliente HTTP |
+| Llamadas HTTP del cliente | `authFetch` y su cuerpo con `leerJson` (nunca `response.json()` suelto) | `fetch` con el token a mano, otro cliente HTTP |
 
 Una versión en lote de una función única solo se acepta con una prueba que compare sus resultados con la original.
 
@@ -85,9 +85,10 @@ grep -rn "nombreFuncion(" apps/server/src apps/client/src
 
 ## 3. Base de datos
 
-- **Las migraciones solo se agregan**: `migrations/000N_nombre.sql` (la siguiente es la 0021), con `BEGIN; … COMMIT;`, comentarios en español, la corrección de los datos existentes y su prueba. Nunca se edita una que ya se aplicó.
+- **Las migraciones solo se agregan**: `migrations/000N_nombre.sql` (la siguiente es la 0032), con `BEGIN; … COMMIT;`, comentarios en español, la corrección de los datos existentes y su prueba. Nunca se edita una que ya se aplicó.
 - **La regla también va en la base**: CHECK, FK, UNIQUE (parcial si hace falta). El JS valida para dar un buen mensaje; la base impide el dato malo aunque entre por otro camino. Ejemplos: `puestos_ocupado_con_titular`, `tarifas_zona_o_tipo_via`, `UNIQUE (serie, numero)` de tickets.
-- Dinero en `NUMERIC(12,2)`; se redondea solo al mostrar.
+- Dinero en `NUMERIC(12,2)`; se redondea solo al mostrar. En JS llega como número (`pg.js`): todo monto de entrada y toda suma de dinero pasa por `dinero()` de `db.js` (a céntimos) antes de comparar o escribir.
+- El pool (`pg.js`) escucha su evento `error` (sin él, una conexión cortada tumba la API) y espera a lo más `ESPERA_CONEXION_MS` por una conexión. No se quitan.
 - Todo lo que escribe en más de una tabla va en `withTransaction`. Lo que lee un saldo para luego escribir **bloquea** (`FOR UPDATE` / `FOR NO KEY UPDATE`) para que dos cobros simultáneos no pasen del saldo.
 - Toda operación que puede repetirse (sincronización, anulaciones) es **idempotente**: clave única o respuesta `ya_*`, nunca un duplicado.
 - SQL siempre con parámetros (`$1, $2…`). Nunca se arma SQL concatenando datos del usuario.
@@ -100,7 +101,7 @@ Detalle y dónde vive cada control: `references/seguridad.md`. Lo mínimo en cad
 
 - **Secretos**: solo por variables de entorno leídas en `config.ts` (ningún otro módulo lee `process.env`). Nada de claves, tokens ni contraseñas en el código, en pruebas que se commitean con valores reales, ni en el chat.
 - Los usuarios demo existen **solo fuera de producción** (`config.isProduction` lo impide). No se agregan usuarios nuevos con clave en el código: en producción se usa `npm run crear-admin` / `crear-usuario`.
-- **Rutas**: toda ruta privada lleva `requireAuth` + `requireRoles([...])` explícitos (o `...staffOnly`); si modifica datos, `auditMutation`. Una ruta GET nueva sube el conteo fijo de `tests/api-seguridad.test.js` (hoy 40) y se agrega una prueba de que un rol sin permiso recibe 403.
+- **Rutas**: toda ruta privada lleva `requireAuth` + `requireRoles([...])` explícitos (o `...staffOnly`); si modifica datos, `auditMutation`. Una ruta GET nueva sube el conteo fijo de `tests/api-seguridad.test.js` (hoy 41) y se agrega una prueba de que un rol sin permiso recibe 403.
 - **Sesión**: JWT de acceso corto en memoria; refresh en la cookie HttpOnly `sisrec_refresh`. Ningún token en `localStorage`/`sessionStorage`, en la URL ni en logs.
 - **Contraseñas y llave del carnet**: contraseñas con bcrypt. El portal del comerciante entra solo con la llave del carnet (no hay PIN desde la 0017): se guarda su huella SHA-256, se muestra una vez al emitir el carnet y nunca se audita en claro.
 - **CORS**: lista blanca (`FRONTEND_URL`); jamás `origin: '*'` con `credentials`.

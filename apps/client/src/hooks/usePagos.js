@@ -3,12 +3,15 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import { useSisrec } from '../app/SisrecContext';
 import { formatPEN } from '../lib/formato';
 import { createReceiptHash } from '../features/payments/recibo';
+import { enviarReciboOficial } from '../features/payments/reciboOficial';
 import { buildExpressSuggestion } from '../features/payments/sugerenciaExpress';
-import { aComercianteDePantalla, aSaldoDePantalla, periodoEnLima } from '../services/jornadaOffline';
-import { crearHashCobro } from '../services/offlineQueue';
-import { montoDeRequeridos, proximosTickets, requeridosPorDefecto, textoTicket } from '../services/ticketsOffline';
+import { aComercianteDePantalla, aSaldoDePantalla, hoyEnLima, montoDiaEnZona, periodoEnLima } from '../services/jornadaOffline';
+import { CLAVE_ASISTENCIAS, estadoDelDia } from '../services/asistenciaOffline';
+import { crearHashCobro, servidorNoDisponible } from '../services/offlineQueue';
+import { storeFor } from '../services/offlineStore';
+import { montoDeRequeridos, proximosTickets, requeridosEnZona, requeridosPorDefecto, serieDeTipoVia, seriesConMarcaDeHoy, textoTicket } from '../services/ticketsOffline';
 import { useTicketsCobrador } from '../features/offline/useTicketsCobrador';
-import { apiBase, authFetch } from '../services/session';
+import { apiBase, authFetch, leerJson, MENSAJE_SIN_SERVIDOR } from '../services/session';
 
 const NO_SUGGESTION = { suggestedAmount: 0, preferredMethod: 'efectivo', lastLabel: 'Sin historial previo', lastPayment: null };
 
@@ -20,7 +23,7 @@ const sameMerchant = (merchant) => (item) => (
 // Página Pagos: localizar al comerciante (en línea o en el padrón del celular), revisar su deuda,
 // registrar el cobro (o guardarlo en la cola sin señal) y emitir el recibo.
 export function usePagos() {
-  const { user, cobros, jornada, offlineQueue, refresh, isOnline } = useSisrec();
+  const { user, cobros, jornada, offlineQueue, refresh, isOnline, catalogos, tariffRecords } = useSisrec();
   const location = useLocation();
   const navigate = useNavigate();
   const [form, setForm] = useState({ search: '', comercianteId: '', periodo: periodoEnLima(), monto: '', metodo_pago: 'efectivo', codigo_operacion: '', observaciones: '' });
@@ -30,16 +33,49 @@ export function usePagos() {
   const [message, setMessage] = useState('');
   const [showQrScanner, setShowQrScanner] = useState(false);
   const [receipt, setReceipt] = useState(null);
-  const [printStatus, setPrintStatus] = useState({ isPrinting: false, error: null });
   // Hora en que se empezó a atender al comerciante (búsqueda, QR o llegada desde el mapa).
   const inicioAtencion = useRef(null);
+  // Turno del comerciante en pantalla (12/11/2026): cada búsqueda, llegada o cambio de mes toma uno nuevo, y una
+  // respuesta lenta de un turno anterior ya no pisa la pantalla. Antes, con señal débil, buscar a A y luego a B
+  // dejaba a A en pantalla (con su monto) si la respuesta de A llegaba última.
+  const atencionActual = useRef(0);
   const empezarAtencion = () => { inicioAtencion.current = new Date().toISOString(); };
 
   // Tickets preimpresos: un ticket por puesto y día cobrado, de las series del comerciante. Por omisión,
   // uno por puesto; el cobrador suma tickets si paga días adeudados. El monto es lo que valen los tickets.
   const tickets = useTicketsCobrador({ isOnline, jornadaMeta: jornada.meta });
   const [requeridos, setRequeridos] = useState([]);
-  useEffect(() => { setRequeridos(requeridosPorDefecto(balance?.series_cobro)); }, [balance?.series_cobro]);
+
+  // Zona del día (decisión del usuario, 12/11/2026): si hoy vende en otra zona porque faltaron otros, el cobrador
+  // la elige y el día se cobra con su tarifa (asfaltada S/ 3, sin asfaltar S/ 2). '' = la zona de su puesto.
+  // Las zonas y tarifas salen del paquete de la jornada (sirven sin señal) o, si no hay, de los catálogos.
+  const [zonaDia, setZonaDia] = useState('');
+  const [datosJornada, setDatosJornada] = useState({ zonas: [], tarifas: [] });
+  useEffect(() => {
+    storeFor('jornada').get('tarifas').then((guardado) => {
+      if (guardado) setDatosJornada({ zonas: guardado.zonas || [], tarifas: guardado.tarifas || [] });
+    }).catch(() => null);
+  }, [jornada.meta?.descargadoEn]);
+  const zonas = datosJornada.zonas.length ? datosJornada.zonas : (catalogos?.zonas || []);
+  const tarifasDia = datosJornada.tarifas.length ? datosJornada.tarifas : (tariffRecords || []);
+  const zonaElegida = zonas.find((zona) => String(zona.id) === String(zonaDia)) || null;
+  // Solo quien paga por día cobrado y en el mes en curso: la zona del día es la de hoy.
+  const cobraPorDia = Boolean(balance && (balance.series_cobro?.length || balance.dias_asistidos !== undefined
+    || ['ferial_sin_asistencia', 'sin_asistencia'].includes(balance.motivo)));
+  const muestraZonaDia = cobraPorDia && (form.periodo || periodoEnLima()) === periodoEnLima();
+  // Cada comerciante empieza en la zona de su puesto, o en la de su marca de hoy si se cobra sin señal. La marca se lee
+  // del celular después de mostrarlo: va atada al id, así nunca se aplica a otro comerciante.
+  const [zonaMarcada, setZonaMarcada] = useState({ id: null, zona: '' });
+  useEffect(() => { setZonaDia(''); }, [merchant?.id]);
+  useEffect(() => {
+    if (zonaMarcada.id !== null && String(zonaMarcada.id) === String(merchant?.id)) setZonaDia(zonaMarcada.zona);
+  }, [zonaMarcada, merchant?.id]);
+
+  useEffect(() => {
+    const serieZona = zonaElegida ? serieDeTipoVia(tickets.estado, zonaElegida.tipo_via) : null;
+    setRequeridos(serieZona ? requeridosEnZona(balance?.series_cobro, serieZona) : requeridosPorDefecto(balance?.series_cobro));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [balance?.series_cobro, zonaDia]);
   const usaTickets = requeridos.length > 0 && requeridos.some((item) => tickets.estado.series[item.serie]);
   const entrega = usaTickets ? proximosTickets(tickets.estado, requeridos.filter((item) => item.cantidad > 0)) : null;
   const montoTickets = usaTickets ? montoDeRequeridos(requeridos) : null;
@@ -49,6 +85,14 @@ export function usePagos() {
     if (montoTickets !== null) setForm((current) => ({ ...current, monto: montoTickets > 0 ? String(montoTickets) : '' }));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [requeridos, usaTickets, balance]);
+  // Sin tickets, la zona del día cambia el monto del día: el de la tarifa de su tipo de vía por cada puesto de hoy.
+  useEffect(() => {
+    if (!zonaElegida || usaTickets) return;
+    const montoDia = montoDiaEnZona(tarifasDia, zonaElegida.tipo_via);
+    const puestosHoy = (balance?.series_cobro || []).reduce((total, item) => total + Number(item.puestos_hoy ?? item.puestos ?? 0), 0) || 1;
+    if (montoDia !== null) setForm((current) => ({ ...current, monto: String(Number((montoDia * puestosHoy).toFixed(2))) }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [zonaDia, usaTickets]);
   const cambiarTickets = (serie, delta) => setRequeridos((current) => current.map((item) => (
     item.serie === serie ? { ...item, cantidad: Math.max(0, Math.min(60, item.cantidad + delta)) } : item
   )));
@@ -71,7 +115,7 @@ export function usePagos() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
       });
-      const data = await response.json();
+      const data = await leerJson(response);
       if (!response.ok) throw new Error(data.message || 'No se pudo guardar la preferencia');
       const preferences = Array.isArray(data.data)
         ? Object.fromEntries(data.data.map((item) => [item.clave, item.valor]))
@@ -92,37 +136,88 @@ export function usePagos() {
     }
   };
 
+  // Respuesta del servidor para mostrar un comerciante: un 5xx o una página que no es JSON (el proxy con la API caída)
+  // es como no tener señal (TypeError), así la búsqueda pasa al padrón del celular en vez de decir "Unexpected token".
+  const leerRespuesta = async (response) => {
+    if (servidorNoDisponible(response)) throw new TypeError(MENSAJE_SIN_SERVIDOR);
+    const body = await response.json().catch(() => null);
+    if (body === null) throw new TypeError(MENSAJE_SIN_SERVIDOR);
+    return body;
+  };
+
   // Saldo del mes y sugerencia express de un comerciante ya encontrado en el servidor.
   // Si debe meses anteriores, se cobra primero el más antiguo (el cobrador puede elegir otro).
-  const loadMerchant = async (found, periodoPedido = null) => {
+  const loadMerchant = async (found, periodoPedido = null, turno = atencionActual.current) => {
+    const vigente = () => turno === atencionActual.current;
     let periodo = periodoPedido || periodoEnLima();
     let balanceResponse = await authFetch(`${apiBase}/comerciantes/${found.id}/saldo?periodo=${periodo}`);
-    let balanceData = await balanceResponse.json();
+    let balanceData = await leerRespuesta(balanceResponse);
+    if (!vigente()) return undefined;
     if (!balanceResponse.ok) return setMessage(balanceData.message || 'No se pudo calcular el saldo.');
     const masAntiguo = balanceData.data.deuda_acumulada?.periodo_mas_antiguo;
     if (!periodoPedido && masAntiguo && masAntiguo !== periodo) {
       periodo = masAntiguo;
       balanceResponse = await authFetch(`${apiBase}/comerciantes/${found.id}/saldo?periodo=${periodo}`);
-      balanceData = await balanceResponse.json();
+      balanceData = await leerRespuesta(balanceResponse);
+      if (!vigente()) return undefined;
       if (!balanceResponse.ok) return setMessage(balanceData.message || 'No se pudo calcular el saldo.');
     }
 
-    const historyResponse = await authFetch(`${apiBase}/reportes?periodo=${form.periodo}`);
-    const historyData = await historyResponse.json();
-    const history = (historyData.data || []).filter(sameMerchant(found));
+    // Historial de ESTE comerciante (por id, no por nombre: dos homónimos se mezclaban), de todos los meses.
+    const historyResponse = await authFetch(`${apiBase}/reportes?comerciante_id=${found.id}`);
+    const historyData = await historyResponse.json().catch(() => ({}));
+    const history = historyResponse.ok ? (historyData.data || []) : [];
     const next = buildExpressSuggestion(found, balanceData.data, history.length ? history : cobros.filter(sameMerchant(found)));
+    if (!vigente()) return undefined;
 
     setMerchant(found);
     setBalance(balanceData.data);
     setSuggestion(next);
-    setForm((current) => ({ ...current, comercianteId: String(found.id), periodo, monto: String(Math.min(next.suggestedAmount || balanceData.data.saldo, balanceData.data.saldo) || ''), metodo_pago: next.preferredMethod || current.metodo_pago }));
+    // El código de operación y la nota son de cada cobro: no se heredan del comerciante anterior.
+    setForm((current) => ({ ...current, comercianteId: String(found.id), periodo, monto: String(Math.min(next.suggestedAmount || balanceData.data.saldo, balanceData.data.saldo) || ''), metodo_pago: next.preferredMethod || current.metodo_pago, codigo_operacion: '', observaciones: '' }));
   };
 
   // El cobrador elige a qué mes impago aplicar el cobro.
   const elegirPeriodo = async (periodo) => {
-    if (!merchant || !navigator.onLine) return;
+    if (!merchant) return;
+    const turno = ++atencionActual.current;
     setMessage('');
-    await loadMerchant(merchant, periodo).catch((error) => setMessage(error.message));
+    if (merchant.offline || !navigator.onLine) {
+      // Sin señal: el saldo de ese mes sale del padrón del celular.
+      const registro = await jornada.porId(merchant.id);
+      if (!registro || turno !== atencionActual.current) return;
+      const saldoMes = aSaldoDePantalla(registro, periodo);
+      setBalance(saldoMes);
+      setForm((current) => ({ ...current, periodo: saldoMes.periodo, monto: saldoMes.saldo > 0 ? String(saldoMes.saldo) : '' }));
+      return;
+    }
+    await loadMerchant(merchant, periodo, turno).catch((error) => setMessage(error.message));
+  };
+
+  // Comerciante del padrón del celular en la pantalla (búsqueda o llegada desde Sitios/Mapa sin señal).
+  const mostrarDelPadron = (localMerchant) => {
+    atencionActual.current += 1;
+    const offlineMerchant = aComercianteDePantalla(localMerchant);
+    // Sin periodo: se aplica primero el mes impago más antiguo, igual que en línea.
+    const offlineBalance = aSaldoDePantalla(localMerchant);
+    setMerchant(offlineMerchant);
+    setBalance(offlineBalance);
+    setSuggestion(buildExpressSuggestion(offlineMerchant, offlineBalance, []));
+    setForm((current) => ({ ...current, comercianteId: String(offlineMerchant.id), periodo: offlineBalance.periodo || current.periodo, monto: offlineBalance.saldo > 0 ? String(offlineBalance.saldo) : '', codigo_operacion: '', observaciones: '' }));
+    aplicarMarcaDeHoy(localMerchant);
+    return offlineBalance;
+  };
+
+  // Sin señal, la marca de hoy del celular manda sobre el padrón (12/11/2026): "faltó" no sugiere ticket y la zona
+  // marcada en el panel de asistencia queda como zona del día (sus tickets y el zona_dia del cobro). Antes se
+  // sugería S3 a quien estaba marcado en una zona sin asfaltar, y el cobro quedaba observado al sincronizar.
+  const aplicarMarcaDeHoy = async (registro) => {
+    if (!registro?.puestoFerialId) return;
+    const guardado = await storeFor('jornada').get(CLAVE_ASISTENCIAS).catch(() => null);
+    const marca = estadoDelDia(guardado, hoyEnLima()).marcas[String(registro.puestoFerialId)];
+    if (!marca) return;
+    setBalance((actual) => (actual && actual.series_cobro ? { ...actual, series_cobro: seriesConMarcaDeHoy(actual.series_cobro, marca) } : actual));
+    if (marca.asistio && marca.zonaId) setZonaMarcada({ id: registro.id, zona: String(marca.zonaId) });
   };
 
   const findMerchant = async (queryOverride) => {
@@ -130,21 +225,19 @@ export function usePagos() {
     const query = String(typeof queryOverride === 'string' ? queryOverride : form.search).trim();
     if (!query) return setMessage('Ingresa DNI, RUC, nombre, puesto o código.');
     empezarAtencion();
+    const turno = ++atencionActual.current;
+    const vigente = () => turno === atencionActual.current;
 
     // Sin señal se busca en el padrón descargado al iniciar la jornada.
     const searchOffline = async (reason) => {
       const [localMerchant] = await jornada.search(query).catch(() => []);
+      if (!vigente()) return undefined;
       if (!localMerchant) {
         return setMessage(jornada.meta
           ? `${reason} no se encontró el comerciante en el padrón guardado en el celular.`
           : `${reason} no hay padrón descargado. Descárgalo al iniciar la jornada, con señal.`);
       }
-      const offlineMerchant = aComercianteDePantalla(localMerchant);
-      const offlineBalance = aSaldoDePantalla(localMerchant, form.periodo);
-      setMerchant(offlineMerchant);
-      setBalance(offlineBalance);
-      setSuggestion(buildExpressSuggestion(offlineMerchant, offlineBalance, []));
-      setForm((current) => ({ ...current, comercianteId: String(offlineMerchant.id), periodo: offlineBalance.periodo || current.periodo, monto: offlineBalance.saldo > 0 ? String(offlineBalance.saldo) : '' }));
+      mostrarDelPadron(localMerchant);
       setMessage(`${reason} saldo según el padrón guardado el ${new Date(localMerchant.actualizadoEn).toLocaleString('es-PE', { dateStyle: 'short', timeStyle: 'short' })}`);
     };
     if (!navigator.onLine) return searchOffline('Sin señal:');
@@ -154,28 +247,30 @@ export function usePagos() {
       // Código de comerciante (COM-0004-…, CM-004 o un código anterior): el servidor lo resuelve.
       if (/^(?:COM|CM)-/i.test(query)) {
         const merchantResponse = await authFetch(`${apiBase}/comerciantes/${encodeURIComponent(query)}`);
-        const merchantData = await merchantResponse.json();
+        const merchantData = await leerRespuesta(merchantResponse);
         if (merchantResponse.ok) found = merchantData.data;
       }
       if (!found) {
         const response = await authFetch(`${apiBase}/comerciantes?search=${encodeURIComponent(query)}&limit=10`);
-        const data = await response.json();
+        const data = await leerRespuesta(response);
         found = data.data?.[0] || null;
       }
       if (!found) {
         const puestosResponse = await authFetch(`${apiBase}/puestos`);
-        const puestosData = await puestosResponse.json();
+        const puestosData = await leerRespuesta(puestosResponse);
         const puesto = puestosData.data?.find((item) => String(item.codigo || item.codigo_puesto || '').trim().toLowerCase() === query.toLowerCase());
         if (puesto && !puesto.comerciante_id) return setMessage(`El puesto ${puesto.codigo} está libre: no tiene titular a quien cobrar.`);
         if (puesto) {
           const merchantResponse = await authFetch(`${apiBase}/comerciantes/${puesto.comerciante_id}`);
-          const merchantData = await merchantResponse.json();
+          const merchantData = await leerRespuesta(merchantResponse);
           if (merchantResponse.ok) found = { ...merchantData.data, codigo_puesto: puesto.codigo };
         }
       }
+      if (!vigente()) return undefined;
       if (!found) return setMessage('No se encontró un comerciante con ese dato.');
-      await loadMerchant(found);
+      await loadMerchant(found, null, turno);
     } catch (searchError) {
+      if (!vigente()) return undefined;
       // Hay "señal" pero el servidor no responde (Wi-Fi sin internet, API caída): se usa el padrón local.
       if (searchError instanceof TypeError) return searchOffline('Sin conexión con el servidor:');
       setMessage(searchError.message || 'No se pudo buscar el comerciante.');
@@ -190,16 +285,33 @@ export function usePagos() {
     if (!cobrarPuesto || handledArrival.current === cobrarPuesto) return;
     handledArrival.current = cobrarPuesto;
     empezarAtencion();
+    const turno = ++atencionActual.current;
     navigate(location.pathname, { replace: true, state: null });
     setMerchant(cobrarPuesto);
     setBalance(null);
-    setForm((current) => ({ ...current, search: cobrarPuesto.nombre || '', comercianteId: String(cobrarPuesto.id), monto: String(cobrarPuesto.saldo || '') }));
-    if (!navigator.onLine) return;
+    setForm((current) => ({ ...current, search: cobrarPuesto.nombre || '', comercianteId: String(cobrarPuesto.id), monto: String(cobrarPuesto.saldo || ''), codigo_operacion: '', observaciones: '' }));
+    // Sin señal, o con el servidor sin responder (12/11/2026: antes un 5xx dejaba solo un mensaje de error), el saldo
+    // sale del padrón del celular; antes quedaba vacío y no se podía confirmar el cobro.
+    const desdeElPadron = (motivo) => jornada.porId(cobrarPuesto.id).then((registro) => {
+      if (turno !== atencionActual.current) return;
+      if (!registro) return setMessage(`${motivo} este comerciante no está en el padrón guardado en el celular. Descárgalo con señal.`);
+      mostrarDelPadron(registro);
+      if (motivo !== 'Sin señal:') setMessage(`${motivo} saldo según el padrón guardado en el celular.`);
+      return undefined;
+    });
+    if (!navigator.onLine) {
+      desdeElPadron('Sin señal:');
+      return;
+    }
     (async () => {
       const response = await authFetch(`${apiBase}/comerciantes/${cobrarPuesto.id}`);
-      const data = await response.json();
-      await loadMerchant(response.ok ? { ...cobrarPuesto, ...data.data } : cobrarPuesto);
-    })().catch((error) => setMessage(error.message || 'No se pudo cargar el saldo del comerciante.'));
+      const data = await leerRespuesta(response);
+      await loadMerchant(response.ok ? { ...cobrarPuesto, ...data.data } : cobrarPuesto, null, turno);
+    })().catch((error) => {
+      if (turno !== atencionActual.current) return undefined;
+      if (error instanceof TypeError) return desdeElPadron('Sin conexión con el servidor:');
+      return setMessage(error.message || 'No se pudo cargar el saldo del comerciante.');
+    });
   }, [cobrarPuesto]);
 
   const scanQr = async (rawValue) => {
@@ -233,6 +345,9 @@ export function usePagos() {
     const fechaCobro = new Date().toISOString();
     const payload = {
       ...form,
+      // El número de operación existe solo en Yape, Plin o POS. En efectivo no se envía aunque quede escrito.
+      codigo_operacion: form.metodo_pago === 'efectivo' ? undefined : String(form.codigo_operacion || '').trim(),
+      observaciones: String(form.observaciones || '').trim() || undefined,
       comerciante_id: form.comercianteId,
       cobrador_id: user?.id || 2,
       metodo_pago: form.metodo_pago,
@@ -240,6 +355,8 @@ export function usePagos() {
       periodo: form.periodo || periodoEnLima(),
       inicio_atencion: inicioAtencion.current || undefined,
       tickets: ticketsEntregados.length ? ticketsEntregados : undefined,
+      // La zona del día: la marca de asistencia del cobro va en esa zona (o corrige la de hoy).
+      zona_dia: muestraZonaDia && zonaDia ? Number(zonaDia) : undefined,
       // El mismo hash viaja en línea y, si la red falla, en la cola: el servidor nunca lo registra dos veces.
       hash_transaccion: await crearHashCobro({ cobradorId: user?.id, comercianteId: form.comercianteId, monto: form.monto, fechaCobro, salt: `${Date.now()}-${Math.random()}` })
     };
@@ -247,11 +364,12 @@ export function usePagos() {
     const saveOfflinePayment = async (reason) => {
       const item = await offlineQueue.enqueue({ ...payload, comerciante: merchant?.nombre });
       if (ticketsEntregados.length) await tickets.consumirTickets(ticketsEntregados);
-      const local = await jornada.applyLocalPayment(payload.comerciante_id, payload.monto).catch(() => null);
-      setBalance((current) => current ? {
+      const local = await jornada.applyLocalPayment(payload.comerciante_id, payload.monto, payload.periodo).catch(() => null);
+      // Con el padrón actualizado se vuelve a mostrar el saldo (del mes cobrado y la deuda atrasada que queda).
+      setBalance((current) => local ? aSaldoDePantalla(local, payload.periodo) : current ? {
         ...current,
-        saldo: local ? local.saldo : Math.max(Number(current.saldo || 0) - Number(payload.monto || 0), 0),
-        monto_pagado: local ? local.montoPagado : Number(current.monto_pagado || 0) + Number(payload.monto || 0)
+        saldo: Math.max(Number(current.saldo || 0) - Number(payload.monto || 0), 0),
+        monto_pagado: Number(current.monto_pagado || 0) + Number(payload.monto || 0)
       } : current);
       setReceipt({
         comprobante: `PROV-${item.hashTransaccion.slice(0, 8).toUpperCase()}`,
@@ -264,9 +382,11 @@ export function usePagos() {
         cobrador: user?.nombre || 'Cobrador',
         hash_idempotencia: item.hashTransaccion.slice(0, 16).toUpperCase(),
         fecha: item.fechaCobro,
+        observaciones: payload.observaciones,
+        periodo_aplicado: payload.periodo,
         tickets: ticketsEntregados.map((ticket) => ({ ...ticket, texto: textoTicket(ticket.serie, ticket.numero) }))
       });
-      setForm((current) => ({ ...current, monto: '' }));
+      setForm((current) => ({ ...current, monto: '', codigo_operacion: '', observaciones: '' }));
       empezarAtencion();
       setMessage(`${reason} el cobro quedó guardado en el celular y se enviará al volver la señal. ${ticketsEntregados.length ? `Entrega ${ticketsEntregados.map((ticket) => textoTicket(ticket.serie, ticket.numero)).join(', ')}.` : 'Entrega el recibo provisional.'}`);
     };
@@ -291,7 +411,14 @@ export function usePagos() {
         }
         throw networkError;
       }
-      const data = await response.json();
+      // El servidor no respondió bien (5xx o una página del proxy que no es JSON): el dinero ya se recibió, así que el
+      // cobro se guarda en el celular con el MISMO hash (12/11/2026). Antes se mostraba "Unexpected token" y el cobro se
+      // perdía; si el servidor sí lo había registrado (un 504 tardío), reintentar creaba un hash nuevo y lo duplicaba.
+      const data = servidorNoDisponible(response) ? null : await response.json().catch(() => null);
+      if (data === null) {
+        await saveOfflinePayment('El servidor no respondió:');
+        return;
+      }
       if (!response.ok) {
         // Un ticket que el servidor no acepta (usado en otro celular, reasignado): se actualiza la numeración.
         if (ticketsEntregados.length) await tickets.refrescar();
@@ -330,7 +457,7 @@ export function usePagos() {
         hash_idempotencia: hashIdempotencia
       });
       setBalance((current) => current ? { ...current, saldo: data.data.saldo_restante } : current);
-      setForm((current) => ({ ...current, monto: '' }));
+      setForm((current) => ({ ...current, monto: '', codigo_operacion: '', observaciones: '' }));
       empezarAtencion();
       await refresh();
     } catch (paymentError) {
@@ -348,7 +475,7 @@ export function usePagos() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ motivo })
       });
-      const data = await response.json();
+      const data = await leerJson(response);
       if (!response.ok) throw new Error(data.message || 'No se pudo anular el cobro');
       setMessage(data.message);
       await refresh();
@@ -357,10 +484,23 @@ export function usePagos() {
     }
   };
 
+  // Reenvía el recibo oficial (con QR) de un cobro ya registrado.
+  const enviarRecibo = async (comprobante) => {
+    try {
+      await enviarReciboOficial(comprobante);
+    } catch (error) {
+      setMessage(error.message);
+    }
+  };
+
   return {
-    anularCobro, puedeAnular: user?.rol === 'super_admin',
-    form, setForm, merchant, balance, suggestion, message, showQrScanner, setShowQrScanner, receipt, printStatus, setPrintStatus,
+    anularCobro, enviarRecibo, puedeAnular: user?.rol === 'super_admin',
+    form, setForm, merchant, balance, suggestion, message, showQrScanner, setShowQrScanner, receipt,
     findMerchant, scanQr, applySuggestion, submit, elegirPeriodo,
-    tickets, usaTickets, requeridos, entrega, cambiarTickets, anularTicket
+    tickets, usaTickets, requeridos, entrega, cambiarTickets, anularTicket,
+    zonas, zonaDia, setZonaDia, muestraZonaDia,
+    // Quien paga por día cobrado se puede cobrar en el mes en curso aunque el día no esté marcado: el cobro lo
+    // marca y el servidor valida el monto (12/11/2026). Antes "Confirmar" quedaba deshabilitado con saldo 0.
+    cobraHoy: muestraZonaDia
   };
 }

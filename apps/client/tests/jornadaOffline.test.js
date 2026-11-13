@@ -101,3 +101,27 @@ test('el periodo es el mes de Lima, no el de UTC', () => {
   assert.equal(periodoEnLima(finDeMes), '2026-10');
   assert.equal(periodoEnLima(new Date('2026-11-01T05:00:00Z')), '2026-11');
 });
+
+test('sin señal se ve la deuda atrasada y se cobra primero el mes más antiguo', () => {
+  const registro = normalizarComerciante({
+    id: 77, nombre: 'Atrasada Sin Señal', dni_ruc: '40000077', periodo: '2026-11', saldo: 6, monto_total: 6, monto_pagado: 0,
+    deuda_vencida: 12, meses_impagos: ['2026-09', '2026-10', '2026-11'],
+    periodos_impagos: [{ periodo: '2026-09', saldo: 4 }, { periodo: '2026-10', saldo: 8 }, { periodo: '2026-11', saldo: 6 }]
+  });
+  const pantalla = aSaldoDePantalla(registro);
+  assert.equal(pantalla.periodo, '2026-09', 'por omisión, el mes impago más antiguo');
+  assert.equal(pantalla.saldo, 4);
+  assert.equal(pantalla.deuda_acumulada.deuda_total, 18);
+  assert.deepEqual(pantalla.deuda_acumulada.periodos.map((item) => item.periodo), ['2026-09', '2026-10', '2026-11']);
+  assert.equal(aSaldoDePantalla(registro, '2026-11').saldo, 6, 'el cobrador puede elegir el mes en curso');
+
+  const cobrado = aplicarCobroLocal(registro, 4, '2026-09');
+  assert.equal(cobrado.saldo, 6, 'el mes en curso no cambia');
+  assert.equal(cobrado.deudaVencida, 8);
+  assert.equal(aSaldoDePantalla(cobrado).periodo, '2026-10', 'ya pagado septiembre, sigue octubre');
+
+  // Pagar septiembre (debe S/ 4) con S/ 10: el exceso no paga octubre, que sigue debiéndose.
+  const conExceso = aplicarCobroLocal(registro, 10, '2026-09');
+  assert.equal(conExceso.deudaVencida, 8, 'antes bajaba a S/ 2, como si octubre se hubiera pagado');
+  assert.equal(aSaldoDePantalla(conExceso).saldo, 8, 'octubre sigue con su saldo');
+});

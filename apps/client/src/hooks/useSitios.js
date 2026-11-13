@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { pathOf } from '../app/navegacion';
 import { useSisrec } from '../app/SisrecContext';
 import { mapFetch, queueMapMutation } from '../services/mapaOffline';
-import { apiBase } from '../services/session';
+import { apiBase, randomId, leerJson } from '../services/session';
 
 // Páginas Sitios de venta y Mapa: filtros de la tabla y cambios de puestos.
 // Sin señal, cada cambio se guarda en la cola del mapa y se envía al volver la conexión.
@@ -14,16 +14,26 @@ export function useSitios() {
   const [filters, setFilters] = useState({ estado: 'todos', zona: 'todas', bajas: false });
   const [sitesWithInactive, setSitesWithInactive] = useState(null);
 
-  // Si la red no está, encola; si está, llama al servidor y recarga los datos.
-  const mutate = async ({ offline, offlineMessage, request, failMessage }) => {
+  // Si la red no está, encola; si está, llama al servidor y recarga los datos. Con señal débil (el navegador
+  // cree que hay red pero la petición no llega) también se encola, si reenviar es seguro (encolarSiFalla):
+  // antes el cobrador veía "No se pudo conectar" y perdía lo que había digitado.
+  const mutate = async ({ offline, offlineMessage, request, failMessage, encolarSiFalla = false }) => {
     setMessage('');
     if (!navigator.onLine) {
       await queueMapMutation(...offline);
       setMessage(offlineMessage);
       return;
     }
-    const response = await mapFetch(...request);
-    const data = await response.json();
+    let response;
+    try {
+      response = await mapFetch(...request);
+    } catch (error) {
+      if (!encolarSiFalla || !error.sinConexion) throw error;
+      await queueMapMutation(...offline);
+      setMessage(offlineMessage);
+      return;
+    }
+    const data = await leerJson(response);
     if (!response.ok) throw new Error(data.message || failMessage);
     setMessage(data.message);
     await refresh();
@@ -31,18 +41,26 @@ export function useSitios() {
 
   const json = (method, payload) => ({ method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
 
-  const createSite = (payload) => mutate({
-    offline: ['create', payload],
-    offlineMessage: 'Puesto guardado localmente; quedará pendiente de sincronización.',
-    request: [`${apiBase}/puestos-mapa`, json('POST', payload)],
-    failMessage: 'No se pudo guardar el puesto'
-  });
+  // La clave viaja en línea y en la cola: si el primer envío llegó pero la respuesta se perdió, el servidor
+  // devuelve el puesto ya creado en vez de crear otro igual (migración 0022).
+  const createSite = (datos) => {
+    const payload = { ...datos, clave_cliente: datos.clave_cliente || randomId() };
+    return mutate({
+      offline: ['create', payload],
+      offlineMessage: 'Puesto guardado localmente; quedará pendiente de sincronización.',
+      request: [`${apiBase}/puestos-mapa`, json('POST', payload)],
+      failMessage: 'No se pudo guardar el puesto',
+      encolarSiFalla: true
+    });
+  };
 
   const updateSite = (id, payload) => mutate({
     offline: ['update', { id, ...payload }],
     offlineMessage: 'Nueva posición guardada localmente; pendiente de sincronización.',
     request: [`${apiBase}/puestos-mapa/${id}`, json('PUT', payload)],
-    failMessage: 'No se pudo actualizar el puesto'
+    failMessage: 'No se pudo actualizar el puesto',
+    // Reenviar la misma posición no cambia nada: es seguro.
+    encolarSiFalla: true
   });
 
   const deleteSite = async (site) => {
@@ -51,7 +69,9 @@ export function useSitios() {
       offline: ['delete', { id: site.id }],
       offlineMessage: 'Baja guardada localmente; pendiente de sincronización.',
       request: [`${apiBase}/puestos-mapa/${site.id}`, { method: 'DELETE' }],
-      failMessage: 'No se pudo dar de baja el puesto'
+      failMessage: 'No se pudo dar de baja el puesto',
+      // Con señal débil se encola como el alta (12/11/2026): reenviar una baja ya hecha responde "ya estaba".
+      encolarSiFalla: true
     });
   };
 
@@ -74,13 +94,14 @@ export function useSitios() {
       offline: ['update', { id: site.id, comerciante_id: null }],
       offlineMessage: 'Liberación guardada localmente; pendiente de sincronización.',
       request: [`${apiBase}/puestos/${site.id}/liberar`, { method: 'POST' }],
-      failMessage: 'No se pudo liberar el puesto'
+      failMessage: 'No se pudo liberar el puesto',
+      encolarSiFalla: true
     });
   };
 
   const searchMerchants = useCallback(async (query) => {
     const response = await mapFetch(`${apiBase}/comerciantes?limit=10&search=${encodeURIComponent(query)}`);
-    const data = await response.json();
+    const data = await leerJson(response);
     return (data.data || []).filter((merchant) => merchant.estado !== 'inactivo');
   }, []);
 
@@ -100,7 +121,7 @@ export function useSitios() {
     if (!bajas) return setSitesWithInactive(null);
     try {
       const response = await mapFetch(`${apiBase}/puestos?incluirInactivos=1`);
-      const data = await response.json();
+      const data = await leerJson(response);
       if (!response.ok) throw new Error(data.message || 'No se pudieron cargar los puestos dados de baja');
       setSitesWithInactive(data.data || []);
     } catch (error) {

@@ -15,9 +15,9 @@ Antes de tocar uno de estos controles, comprobar que sigue igual en el código (
 | CORS abierto | Lista blanca: `FRONTEND_URL` (obligatorio en producción) + localhost solo en desarrollo | `app.ts` |
 | Fuerza bruta | Límite general y de login (`express-rate-limit`); portal: 5 llaves erradas → bloqueo 15 min (429), mismo 401 para cualquier credencial errada; la llave sola (QR) sin dueño solo la frena el límite por IP | `app.ts`, `http/comunes.ts` (`loginLimiter`), `portalAcceso.js` |
 | Cabeceras | helmet; HSTS solo en producción | `app.ts` |
-| Cuerpos enormes | `express.json({ limit: '1mb' })`; lotes con máximo (`MAX_LOTE_COBROS = 100`, anulaciones 100, tickets por cobro 60) | `app.ts`, `db.js` |
-| Acceso sin rol | `requireAuth` + `requireRoles`; prueba que cuenta las rutas GET y exige token | `auth.ts`, `tests/api-seguridad.test.js` |
-| Cambios sin rastro | `auditMutation` + cadena de hash en `auditoria_logs`; `verifyAuditChain` | `auth.ts`, `db.js` |
+| Cuerpos enormes | `express.json({ limit: '1mb' })`; lotes con máximo (`MAX_LOTE_COBROS = 100`, anulaciones 100, tickets por cobro 60); notificación manual hasta `MAX_MENSAJE_NOTIFICACION = 1000` caracteres | `app.ts`, `db.js` |
+| Acceso sin rol | `requireAuth` + `requireRoles`; prueba que cuenta las rutas GET y exige token. `/calles`, `/catalogos` y `/roles` piden `staffOnly` (11/11/2026) | `auth.ts`, `tests/api-seguridad.test.js` |
+| Cambios sin rastro | `auditMutation` + cadena de hash en `auditoria_logs`; `verifyAuditChain`. `POST /notificaciones` se grababa sin auditoría hasta el 11/11/2026 | `auth.ts`, `db.js`, `routes/portal.ts` |
 | Inyección SQL | Consultas con parámetros `$n` | `db.js`, `pg.js` |
 | Fuga de errores internos | El manejador global traduce errores de PostgreSQL a mensajes genéricos | `http/errorHandler.ts` |
 | Recibos falsos | QR con firma HMAC; PDF del portal con enlace firmado de 30 min | `/publico/verificar/:token`, `reciboPdf.js` |
@@ -28,8 +28,10 @@ Antes de tocar uno de estos controles, comprobar que sigue igual en el código (
 | Atribución falsa | El creador del comerciante y el cobrador del cobro salen del token | `routes/comerciantes.ts`, `routes/cobros.ts` |
 | Inyección CSV | `celdaCsv` antepone `'` a textos que empiezan con `= + - @` | `db.js` (`buildReportCsv`) |
 | Clickjacking | `X-Frame-Options: DENY` y CSP `frame-ancestors 'none'` en la app web (la CSP aún no limita scripts) | `Caddyfile` |
-| Cobrador que baja la tarifa de un puesto | `PUT /puestos-mapa/:id` solo deja cambiar la zona (que fija la tarifa del cobro por día) al `super_admin`: otro rol recibe 403 (`ForbiddenError`). La marca `zona_por_regularizar` no se escribe por la API | `db.js` (`updatePuesto`, opción `puedeCambiarZona`), `routes/puestos.ts` (`sinMarcaDelPadron`), `tests/api-seguridad.test.js` |
+| Cobrador que baja la tarifa o pasa la deuda de un puesto | El cobrador solo registra puestos y corrige su ubicación GPS y su dirección (decisión del 11/11/2026). `PUT /puestos-mapa/:id` le da 403 (`ForbiddenError`) si cambia la zona, el titular, el estado o el metraje; se compara con lo guardado, porque la cola del mapa reenvía el puesto completo. Un puesto nuevo con titular va en la zona del comerciante (`soloZonaDelTitular`). Liberar (`POST /puestos/:id/liberar`) y dar de baja (`DELETE /puestos-mapa/:id`) son solo del `super_admin`, y el mapa no le muestra esos botones. La marca `zona_por_regularizar` no se escribe por la API | `db.js` (`updatePuesto` con `puedeCambiarZona` y `soloUbicacion`, `insertPuesto` con `soloZonaDelTitular`), `routes/puestos.ts` (`sinMarcaDelPadron`), `tests/api-seguridad.test.js` |
 | Listados enormes | `GET /cobros` con tope `MAX_COBROS_LISTADO`; el cobrador ve solo los suyos | `db.js` (`getCobros`) |
+| Recibos ajenos | El cobrador solo baja o reenvía sus recibos: `GET /comprobantes/:id/pdf` y `/recibo` responden 404 (el mismo que si no existe) con un R- de otro cobrador. Antes los bajaba recorriendo R-000001, R-000002… (12/11/2026) | `routes/cobros.ts` (`reciboVisible`), `tests/recibo-pdf.test.js` |
+| Detalle técnico en pantalla | La pantalla de error del cliente (`ErrorBoundary`) muestra solo un mensaje fijo; el error va a la consola, nunca un token ni datos (12/11/2026). La API se mantiene arriba si PostgreSQL corta una conexión (`pool.on('error')`) | `apps/client/src/app/ErrorBoundary.jsx`, `apps/server/src/pg.js`, `tests/conexion-perdida.test.js` |
 | Archivos de entorno | `.env`, `apps/server/.env`, `.env.production` en `.gitignore`; plantilla `.env.production.example` sin valores reales | `.gitignore` |
 
 ## Señales de alarma en una revisión (se rechaza el cambio)

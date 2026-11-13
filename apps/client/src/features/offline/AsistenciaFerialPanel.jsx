@@ -55,7 +55,19 @@ export function AsistenciaFerialPanel({ isOnline, jornada }) {
               <div>
                 <strong>{ferial.nombresRazonSocial}</strong>
                 <span>{ferial.codigoPuesto || 'Puesto conservado'} · {ferial.zona || 'Sin zona'}{marca && !marca.enviado ? ' · sin subir' : ''}</span>
+                {marca?.rechazo && <span className="status danger">No se registró: {marca.rechazo}</span>}
                 {marca?.motivo && <span>Observación: {textoMotivo(marca.motivo)}{marca.observacion ? ` — ${marca.observacion}` : ''}</span>}
+                {/* Zona del día (12/11/2026): si hoy vende en otra zona, se le cobra con la tarifa de esa zona. */}
+                {asistencia.zonas.length > 1 && (
+                  <select className="zona-del-dia-select" aria-label={`Zona de hoy de ${ferial.nombresRazonSocial}`}
+                    value={String(marca?.zonaId ?? '')}
+                    onChange={(event) => asistencia.marcar(ferial.puestoFerialId, true, undefined, event.target.value ? Number(event.target.value) : null)}>
+                    <option value="">Zona de hoy: la de su puesto</option>
+                    {asistencia.zonas.filter((zona) => String(zona.id) !== String(ferial.zonaPuestoId)).map((zona) => (
+                      <option key={zona.id} value={zona.id}>Hoy en {zona.nombre}{zona.tipo_via ? ` (${zona.tipo_via === 'asfaltada' ? 'asfaltada' : 'sin asfaltar'})` : ''}</option>
+                    ))}
+                  </select>
+                )}
               </div>
               <div className="field-queue-actions">
                 <button type="button" className={marca?.asistio === true ? 'primary-button compact' : 'secondary-button compact'} aria-pressed={marca?.asistio === true} onClick={() => asistencia.marcar(ferial.puestoFerialId, true)}>Asistió</button>

@@ -20,10 +20,34 @@ test('lista a quienes cobran por día con puesto, ordenados por puesto', () => {
   assert.deepEqual(ferialesDelPadron(padron).map((item) => item.puestoFerialId), [11, 12, 13]);
 });
 
-test('las marcas valen solo el día en que se hicieron', () => {
-  const ayer = aplicarMarca(estadoDelDia(null, '2026-11-09'), 11, true);
-  assert.deepEqual(estadoDelDia(ayer, '2026-11-10').marcas, {});
-  assert.equal(estadoDelDia(ayer, '2026-11-09'), ayer);
+test('otro día empieza vacío, pero lo de ayer que no subió se sigue enviando con su fecha', () => {
+  let ayer = aplicarMarca(estadoDelDia(null, '2026-11-09'), 11, true);
+  ayer = aplicarMarca(ayer, 12, false, new Date(), { motivo: 'no_salio' });
+  ayer = marcarEnviadas(ayer, [{ puesto_id: 12, fecha: '2026-11-09', asistio: false, motivo: 'no_salio' }]);
+  const hoy = estadoDelDia(ayer, '2026-11-10');
+  assert.deepEqual(hoy.marcas, {});
+  // Antes se perdía: un día entero sin señal no generaba deuda.
+  assert.deepEqual(marcasPendientes(hoy), [{ puesto_id: 11, fecha: '2026-11-09', asistio: true }]);
+  assert.deepEqual(estadoDelDia(ayer, '2026-11-09').marcas, ayer.marcas);
+
+  // Pasan dos días sin señal: sigue pendiente, y una vez subida ya no se reenvía.
+  const pasado = estadoDelDia(aplicarMarca(hoy, 13, true), '2026-11-11');
+  assert.deepEqual(marcasPendientes(pasado).map((item) => [item.puesto_id, item.fecha]), [[11, '2026-11-09'], [13, '2026-11-10']]);
+  const subido = marcarEnviadas(pasado, marcasPendientes(pasado));
+  assert.deepEqual(marcasPendientes(subido), []);
+});
+
+test('una marca rechazada por el servidor no se reintenta y queda con su motivo', () => {
+  let estado = aplicarMarca(estadoDelDia(null, '2026-11-10'), 11, true);
+  estado = aplicarMarca(estado, 12, true);
+  estado = { ...estado, anteriores: [{ puesto_id: 14, fecha: '2026-11-01', asistio: true }] };
+  const rechazadas = [
+    { puesto_id: 12, fecha: '2026-11-10', error: 'Ana está dada de baja' },
+    { puesto_id: 14, fecha: '2026-11-01', error: 'tiene más de 3 días' }
+  ];
+  const despues = marcarEnviadas(estado, [{ puesto_id: 11, fecha: '2026-11-10', asistio: true }], rechazadas);
+  assert.deepEqual(marcasPendientes(despues), []);
+  assert.equal(despues.marcas['12'].rechazo, 'Ana está dada de baja');
 });
 
 test('las pendientes se suben una vez y un cambio posterior vuelve a quedar pendiente', () => {
