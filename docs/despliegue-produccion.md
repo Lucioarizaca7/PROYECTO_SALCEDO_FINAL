@@ -195,8 +195,86 @@ git tag sisrec-v1.0.0 && git push origin sisrec-v1.0.0
 | El navegador avisa de un certificado inválido | el DNS aún no apunta al servidor o los puertos 80/443 están cerrados | revisar el registro A y `ufw status`; luego `docker compose … restart web` |
 | El celular dice "El servidor no respondió" | el servidor está caído o lento | el cobrador sigue cobrando: el cobro queda en la cola sin señal y se sincroniza solo. Revisar el paso 8 |
 | Un cobro aparece "En revisión" | llegó sin señal con algo dudoso (hora, tickets, sin tarifa) | el `super_admin` lo resuelve en *Control → Revisión de cobros*: el dinero ya se recibió, nunca se descarta |
-| Un cobrador olvidó su clave | todavía no hay cambio de clave desde la web | crearle una cuenta nueva con otro correo (`crear-usuario`) y revocar las sesiones de la cuenta vieja en *Configuración → Dispositivos* |
+| Un cobrador olvidó su clave | todavía no hay cambio de clave desde la web | crearle una cuenta nueva con otro correo (`crear-usuario`) y desactivar la vieja (sección 11.4, paso 3) |
+| Falta el super administrador (se fue, olvidó su clave o falleció) | nadie puede crear usuarios desde la web | seguir el procedimiento de la sección 11 |
 | Se perdió un celular | la sesión del celular sigue abierta | en *Configuración → Dispositivos*, revocar su sesión: tendrá que volver a ingresar con la clave |
+
+## 11. Continuidad: cambio de gestión y contingencia
+
+La gestión municipal cambia cada 4 años y el personal rota. SISREC no puede depender de una persona: las cuentas son **de la municipalidad y de los cargos**, no de quien los ocupa.
+
+### 11.1 Reglas fijas **[tú, al instalar]**
+
+1. **Correos institucionales por cargo**, no personales: por ejemplo `sistemas@<dominio>` para el VPS, el dominio, GitHub y UptimeRobot, y `rentas@<dominio>` para avisos. Si la persona se va, el correo queda.
+2. **Dos super administradores siempre**, de cargos distintos (por ejemplo, Gerencia de Rentas y la jefatura del área de cobranza). Si uno falta, el otro sigue.
+3. **Un responsable técnico designado por resolución o memorando**: el área de informática o quien la municipalidad contrate como soporte.
+4. **Sobre de contingencia** bajo custodia de **Secretaría General**, con acta de entrega. Contiene:
+   - el acceso a la cuenta del VPS, del dominio y de GitHub (correo institucional y clave);
+   - la clave del usuario `deploy` del servidor y la clave SSH privada, impresa o en una memoria USB;
+   - una copia de `.env.production`;
+   - esta guía impresa.
+
+   El sobre va firmado y lacrado. **Nadie** conoce las claves de SISREC de los administradores: cada uno pone la suya.
+
+### 11.2 Quién hace qué
+
+| Papel | Quién | Qué hace |
+|---|---|---|
+| Autoriza | Gerente municipal (o el alcalde) | Firma el memorando que designa al nuevo administrador y autoriza abrir el sobre |
+| Custodia | Secretaría General | Guarda el sobre y lo entrega solo con el memorando firmado; levanta el acta |
+| Ejecuta | Responsable técnico designado | Abre el sobre ante Secretaría General, ejecuta los comandos y prepara un sobre nuevo |
+| Usa | El nuevo administrador | Escribe su propia clave al crear su cuenta; el técnico no la conoce |
+
+### 11.3 Cuándo se activa
+
+- **Cambio de gestión** (cada 4 años, dentro de la transferencia de gestión): siempre, aunque nadie haya olvidado nada.
+- **Un administrador se va, olvida su clave, se enferma o fallece:** cuando lo pida la Gerencia.
+- **Sospecha de que una clave se filtró:** de inmediato.
+
+### 11.4 Pasos del técnico
+
+Con el memorando firmado y ante Secretaría General, abrir el sobre y entrar al servidor. Luego:
+
+```bash
+cd /opt/sisrec
+C="docker compose --env-file .env.production -f docker-compose.prod.yml"
+
+# 1. Respaldo antes de tocar nada
+$C run --rm backup ahora
+
+# 2. Crear el nuevo super administrador (él mismo escribe su clave)
+$C exec api node dist/cli/crear-admin.js
+
+# 3. Ver las cuentas y desactivar las de quienes se fueron (no se borran: sus cobros quedan a su nombre)
+$C exec postgres psql -U sisrec sisrec -c "SELECT u.id, u.nombre, u.email, r.codigo AS rol, u.activo FROM usuarios u JOIN roles r ON r.id = u.rol_id ORDER BY r.codigo, u.nombre"
+$C exec postgres psql -U sisrec sisrec -c "UPDATE usuarios SET activo = false WHERE email = 'correo.de.quien.se.fue@ejemplo.pe'"
+```
+
+- Una cuenta desactivada ya no puede ingresar ni renovar su sesión; si tenía una abierta, se corta como máximo en 15 minutos (`JWT_EXPIRES_IN`).
+- El cambio hecho con `psql` no queda en la auditoría de SISREC: por eso se anota en el acta (quién, qué cuenta, fecha y hora).
+
+**4. Cambiar las claves del servidor y preparar un sobre nuevo:**
+
+- cambiar la clave de la cuenta del VPS, del dominio y de GitHub (y del correo institucional `sistemas@` si la conocía la gestión saliente);
+- cambiar la clave SSH: generar un par nuevo con `ssh-keygen -t ed25519`, poner la pública en `~deploy/.ssh/authorized_keys` y borrar la anterior; si se usa el despliegue automático, actualizar el secreto `SISREC_SSH_KEY` en GitHub;
+- guardar todo en un **sobre nuevo**, lacrado, y destruir el anterior ante Secretaría General.
+
+**5. Comprobar:** el nuevo administrador entra a SISREC, ve el padrón y la *Auditoría*, y `https://<dominio>/api/v1/health` responde `ok`.
+
+### 11.5 Acta (modelo)
+
+> En Salcedo, a las ___ horas del ___ de ______ de 20__, en la Secretaría General, con el memorando N° ______ de la Gerencia Municipal, se abrió el sobre de contingencia de SISREC en presencia de: ____________________ (Secretaría General), ____________________ (responsable técnico) y ____________________ (nuevo administrador).
+>
+> Se realizó: [ ] respaldo; [ ] alta del administrador ____________________ (correo ______________); [ ] desactivación de las cuentas: ____________________; [ ] cambio de claves del VPS, dominio, GitHub y SSH; [ ] prueba de ingreso y de `/api/v1/health`.
+>
+> Se entregó un sobre nuevo lacrado y se destruyó el anterior. Firman: ______________ · ______________ · ______________
+
+### 11.6 Revisión anual
+
+Una vez al año (y al empezar cada gestión), la Gerencia y el responsable técnico revisan:
+- que haya dos super administradores activos y que sigan en sus cargos;
+- que las cuentas de quienes se fueron estén desactivadas;
+- que el sobre exista y sus claves funcionen, sin abrirlo: el técnico prueba el acceso con las claves vigentes y, si cambiaron, se prepara un sobre nuevo con acta.
 
 ## Lista de lo que te toca hacer a ti
 
@@ -214,3 +292,6 @@ git tag sisrec-v1.0.0 && git push origin sisrec-v1.0.0
 - [ ] Cargar los secretos en GitHub y crear el entorno `produccion`.
 - [ ] Crear el monitor en UptimeRobot.
 - [ ] Hacer la primera restauración de prueba y anotar el resultado.
+- [ ] Crear los correos institucionales por cargo y poner a su nombre el VPS, el dominio, GitHub y UptimeRobot.
+- [ ] Designar por memorando al responsable técnico y a los dos super administradores.
+- [ ] Preparar el sobre de contingencia y entregarlo con acta a Secretaría General (sección 11).
