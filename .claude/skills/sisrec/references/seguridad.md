@@ -51,3 +51,7 @@ Antes de tocar uno de estos controles, comprobar que sigue igual en el código (
 ## Pruebas que deben seguir pasando
 
 `tests/api-seguridad.test.js`, `tests/security.test.js`, `tests/auth.test.js`, `tests/portal.test.js`, `tests/produccion.test.js`. Un control nuevo trae su prueba en uno de estos archivos.
+
+## Continuidad entre gestiones (13/11/2026)
+
+Las cuentas externas (VPS, dominio, GitHub) van a correos institucionales por cargo; siempre dos `super_admin`; las claves del servidor en un sobre lacrado bajo custodia de Secretaría General, que se abre solo con memorando de la Gerencia y acta. Procedimiento completo: `docs/despliegue-produccion.md`, sección 11.
