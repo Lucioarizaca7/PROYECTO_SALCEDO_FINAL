@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { apiBase } from '../services/session';
+import { apiBase, leerJson } from '../services/session';
 import { textoMetodo } from '../lib/formato';
 import { QrScanner } from '../features/payments/QrScanner';
 import { llaveDelFragmento, llaveDesdeQr } from '../features/portal/llaveQr';
@@ -28,7 +28,7 @@ export function PortalPage() {
     setConsultando(true);
     try {
       const response = await fetch(`${apiBase}/portal/login`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(credencial) });
-      const body = await response.json();
+      const body = await leerJson(response);
       if (!response.ok) throw new Error(body.message || 'No se pudo consultar el portal');
       setData(body.data);
     } catch (portalError) {

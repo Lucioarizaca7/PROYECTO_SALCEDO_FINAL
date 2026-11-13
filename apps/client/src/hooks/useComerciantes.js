@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useSisrec } from '../app/SisrecContext';
-import { apiBase, authFetch } from '../services/session';
+import { apiBase, authFetch, leerJson } from '../services/session';
 
 const EMPTY_MERCHANT = { dni_ruc: '', nombre: '', rubro_id: '1', zona_id: '1', categoria: 'permanente', tipo_comerciante: 'permanente', estado: 'activo' };
 
@@ -25,7 +25,7 @@ export function useComerciantes() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ ...form, usuario_creador: user?.id || 1 })
       });
-      const data = await response.json();
+      const data = await leerJson(response);
       if (!response.ok) throw new Error(data.message || 'No se pudo registrar el comerciante');
 
       setForm(EMPTY_MERCHANT);
@@ -64,7 +64,7 @@ export function useComerciantes() {
   const deactivate = async (id) => {
     try {
       const response = await authFetch(`${apiBase}/comerciantes/${id}`, { method: 'DELETE' });
-      const data = await response.json();
+      const data = await leerJson(response);
       if (!response.ok) throw new Error(data.message || 'No se pudo dar de baja');
       setMessage(data.message);
       await refresh();
@@ -80,7 +80,7 @@ export function useComerciantes() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ ids })
     });
-    const data = await response.json();
+    const data = await leerJson(response);
     if (!response.ok) throw new Error(data.message || 'No se pudo emitir el carnet');
     await refresh();
     return data.data;
@@ -118,7 +118,7 @@ export function useComerciantes() {
     setPadronLoading(true);
     try {
       const response = await sendPadron({ file, dryRun: true });
-      const data = await response.json();
+      const data = await leerJson(response);
       if (!response.ok) throw new Error(data.message || 'No se pudo leer el padrón');
       setPadronPreview(data.data);
       setPadronMessage(data.message || 'Previsualización lista.');
@@ -139,7 +139,7 @@ export function useComerciantes() {
         : await sendPadron({ file: padronFile, dryRun: false });
       // 410: la previsualización venció en el servidor; se reenvía el archivo.
       if (response.status === 410) response = await sendPadron({ file: padronFile, dryRun: false });
-      const data = await response.json();
+      const data = await leerJson(response);
       if (!response.ok) throw new Error(data.message || 'No se pudo importar el padrón');
       setPadronPreview(data.data);
       const { result } = data.data;

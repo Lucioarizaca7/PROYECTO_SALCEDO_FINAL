@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useSisrec } from '../app/SisrecContext';
 import { hoyEnLima } from '../services/jornadaOffline';
-import { apiBase, authFetch } from '../services/session';
+import { apiBase, authFetch, leerJson } from '../services/session';
 
 // Una tarifa nueva empieza hoy por omisión: con una fecha pasada (antes venía 2026-01-01) cambiaba la deuda de
 // los meses anteriores.
@@ -40,7 +40,7 @@ export function useTarifas() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ valor: inicioCobro })
       });
-      const data = await response.json();
+      const data = await leerJson(response);
       if (!response.ok) throw new Error(data.message || 'No se pudo guardar el inicio de cobro');
       setMessage(data.message);
     } catch (error) {
@@ -78,7 +78,7 @@ export function useTarifas() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(conAlcance(form))
       });
-      const data = await response.json();
+      const data = await leerJson(response);
       if (!response.ok) throw new Error(data.message || 'No se pudo guardar la tarifa');
       setMessage(data.message);
       setShowForm(false);

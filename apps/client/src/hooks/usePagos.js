@@ -11,7 +11,7 @@ import { crearHashCobro, servidorNoDisponible } from '../services/offlineQueue';
 import { storeFor } from '../services/offlineStore';
 import { montoDeRequeridos, proximosTickets, requeridosEnZona, requeridosPorDefecto, serieDeTipoVia, seriesConMarcaDeHoy, textoTicket } from '../services/ticketsOffline';
 import { useTicketsCobrador } from '../features/offline/useTicketsCobrador';
-import { apiBase, authFetch } from '../services/session';
+import { apiBase, authFetch, leerJson, MENSAJE_SIN_SERVIDOR } from '../services/session';
 
 const NO_SUGGESTION = { suggestedAmount: 0, preferredMethod: 'efectivo', lastLabel: 'Sin historial previo', lastPayment: null };
 
@@ -115,7 +115,7 @@ export function usePagos() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
       });
-      const data = await response.json();
+      const data = await leerJson(response);
       if (!response.ok) throw new Error(data.message || 'No se pudo guardar la preferencia');
       const preferences = Array.isArray(data.data)
         ? Object.fromEntries(data.data.map((item) => [item.clave, item.valor]))
@@ -139,9 +139,9 @@ export function usePagos() {
   // Respuesta del servidor para mostrar un comerciante: un 5xx o una página que no es JSON (el proxy con la API caída)
   // es como no tener señal (TypeError), así la búsqueda pasa al padrón del celular en vez de decir "Unexpected token".
   const leerRespuesta = async (response) => {
-    if (servidorNoDisponible(response)) throw new TypeError('El servidor no respondió. Intenta de nuevo.');
+    if (servidorNoDisponible(response)) throw new TypeError(MENSAJE_SIN_SERVIDOR);
     const body = await response.json().catch(() => null);
-    if (body === null) throw new TypeError('El servidor no respondió. Intenta de nuevo.');
+    if (body === null) throw new TypeError(MENSAJE_SIN_SERVIDOR);
     return body;
   };
 
@@ -290,20 +290,28 @@ export function usePagos() {
     setMerchant(cobrarPuesto);
     setBalance(null);
     setForm((current) => ({ ...current, search: cobrarPuesto.nombre || '', comercianteId: String(cobrarPuesto.id), monto: String(cobrarPuesto.saldo || ''), codigo_operacion: '', observaciones: '' }));
+    // Sin señal, o con el servidor sin responder (12/11/2026: antes un 5xx dejaba solo un mensaje de error), el saldo
+    // sale del padrón del celular; antes quedaba vacío y no se podía confirmar el cobro.
+    const desdeElPadron = (motivo) => jornada.porId(cobrarPuesto.id).then((registro) => {
+      if (turno !== atencionActual.current) return;
+      if (!registro) return setMessage(`${motivo} este comerciante no está en el padrón guardado en el celular. Descárgalo con señal.`);
+      mostrarDelPadron(registro);
+      if (motivo !== 'Sin señal:') setMessage(`${motivo} saldo según el padrón guardado en el celular.`);
+      return undefined;
+    });
     if (!navigator.onLine) {
-      // Sin señal el saldo sale del padrón del celular; antes quedaba vacío y no se podía confirmar el cobro.
-      jornada.porId(cobrarPuesto.id).then((registro) => {
-        if (turno !== atencionActual.current) return;
-        if (registro) mostrarDelPadron(registro);
-        else setMessage('Sin señal: este comerciante no está en el padrón guardado en el celular. Descárgalo con señal.');
-      });
+      desdeElPadron('Sin señal:');
       return;
     }
     (async () => {
       const response = await authFetch(`${apiBase}/comerciantes/${cobrarPuesto.id}`);
       const data = await leerRespuesta(response);
       await loadMerchant(response.ok ? { ...cobrarPuesto, ...data.data } : cobrarPuesto, null, turno);
-    })().catch((error) => setMessage(error.message || 'No se pudo cargar el saldo del comerciante.'));
+    })().catch((error) => {
+      if (turno !== atencionActual.current) return undefined;
+      if (error instanceof TypeError) return desdeElPadron('Sin conexión con el servidor:');
+      return setMessage(error.message || 'No se pudo cargar el saldo del comerciante.');
+    });
   }, [cobrarPuesto]);
 
   const scanQr = async (rawValue) => {
@@ -467,7 +475,7 @@ export function usePagos() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ motivo })
       });
-      const data = await response.json();
+      const data = await leerJson(response);
       if (!response.ok) throw new Error(data.message || 'No se pudo anular el cobro');
       setMessage(data.message);
       await refresh();
