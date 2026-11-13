@@ -25,6 +25,12 @@ test('el menú de cada rol solo muestra lo que su rol puede usar', () => {
   // El auditor consulta las tarifas (solo lectura), pero no las de configuración del personal.
   assert.ok(keys('auditor').includes('tarifas'));
   assert.ok(!keys('auditor').includes('dispositivos'));
+  // Solo el super_admin crea usuarios, los desactiva o les pone clave (decisión del 13/11/2026).
+  assert.ok(keys('super_admin').includes('usuarios'));
+  assert.ok(!keys('auditor').includes('usuarios'));
+  assert.ok(!keys('cobrador').includes('usuarios'));
+  // Cada persona del personal cambia su propia clave (13/11/2026).
+  for (const rol of ['super_admin', 'cobrador', 'auditor']) assert.ok(keys(rol).includes('mi-clave'), rol);
   assert.deepEqual(keys('super_admin'), navItems.map((item) => item.key));
   assert.equal(canSee(navItems.find((item) => item.key === 'dispositivos'), 'cobrador'), false);
   // El servidor responde 403 al cobrador en /auditoria: el menú no debe ofrecerla.
