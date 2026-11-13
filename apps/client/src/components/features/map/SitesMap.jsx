@@ -103,7 +103,7 @@ const emptyTitular = { text: '', merchant: null };
 // Sin onAssign, onRelease u onDelete (el cobrador, decisión del 11/11/2026) no se ofrecen esas acciones: el
 // cobrador solo registra puestos y corrige su ubicación. soloZonaDelTitular: el puesto nuevo de un comerciante
 // va en la zona de ese comerciante (el servidor lo vuelve a comprobar).
-export function SitesMap({ sites = [], zonas = [], searchMerchants, onCollect, onCreate, onUpdate, onDelete, onAssign, onRelease, soloZonaDelTitular = false }) {
+export function SitesMap({ sites = [], zonas = [], calles = [], searchMerchants, onCollect, onCreate, onUpdate, onDelete, onAssign, onRelease, soloZonaDelTitular = false }) {
   const [category, setCategory] = useState('todos');
   const [paymentStatus, setPaymentStatus] = useState('todos');
   const [selectedSite, setSelectedSite] = useState(null);
@@ -130,6 +130,8 @@ export function SitesMap({ sites = [], zonas = [], searchMerchants, onCollect, o
   const [draftError, setDraftError] = useState('');
   const [savingDraft, setSavingDraft] = useState(false);
   const [draftTitular, setDraftTitular] = useState(emptyTitular);
+  // Zona elegida para el puesto nuevo: filtra las calles que se ofrecen (la calle es de su zona, 13/11/2026).
+  const [draftZona, setDraftZona] = useState('');
   const [assignTitular, setAssignTitular] = useState(emptyTitular);
   const [detailError, setDetailError] = useState('');
   const [detailBusy, setDetailBusy] = useState(false);
@@ -211,6 +213,8 @@ export function SitesMap({ sites = [], zonas = [], searchMerchants, onCollect, o
   };
 
   const zonaDelTitular = soloZonaDelTitular && draftTitular.merchant?.zona_id ? Number(draftTitular.merchant.zona_id) : null;
+  const zonaElegida = zonaDelTitular ?? Number(draftZona || zonas[0]?.id || 0);
+  const callesDeLaZona = calles.filter((calle) => Number(calle.zona_id) === zonaElegida);
 
   const submitDraft = async (event) => {
     event.preventDefault();
@@ -225,9 +229,11 @@ export function SitesMap({ sites = [], zonas = [], searchMerchants, onCollect, o
       await onCreate?.({
         codigoPuesto: form.get('codigoPuesto'),
         zona_id: zonaDelTitular ?? form.get('zona_id'),
+        calle_id: form.get('calle_id') || null,
         comerciante_id: draftTitular.merchant?.id ?? null,
         direccion: form.get('direccion'),
-        metros_cuadrados: form.get('metros_cuadrados'),
+        // Opcional: el cobro es por día y no usa metros.
+        metros_cuadrados: form.get('metros_cuadrados') || null,
         latitud: draftLocation.lat,
         longitud: draftLocation.lng
       });
@@ -354,13 +360,17 @@ export function SitesMap({ sites = [], zonas = [], searchMerchants, onCollect, o
                 {zonas.map((zona) => <option key={zona.id} value={zona.id}>{zona.nombre}</option>)}
               </select>
             ) : (
-              <select name="zona_id" required defaultValue={zonas[0]?.id ?? ''} aria-label="Zona">
+              <select name="zona_id" required value={zonaElegida || ''} onChange={(event) => setDraftZona(event.target.value)} aria-label="Zona">
                 {!zonas.length && <option value="">Sin zonas registradas</option>}
                 {zonas.map((zona) => <option key={zona.id} value={zona.id}>{zona.nombre}</option>)}
               </select>
             )}
+            <select key={zonaElegida} name="calle_id" defaultValue="" aria-label="Calle">
+              <option value="">{callesDeLaZona.length ? 'Calle (opcional)' : 'La zona no tiene calles registradas'}</option>
+              {callesDeLaZona.map((calle) => <option key={calle.id} value={calle.id}>{calle.nombre}</option>)}
+            </select>
             <TitularPicker id="titular-nuevo-puesto" value={draftTitular} onChange={setDraftTitular} searchMerchants={searchMerchants} placeholder="Titular: nombre, DNI o código (vacío = libre)" />
-            <input name="metros_cuadrados" required defaultValue="1" type="number" min="0.1" step="0.1" placeholder="m²" aria-label="Metros cuadrados" />
+            <input name="metros_cuadrados" type="number" min="0.1" step="0.1" placeholder="m² (opcional)" aria-label="Metros cuadrados (opcional)" />
             <button type="submit" className="primary-button" disabled={savingDraft}>{savingDraft ? 'Guardando…' : 'Guardar puesto'}</button>
           </div>
           <p className="map-form-hint">
@@ -375,7 +385,7 @@ export function SitesMap({ sites = [], zonas = [], searchMerchants, onCollect, o
         <section className="map-edit-form panel" ref={detailRef} aria-label={`Puesto ${currentSite.codigo}`}>
           <div className="panel-heading">
             <div>
-              <div className="panel-title">Puesto {currentSite.codigo} · {currentSite.zona}</div>
+              <div className="panel-title">Puesto {currentSite.codigo} · {currentSite.zona}{currentSite.calle ? ` · ${currentSite.calle}` : ''}</div>
               <div className="panel-subtitle">
                 {currentSite.comerciante ? `${currentSite.comerciante} · ${currentSite.categoriaMapa}` : 'Libre, sin titular'} · {currentSite.direccion || 'Sin dirección'}
               </div>
@@ -384,7 +394,7 @@ export function SitesMap({ sites = [], zonas = [], searchMerchants, onCollect, o
           </div>
           <p className={currentSite.estadoPago === 'deuda' ? 'popup-debt' : 'popup-ok'}>
             {paymentStatusText(currentSite)}
-            {currentSite.monto_total > 0 && ` · Cuota: S/ ${Number(currentSite.monto_total).toFixed(2)} · Pagado: S/ ${Number(currentSite.monto_pagado).toFixed(2)}`}
+            {currentSite.monto_total > 0 && ` · Días cobrados: S/ ${Number(currentSite.monto_total).toFixed(2)} · Pagado: S/ ${Number(currentSite.monto_pagado).toFixed(2)}`}
           </p>
           <div className="map-edit-grid">
             {currentSite.estadoPago === 'deuda' && (

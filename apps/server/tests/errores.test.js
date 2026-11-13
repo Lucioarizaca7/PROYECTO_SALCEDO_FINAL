@@ -63,7 +63,7 @@ test('borrar una zona en uso responde 409 con un mensaje claro', async () => {
 test('datos incompletos responden 400 en español', async () => {
   const response = await api('/api/v1/puestos-mapa', { method: 'POST', body: {} });
   assert.equal(response.status, 400);
-  assert.match((await response.json()).message, /obligatorio|válid/i);
+  assert.match((await response.json()).message, /obligatori|válid/i);
 });
 
 test('un error de PostgreSQL no revela su detalle técnico', async () => {

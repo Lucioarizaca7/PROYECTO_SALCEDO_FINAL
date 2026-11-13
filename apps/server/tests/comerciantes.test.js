@@ -11,6 +11,7 @@ import {
   insertTarifa,
   updateTarifa
 } from '../src/db.js';
+import { marcarDias, zonaConPrecio } from './_deuda.js';
 
 test('insertComerciante crea un registro válido de comerciante', async () => {
   const db = await initializeDatabase();
@@ -123,12 +124,12 @@ test('calcularLiquidacion respeta la política de no devengo para ferial sin asi
   assert.equal(result.no_devengo, true);
 });
 
-test('al eventual se le cobra un día de la tarifa de su rubro, solo una vez por día', async () => {
+test('al eventual se le cobra un día del precio de su zona, solo una vez por día', async () => {
   const db = await initializeDatabase();
-  // Tarifa propia de la zona (tiene prioridad sobre la general): S/ 6 por día cobrado.
-  await insertTarifa(db, { rubro_id: 3, zona_id: 1, tipo_tarifa: 'fija', monto_fijo: 6, monto_variable: 0, unidad_medida: 'semanal', vigencia_inicio: '2026-01-01', version: 1 }, { permitirInicioPasado: true });
+  // Zona de S/ 6 por día (lo fija el super_admin).
+  const zona = await zonaConPrecio(db, 6);
   const comerciante = await insertComerciante(db, {
-    dni_ruc: '75163744', nombre: 'Ambulante Eventual', rubro_id: 3, zona_id: 1,
+    dni_ruc: '75163744', nombre: 'Ambulante Eventual', rubro_id: 3, zona_id: zona.id,
     categoria: 'eventual', tipo_comerciante: 'eventual', estado: 'activo', usuario_creador: 1
   });
 
@@ -169,13 +170,15 @@ test('registrarCobro rechaza cobros duplicados por código de operación', async
     usuario_creador: 1
   });
 
-  await insertPuesto(db, {
+  const puesto = await insertPuesto(db, {
     comerciante_id: comerciante.id,
     zona_id: 1,
     direccion: 'Puesto B-15',
     metros_cuadrados: 5,
     estado: 'ocupado'
   });
+  // 7 días cobrados en septiembre a S/ 3 (Mercado Central): debe S/ 21.
+  await marcarDias(db, puesto.id, '2026-09', 7);
 
   await registrarCobro(db, {
     comerciante_id: comerciante.id,
@@ -205,13 +208,10 @@ test('registrarCobro rechaza cobros duplicados por código de operación', async
 test('updateTarifa rechaza actualizaciones con versión obsoleta', async () => {
   const db = await initializeDatabase();
 
+  const zona = await zonaConPrecio(db, null);
   const tarifa = await insertTarifa(db, {
-    rubro_id: 1,
-    zona_id: 1,
-    tipo_tarifa: 'fija',
+    zona_id: zona.id,
     monto_fijo: 20,
-    monto_variable: 0,
-    unidad_medida: 'diaria',
     vigencia_inicio: '2026-01-01',
     vigencia_fin: '2026-12-31',
     version: 1

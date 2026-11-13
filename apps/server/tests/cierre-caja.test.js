@@ -7,6 +7,7 @@ import assert from 'node:assert/strict';
 import { startServer } from '../src/index.ts';
 import { closeDatabase, calcularLiquidacion, getComerciantes, registrarCobro, todayInLima } from '../src/db.js';
 import { pool } from '../src/pg.js';
+import { comercianteConDeuda } from './_deuda.js';
 
 let server;
 let baseUrl;
@@ -37,12 +38,9 @@ async function login(email, password) {
   return { token: body.token, id: Number(body.user?.id) };
 }
 
-async function merchantWithBalance(periodo, minimo) {
-  for (const merchant of await getComerciantes(pool, { limit: 100 })) {
-    const liquidation = await calcularLiquidacion(pool, merchant.id, periodo).catch(() => null);
-    if (liquidation && !liquidation.no_devengo && !liquidation.cobro_diario && liquidation.saldo >= minimo) return merchant;
-  }
-  throw new Error(`La semilla no tiene un comerciante con saldo en ${periodo}`);
+// Comerciante con deuda armada para la prueba (cobro por día cobrado, 13/11/2026): S/ 90 en el periodo.
+async function merchantWithBalance(periodo) {
+  return (await comercianteConDeuda(pool, { periodo })).merchant;
 }
 
 test('el cobrador cierra su caja: lo esperado lo calcula el servidor y se ve la diferencia', async () => {

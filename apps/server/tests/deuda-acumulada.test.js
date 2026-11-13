@@ -1,6 +1,7 @@
 /**
- * Deuda acumulada de permanentes (migrations/0011_deuda_acumulada.sql): meses impagos desde el alta,
- * nunca antes de inicio_cobro, y pagos aplicados a un mes anterior.
+ * Deuda acumulada (migrations/0011_deuda_acumulada.sql): meses con días cobrados impagos desde el alta, nunca
+ * antes de inicio_cobro, y pagos aplicados a un mes anterior. Desde el 13/11/2026 cada mes debe sus días cobrados
+ * × el precio de la zona (aquí un día de S/ 30 por mes), no una cuota mensual.
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -9,6 +10,7 @@ import {
   initializeDatabase, insertComerciante, insertPuesto, insertTarifa, calcularDeudaAcumulada, calcularLiquidacion,
   registrarCobro, setInicioCobro, getInicioCobro, currentPeriod
 } from '../src/db.js';
+import { marcarDias, zonaConPrecio } from './_deuda.js';
 
 let documento = 20666000000;
 
@@ -18,15 +20,15 @@ const restarMeses = (periodo, n) => {
   return `${Math.floor(total / 12)}-${String((total % 12) + 1).padStart(2, '0')}`;
 };
 
-async function permanenteDesde(db, altaPeriodo, montoMensual = 30) {
-  const nombre = `rubro deuda ${process.pid} ${Date.now()} ${Math.random().toString(16).slice(2, 6)}`;
-  const rubroId = (await db.query('INSERT INTO rubros (nombre) VALUES ($1) RETURNING id', [nombre])).rows[0].id;
-  await insertTarifa(db, { rubro_id: rubroId, tipo_tarifa: 'fija', monto_fijo: montoMensual, unidad_medida: 'mensual', vigencia_inicio: '2020-01-01' }, { permitirInicioPasado: true });
+// Un día cobrado en cada uno de los últimos 13 meses (también antes del alta: esos no cuentan).
+async function permanenteDesde(db, altaPeriodo, precioDia = 30) {
+  const zona = await zonaConPrecio(db, precioDia);
   const comerciante = await insertComerciante(db, {
-    dni_ruc: String(documento += 1), nombre: `Permanente Deuda ${documento}`, rubro_id: rubroId, zona_id: 1,
+    dni_ruc: String(documento += 1), nombre: `Permanente Deuda ${documento}`, rubro_id: 1, zona_id: zona.id,
     tipo_comerciante: 'permanente', estado: 'activo', usuario_creador: 1
   });
-  await insertPuesto(db, { zona_id: 1, metros_cuadrados: 1, direccion: `Deuda ${documento}`, comerciante_id: comerciante.id });
+  const puesto = await insertPuesto(db, { zona_id: zona.id, metros_cuadrados: 1, direccion: `Deuda ${documento}`, comerciante_id: comerciante.id });
+  for (let n = 12; n >= 0; n -= 1) await marcarDias(db, puesto.id, restarMeses(currentPeriod(), n), 1);
   await db.query(`UPDATE comerciantes SET creado_en = ($2 || '-10 12:00')::timestamp AT TIME ZONE 'America/Lima' WHERE id = $1`, [comerciante.id, altaPeriodo]);
   return comerciante;
 }

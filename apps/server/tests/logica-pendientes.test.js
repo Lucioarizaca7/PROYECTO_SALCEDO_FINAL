@@ -9,18 +9,15 @@ import assert from 'node:assert/strict';
 
 import { closeDatabase, getAuditTrail, getPuestos, initializeDatabase, insertComerciante, insertPuesto, recordAudit, registrarCobro, updateComerciante } from '../src/db.js';
 import { pool } from '../src/pg.js';
+import { comercianteConDeuda } from './_deuda.js';
 
 let correlativo = 0;
 const idDe = async (tabla, nombre) => (await pool.query(`SELECT id FROM ${tabla} WHERE nombre = $1`, [nombre])).rows[0].id;
 
-async function nuevoComerciante(rubro = 'otros') {
+// Debe S/ 90 este mes: 3 días cobrados × S/ 30 (antes, la cuota mensual de "otros").
+async function nuevoComerciante() {
   correlativo += 1;
-  return insertComerciante(pool, {
-    dni_ruc: `4800${String(correlativo).padStart(4, '0')}`,
-    nombre: `Prueba pendientes ${correlativo}`,
-    rubro_id: await idDe('rubros', rubro),
-    zona_id: await idDe('zonas', 'Mercado Central')
-  });
+  return (await comercianteConDeuda(pool, { nombre: `Prueba pendientes ${correlativo}` })).merchant;
 }
 
 const auditar = (datos) => recordAudit(pool, { usuarioId: 1, usuarioRol: 'super_admin', metodoHttp: 'PUT', ipOrigen: '127.0.0.1', ...datos });

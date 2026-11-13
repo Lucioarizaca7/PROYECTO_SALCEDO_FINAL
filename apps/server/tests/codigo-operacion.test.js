@@ -12,6 +12,7 @@ import {
   registrarCobro, syncOfflineBatch
 } from '../src/db.js';
 import { pool } from '../src/pg.js';
+import { insertZonaConPrecio } from './_deuda.js';
 
 before(async () => { await initializeDatabase(); });
 after(async () => { await closeDatabase(); });
@@ -22,7 +23,7 @@ let documento = 20777000000;
 
 // Permanente en zona asfaltada: el cobro marca el día y deja S/ 3 por pagar (tarifa general de la 0013).
 async function comerciante() {
-  const zona = await insertZona(pool, { nombre: `Zona operación ${unico()}`, tipo_via: 'asfaltada' });
+  const zona = await insertZonaConPrecio(pool, { nombre: `Zona operación ${unico()}`, tipo_via: 'asfaltada' });
   const rubro = (await pool.query("SELECT id FROM rubros WHERE nombre = 'ropa'")).rows[0].id;
   const merchant = await insertComerciante(pool, {
     dni_ruc: String(documento += 1), nombre: `Operación ${documento}`, rubro_id: rubro, zona_id: zona.id,

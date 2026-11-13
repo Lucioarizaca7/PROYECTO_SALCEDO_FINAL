@@ -1,6 +1,7 @@
 /**
  * Tickets preimpresos en el celular del cobrador: los números disponibles de sus lotes, por serie
- * (S3 = S/ 3 vía asfaltada, S2 = S/ 2 sin asfaltar). Un ticket por puesto y día cobrado; el celular
+ * (S3 = S/ 3, S2 = S/ 2: la serie de un día es la de valor igual al precio de su zona). Un ticket por puesto y
+ * día cobrado; el celular
  * indica qué números entregar y avanza la numeración sin señal. Lógica pura; el almacenamiento lo pone
  * el hook.
  *
@@ -98,10 +99,13 @@ export function seriesConMarcaDeHoy(seriesCobro = [], marca = null) {
   return seriesCobro.map((item) => ({ ...item, puestos_hoy: 0 }));
 }
 
-/** La serie del cobrador para un tipo de vía ({ serie, valor }), o null si no tiene tickets de ese tipo. */
-export function serieDeTipoVia(estado, tipoVia) {
-  if (!tipoVia) return null;
-  const encontrada = Object.entries(estadoGuardado(estado).series).find(([, datos]) => datos.tipo_via === tipoVia);
+/**
+ * La serie del cobrador cuyo valor es el precio de un día ({ serie, valor }), o null si no tiene tickets de ese
+ * valor (13/11/2026: las series se buscan por su valor, no por el tipo de vía).
+ */
+export function serieDeValor(estado, precio) {
+  if (precio === null || precio === undefined) return null;
+  const encontrada = Object.entries(estadoGuardado(estado).series).find(([, datos]) => Number(datos.valor) === Number(precio));
   return encontrada ? { serie: encontrada[0], valor: Number(encontrada[1].valor) } : null;
 }
 

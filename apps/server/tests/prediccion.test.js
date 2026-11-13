@@ -6,7 +6,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { pronosticar, mape } from '../src/prediccion.js';
-import { initializeDatabase, insertComerciante, insertPuesto, insertTarifa, registrarCobro, generateForecastProjection } from '../src/db.js';
+import { initializeDatabase, insertComerciante, insertPuesto, registrarCobro, generateForecastProjection } from '../src/db.js';
+import { marcarDias, zonaConPrecio } from './_deuda.js';
 
 const SERIE_CRECIENTE = [1200, 1260, 1310, 1290, 1380, 1420, 1460, 1500];
 
@@ -31,12 +32,14 @@ test('la proyección usa los cobros reales por mes y, sin el microservicio, el r
   const db = await initializeDatabase();
   const nombre = `rubro proyección ${process.pid} ${Date.now()}`;
   const rubroId = (await db.query('INSERT INTO rubros (nombre) VALUES ($1) RETURNING id', [nombre])).rows[0].id;
-  await insertTarifa(db, { rubro_id: rubroId, tipo_tarifa: 'fija', monto_fijo: 2000, unidad_medida: 'mensual', vigencia_inicio: '2020-01-01' }, { permitirInicioPasado: true });
+  // Un día cobrado de S/ 2000 en cada mes de la serie: cada cobro del mes cabe en su saldo.
+  const zona = await zonaConPrecio(db, 2000);
   const comerciante = await insertComerciante(db, {
-    dni_ruc: '20444000001', nombre: 'Comerciante Proyección', rubro_id: rubroId, zona_id: 1,
+    dni_ruc: '20444000001', nombre: 'Comerciante Proyección', rubro_id: rubroId, zona_id: zona.id,
     tipo_comerciante: 'permanente', estado: 'activo', usuario_creador: 1
   });
-  await insertPuesto(db, { zona_id: 1, metros_cuadrados: 1, direccion: 'Proyección P-1', comerciante_id: comerciante.id });
+  const puesto = await insertPuesto(db, { zona_id: zona.id, metros_cuadrados: 1, direccion: 'Proyección P-1', comerciante_id: comerciante.id });
+  for (let mes = 1; mes <= SERIE_CRECIENTE.length; mes += 1) await marcarDias(db, puesto.id, `2027-${String(mes).padStart(2, '0')}`, 1);
 
   // Ocho meses de 2027 (ene–ago) con la serie creciente; se proyecta desde septiembre.
   for (const [i, monto] of SERIE_CRECIENTE.entries()) {

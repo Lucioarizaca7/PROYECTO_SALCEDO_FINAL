@@ -9,6 +9,7 @@ import {
   importPadronPreview, previewPadronSheets, readPadronWorkbook, guardarVistaPrevia, tomarVistaPrevia, descartarVistaPrevia
 } from '../src/padronImport.js';
 import { buildPadronTemplate } from '../src/padronPlantilla.js';
+import { insertZonaConPrecio } from './_deuda.js';
 
 const workbook = [{
   name: 'BLOQUE A',
@@ -79,7 +80,7 @@ test('marca documentos y códigos de puesto duplicados dentro del mismo libro', 
 
 // Zona con tipo de vía (cobro por día, metraje opcional) o sin él; una por prueba para no chocar.
 let correlativoZona = 0;
-const zonaNueva = (db, tipo_via) => insertZona(db, { nombre: `Zona padrón ${process.pid}-${correlativoZona += 1}-${Date.now()}`, tipo_via });
+const zonaNueva = (db, tipo_via) => insertZonaConPrecio(db, { nombre: `Zona padrón ${process.pid}-${correlativoZona += 1}-${Date.now()}`, tipo_via });
 const ENCABEZADOS = ['DNI/RUC', 'Titular', 'Código Puesto', 'Sector', 'Zona', 'Tipo Comerciante', 'Rubro', 'Metraje m2', 'Estado'];
 const libro = (filas, name = 'PADRON') => [{ name, rows: [ENCABEZADOS, ...filas] }];
 const importar = async (db, filas) => {
@@ -201,7 +202,7 @@ test('un comerciante dado de baja que reaparece en el padrón se reactiva', asyn
   assert.equal((await puestosDe(db, comerciante.id))[0].estado, 'ocupado');
 });
 
-test('el metraje es opcional en una zona con tipo de vía y obligatorio sin ella', async () => {
+test('el metraje es opcional en cualquier zona: el cobro es por día y no usa metros', async () => {
   const db = await initializeDatabase();
   const conVia = await zonaNueva(db, 'sin_asfaltar');
   const sinVia = await zonaNueva(db);
@@ -209,9 +210,8 @@ test('el metraje es opcional en una zona con tipo de vía y obligatorio sin ella
     ['51234567', 'Sin Metros Con Vía', 'MET-01', 'BLOQUE M', conVia.nombre, 'ferial', 'zapatillas', null, 'Presente'],
     ['52234567', 'Sin Metros Sin Vía', 'MET-02', 'BLOQUE M', sinVia.nombre, 'ferial', 'zapatillas', null, 'Presente']
   ]), { filename: 'padron.xlsx', db });
-  assert.equal(preview.validRows, 1);
-  assert.equal(preview.errors[0].row, 3);
-  assert.match(preview.errors[0].message, /metraje/);
+  assert.equal(preview.validRows, 2, JSON.stringify(preview.errors));
+  assert.equal(preview.errors.length, 0);
 });
 
 test('sin zona o con una zona no registrada, el puesto queda en la primera zona marcado por regularizar', async () => {
@@ -259,7 +259,7 @@ test('el pendiente de regularización sin metraje paga sus días cobrados', asyn
 
   const liquidacion = await calcularLiquidacion(db, comerciante.id);
   assert.equal(liquidacion.no_devengo, false);
-  assert.equal(liquidacion.monto_total, 3, 'S/ 3 por el día cobrado en vía asfaltada, como cualquier otro');
+  assert.equal(liquidacion.monto_total, 3, 'S/ 3 por el día cobrado en la zona asfaltada, como cualquier otro');
 });
 
 test('la vista previa guardada solo la usa quien la hizo y vence a los 15 minutos', () => {

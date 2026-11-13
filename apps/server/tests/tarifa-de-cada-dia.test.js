@@ -13,6 +13,7 @@ import {
   insertZona, marcarAsistencias, todayInLima, updateTarifa
 } from '../src/db.js';
 import { pool } from '../src/pg.js';
+import { insertZonaConPrecio } from './_deuda.js';
 
 before(async () => { await initializeDatabase(); });
 after(async () => { await closeDatabase(); });
@@ -22,7 +23,7 @@ const primeroDelMes = `${currentPeriod()}-01`;
 const rubroOtros = async () => (await pool.query("SELECT id FROM rubros WHERE nombre = 'otros'")).rows[0].id;
 
 test('una tarifa nueva desde hoy cobra desde hoy; los días anteriores siguen con la anterior', { skip: hoy === primeroDelMes && 'hace falta un día anterior en el mes' }, async () => {
-  const zona = await insertZona(pool, { nombre: `Zona tarifa del día ${process.pid}`, tipo_via: 'asfaltada' });
+  const zona = await insertZonaConPrecio(pool, { nombre: `Zona tarifa del día ${process.pid}`, tipo_via: 'asfaltada' });
   const comerciante = await insertComerciante(pool, {
     dni_ruc: `4658${String(process.pid).slice(-4).padStart(4, '0')}`, nombre: 'Ferial tarifa del día', rubro_id: await rubroOtros(),
     zona_id: zona.id, tipo_comerciante: 'ferial', estado: 'activo', usuario_creador: 1
@@ -32,8 +33,8 @@ test('una tarifa nueva desde hoy cobra desde hoy; los días anteriores siguen co
   await marcarAsistencias(pool, [{ puesto_id: puesto.id, fecha: hoy, asistio: true }], { usuarioId: 1 });
   assert.equal((await calcularLiquidacion(pool, comerciante.id)).monto_total, 6, 'dos días a S/ 3');
 
-  // Ordenanza nueva: S/ 4 la vía asfaltada desde hoy. Cierra la general anterior ayer.
-  await insertTarifa(pool, { rubro_id: '', tipo_via: 'asfaltada', tipo_tarifa: 'fija', monto_fijo: 4, unidad_medida: 'semanal', vigencia_inicio: hoy });
+  // Precio nuevo de la zona: S/ 4 desde hoy. Cierra el anterior ayer.
+  await insertTarifa(pool, { zona_id: zona.id, monto_fijo: 4, vigencia_inicio: hoy });
 
   const liquidacion = await calcularLiquidacion(pool, comerciante.id);
   assert.deepEqual(liquidacion.puestos_cobrados.map((item) => [item.dias, item.monto_dia]).sort(), [[1, 3], [1, 4]]);
@@ -42,8 +43,8 @@ test('una tarifa nueva desde hoy cobra desde hoy; los días anteriores siguen co
 });
 
 test('una tarifa nueva no empieza antes de hoy, ni una futura se mueve al pasado', async () => {
-  const rubro = (await pool.query('INSERT INTO rubros (nombre) VALUES ($1) RETURNING id', [`rubro fechas ${process.pid}`])).rows[0].id;
-  const base = { rubro_id: rubro, tipo_tarifa: 'fija', monto_fijo: 10, unidad_medida: 'mensual' };
+  const zona = await insertZona(pool, { nombre: `Zona fechas ${process.pid}` });
+  const base = { zona_id: zona.id, monto_fijo: 10 };
   await assert.rejects(insertTarifa(pool, { ...base, vigencia_inicio: '2026-01-01' }), /no puede empezar antes de hoy/);
 
   const futura = await insertTarifa(pool, { ...base, vigencia_inicio: '2031-01-01' });

@@ -7,6 +7,7 @@ import assert from 'node:assert/strict';
 
 import { veredictoRecaudacion } from '../src/veredictoRecaudacion.js';
 import { initializeDatabase, insertComerciante, insertPuesto, insertTarifa, insertZona, registrarCobro, generateForecastProjection } from '../src/db.js';
+import { zonaConPrecio } from './_deuda.js';
 
 const SERIE = [1000, 1000, 1000];
 
@@ -96,8 +97,8 @@ test('la proyección trae el veredicto con los cobros y las marcas reales de cad
   const db = await initializeDatabase();
   const sufijo = `${process.pid} ${Date.now()}`;
   const rubroId = (await db.query('INSERT INTO rubros (nombre) VALUES ($1) RETURNING id', [`rubro veredicto ${sufijo}`])).rows[0].id;
-  const zona = await insertZona(db, { nombre: `Zona veredicto ${sufijo}` });
-  await insertTarifa(db, { rubro_id: rubroId, tipo_tarifa: 'fija', monto_fijo: 5000, unidad_medida: 'mensual', vigencia_inicio: '2020-01-01' }, { permitirInicioPasado: true });
+  // S/ 500 por día: los días marcados de cada mes alcanzan para su cobro.
+  const zona = await zonaConPrecio(db, 500, { nombre: `Zona veredicto ${sufijo}` });
   const comerciante = await insertComerciante(db, {
     dni_ruc: '20666000001', nombre: 'Comerciante Veredicto', rubro_id: rubroId, zona_id: zona.id,
     tipo_comerciante: 'permanente', estado: 'activo', usuario_creador: 1
@@ -108,11 +109,12 @@ test('la proyección trae el veredicto con los cobros y las marcas reales de cad
   const montos = [2000, 1900, 1800, 1700, 1600, 1500, 1400, 1300];
   for (const [i, monto] of montos.entries()) {
     const periodo = `2031-${String(i + 1).padStart(2, '0')}`;
-    await registrarCobro(db, { comerciante_id: comerciante.id, cobrador_id: 2, monto, metodo_pago: 'efectivo', periodo, fecha_cobro: `${periodo}-15T15:00:00.000Z`, codigo_operacion: `VEREDICTO-${sufijo}-${i}` });
+    // El cobro va el día 1, ya marcado: si cayera en otro día, el cobro lo marcaría (marcarDiaCobrado).
     const dias = i === montos.length - 1 ? 4 : 10;
     for (let dia = 1; dia <= dias; dia += 1) {
       await db.query(`INSERT INTO asistencias_feriales (puesto_id, fecha, sesion, marca, fuente) VALUES ($1, $2, '', 'P', 'app')`, [puesto.id, `${periodo}-${String(dia).padStart(2, '0')}`]);
     }
+    await registrarCobro(db, { comerciante_id: comerciante.id, cobrador_id: 2, monto, metodo_pago: 'efectivo', periodo, fecha_cobro: `${periodo}-01T15:00:00.000Z`, codigo_operacion: `VEREDICTO-${sufijo}-${i}` });
   }
 
   const { veredicto, proyeccion_mensual: proyeccion } = await generateForecastProjection(db, { period: '2031-09', horizonteDias: 90 });

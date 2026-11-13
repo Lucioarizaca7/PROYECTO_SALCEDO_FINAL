@@ -9,6 +9,7 @@ import { closeDatabase, createUser, insertComerciante, insertPuesto, insertTarif
 import { emitirCarnets } from '../src/portalAcceso.js';
 import { tokenVerificacion, tokenDescarga, leerTokenDescarga, buscarRecibo, generarReciboPdf } from '../src/reciboPdf.js';
 import { pool } from '../src/pg.js';
+import { marcarDias, zonaConPrecio } from './_deuda.js';
 
 let server;
 let baseUrl;
@@ -36,25 +37,27 @@ async function api(path, { method = 'GET', token, body } = {}) {
 
 let documento = 20555000000;
 
-// Dos permanentes con deuda propia (rubro y tarifa nuevos), para no depender de la semilla.
+// Dos permanentes con deuda propia (zona de S/ 30 por día), para no depender de la semilla.
 async function dosComerciantesConSaldo() {
-  const nombre = `rubro recibo ${process.pid} ${Date.now()} ${Math.random().toString(16).slice(2, 6)}`;
-  const rubroId = (await pool.query('INSERT INTO rubros (nombre) VALUES ($1) RETURNING id', [nombre])).rows[0].id;
-  await insertTarifa(pool, { rubro_id: rubroId, tipo_tarifa: 'fija', monto_fijo: 30, unidad_medida: 'mensual', vigencia_inicio: '2026-01-01' }, { permitirInicioPasado: true });
+  const zona = await zonaConPrecio(pool, 30);
   const crear = async () => {
     const comerciante = await insertComerciante(pool, {
-      dni_ruc: String(documento += 1), nombre: `Comerciante Señor Ñandú ${documento}`, rubro_id: rubroId, zona_id: 1,
+      dni_ruc: String(documento += 1), nombre: `Comerciante Señor Ñandú ${documento}`, rubro_id: 1, zona_id: zona.id,
       tipo_comerciante: 'permanente', estado: 'activo', usuario_creador: 1
     });
-    await insertPuesto(pool, { zona_id: 1, metros_cuadrados: 1, direccion: `Recibo ${documento}`, comerciante_id: comerciante.id });
-    return comerciante;
+    const puesto = await insertPuesto(pool, { zona_id: zona.id, metros_cuadrados: 1, direccion: `Recibo ${documento}`, comerciante_id: comerciante.id });
+    return { ...comerciante, puestoId: puesto.id };
   };
   return [await crear(), await crear()];
 }
 
-const cobrar = (merchant, periodo, monto = 2) => registrarCobro(pool, {
-  comerciante_id: merchant.id, cobrador_id: 2, monto, metodo_pago: 'efectivo', periodo, fecha_cobro: `${periodo}-15T15:00:00Z`
-});
+// Cada mes que se cobra tiene un día cobrado (S/ 30): sin días no hay deuda que pagar.
+const cobrar = async (merchant, periodo, monto = 2) => {
+  await marcarDias(pool, merchant.puestoId, periodo, 1);
+  return registrarCobro(pool, {
+    comerciante_id: merchant.id, cobrador_id: 2, monto, metodo_pago: 'efectivo', periodo, fecha_cobro: `${periodo}-15T15:00:00Z`
+  });
+};
 
 test('el personal baja el recibo en PDF y el QR verifica número, monto y estado', async () => {
   const periodo = '2031-06';

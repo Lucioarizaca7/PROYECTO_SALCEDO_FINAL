@@ -8,6 +8,7 @@ import assert from 'node:assert/strict';
 import { startServer } from '../src/index.ts';
 import { closeDatabase, calcularLiquidacion, getComerciantes, getAuditTrail, parseInicioAtencion, todayInLima } from '../src/db.js';
 import { pool } from '../src/pg.js';
+import { comercianteConDeuda } from './_deuda.js';
 
 let server;
 let baseUrl;
@@ -38,12 +39,10 @@ async function login(email, password) {
   return body.token;
 }
 
+// Cada prueba arma su comerciante con deuda en su propio periodo (cobro por día cobrado, 13/11/2026).
 async function merchantWithBalance(periodo) {
-  for (const merchant of await getComerciantes(pool, { limit: 100 })) {
-    const liquidation = await calcularLiquidacion(pool, merchant.id, periodo).catch(() => null);
-    if (liquidation && !liquidation.no_devengo && !liquidation.cobro_diario && liquidation.saldo >= 5) return { merchant, liquidation };
-  }
-  throw new Error(`La semilla no tiene un comerciante con saldo en ${periodo}`);
+  const { merchant } = await comercianteConDeuda(pool, { periodo });
+  return { merchant, liquidation: await calcularLiquidacion(pool, merchant.id, periodo) };
 }
 
 const inPeriod = (periodo, minute = 0) => new Date(Date.parse(`${periodo}-15T15:00:00Z`) + minute * 60_000).toISOString();
