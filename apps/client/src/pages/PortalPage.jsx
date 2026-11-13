@@ -126,7 +126,7 @@ export function PortalPage() {
               <tbody>
                 {data.pagos.length ? data.pagos.map((payment) => (
                   <tr key={payment.id} className={payment.estado === 'anulado' ? 'fila-anulada' : undefined}>
-                    <td>{payment.fecha}</td><td>{payment.concepto}</td><td>S/ {Number(payment.monto).toFixed(2)}</td><td>{textoMetodo(payment.metodo_pago)}</td><td>{payment.comprobante}</td>
+                    <td>{payment.fecha}</td><td>{payment.concepto}</td><td>S/ {Number(payment.monto).toFixed(2)}</td><td>{textoMetodo(payment.metodo_pago)}</td><td>{payment.comprobante}{payment.tickets && <small className="portal-tickets">Ticket: {payment.tickets}</small>}</td>
                     {/* Un pago anulado no cuenta como pagado: se dice, en vez de mostrarlo como válido. */}
                     <td><span className={`status ${payment.estado === 'anulado' ? 'danger' : payment.estado === 'confirmado' ? 'paid' : 'pending'}`}>{payment.estado === 'anulado' ? 'Anulado' : payment.estado === 'confirmado' ? 'Válido' : 'En revisión'}</span></td>
                     <td>{payment.descarga ? <a className="table-action" href={`${apiBase}/portal/recibos/${payment.descarga}/pdf`} download>Descargar PDF</a> : '—'}</td>

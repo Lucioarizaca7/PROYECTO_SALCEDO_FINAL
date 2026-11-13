@@ -133,6 +133,12 @@ Corregidos, con prueba en `tests/codigo-operacion.test.js`, `tests/tipo-via-de-c
 
 Queda: el paquete de jornada calcula dos veces el mes en curso (`calcularLiquidacion` y otra vez dentro de `calcularDeudaAcumulada`). Con un padrón mucho mayor convendrá la liquidación en lote (paso 6).
 
+## Vigesimocuarta revisión del 13/11/2026: decisiones sobre el recibo, la impresora y la zona
+
+- **Recibo sin señal:** el ticket preimpreso es el comprobante físico y el portal guarda el recibo oficial para descargarlo. El portal muestra ahora con cada pago los tickets entregados (prueba en `tests/recibo-pdf.test.js`).
+- **Impresora Bluetooth:** se borró su código sin uso del cliente: `src/utils/` (impresora, cola de impresión y formato ESC/POS con sus pruebas, que no corrían en ningún script), `src/components/utils/offlinePrintQueue.js` (no compilaba: `await` fuera de una función async y una ruta de Windows) y `hooks/useColaImpresion.js`.
+- **Cambio a mitad de mes:** no es un fallo. El precio lo pone la zona del día, que ya se cobra por día; el rubro y los metros no cambian el monto.
+
 ## Vigesimotercera revisión del 12/11/2026: "Unexpected token" en el resto de pantallas
 
 Corregido, con prueba en `apps/client/tests/servidorNoDisponible.test.js`; comprobado en el navegador con el proxy respondiendo 502 en una copia de la demo:
@@ -192,7 +198,7 @@ Hecho, con prueba en `tests/zona-del-dia-y-por-puesto.test.js`, `tests/tickets.t
 - **Zona del día:** el cobrador elige la zona donde vende hoy; el día se cobra con su tarifa y su ticket (S2 o S3), y el administrador lo ve en Observaciones.
 - **Cobro por puesto** desde noviembre de 2026, con `puestos_tenencia` para que un mes cerrado no cambie.
 - **Baja y liberación de un puesto con señal débil:** se encolan como el alta, y reenviarlas responde "ya estaba dado de baja / ya estaba libre" en vez de un rechazo.
-- **Recibo por WhatsApp** como imagen de celular; se quitó la impresión Bluetooth de la pantalla y la cola de impresión que la sondeaba cada 30 s. Los módulos `utils/bluetoothPrint.js`, `utils/offlinePrintQueue.js` y `hooks/useColaImpresion.js` se conservan sin uso por si vuelve la impresora; si no vuelve, se pueden borrar.
+- **Recibo por WhatsApp** como imagen de celular; se quitó la impresión Bluetooth de la pantalla y la cola de impresión que la sondeaba cada 30 s. Los módulos `utils/bluetoothPrint.js`, `utils/offlinePrintQueue.js` y `hooks/useColaImpresion.js` se borraron el 13/11/2026 (decisión del usuario: no habrá impresora térmica).
 
 Prioridades que cambian:
 - **Rendimiento:** el piloto es de 400 a 600 comerciantes en toda la feria (usuario, 12/11/2026). Ya se midió con 3051 y responde bien; la liquidación en lote deja de ser prioridad.
@@ -240,7 +246,7 @@ Corregido, con prueba en `tests/anular-cobro-observado.test.js` (migración 0026
 
 Corregido, con prueba en `tests/rubro-zona-metros-de-cada-mes.test.js` (migración 0025): cambiar el rubro o la zona de un comerciante, o los metros de un puesto, recalculaba los meses pasados. En la prueba, un mes pagado a S/ 30 pasaba a S/ 50. Medido con 3051 comerciantes, el recálculo del riesgo y el paquete de jornada tardan lo mismo que antes, porque los datos del mes salen en la consulta que ya se hacía por el tipo de comerciante.
 
-Queda: el mes del cambio se liquida entero con los datos del día 1 cuando ya terminó, y con los de hoy mientras está en curso. Un cambio a mitad de mes no parte ese mes en dos tramos, salvo la zona del puesto y el tipo de vía, que van por día (0019 y 0021).
+Queda: el mes del cambio se liquida entero con los datos del día 1 cuando ya terminó, y con los de hoy mientras está en curso. Un cambio a mitad de mes no parte ese mes en dos tramos, salvo la zona del puesto y el tipo de vía, que van por día (0019 y 0021). (Cerrado el 13/11/2026: el usuario decidió que el precio lo pone la zona del día y no el rubro ni los metros; ver "El precio lo pone la zona" en `reglas-negocio.md`. Sigue entero el mes de quien paga cuota mensual.)
 
 ## Octava revisión del 11/11/2026: tarifas en el tiempo
 

@@ -92,7 +92,7 @@ Proyecto_Final_Salcedo_Rentas/
 - Caddy (HTTPS automático con Let's Encrypt)
 
 ### Funcionalidades relacionadas
-- impresión térmica con Bluetooth
+- recibo por WhatsApp como imagen y ticket preimpreso
 - generación de recibos y hashes transaccionales
 - almacenamiento local para operación desconectada
 
@@ -183,9 +183,9 @@ docker compose --env-file .env.production -f docker-compose.prod.yml exec api no
 - Emisión de recibos y trazabilidad del cobro.
 
 ### 4. Impresión y compartición de comprobantes
-- Impresión térmica mediante Bluetooth con fallback a impresión del navegador.
-- Cola de impresión para escenarios offline.
-- Compartición por WhatsApp y otros mecanismos del navegador.
+- Sin impresora térmica: el comprobante físico es el ticket preimpreso.
+- Recibo por WhatsApp como imagen con QR de verificación, o en PDF con la impresión del navegador.
+- El comerciante ve sus pagos y descarga sus recibos en el portal público.
 
 ### 5. Mapa de sitios y distribución territorial
 - Registro y mantenimiento de puestos de venta.

@@ -1,6 +1,6 @@
 # Guía de prueba manual — Fase 2: trabajo en campo y offline
 
-Esta guía cubre lo que las pruebas automáticas no pueden hacer: la impresora térmica real y los celulares de los cobradores en modo avión. Lo demás (cola offline, lote, sesión de 12 h, revisión manual) ya lo comprueba `npm test`.
+Esta guía cubre lo que las pruebas automáticas no pueden hacer: el recibo por WhatsApp, el portal y los celulares de los cobradores en modo avión. Lo demás (cola offline, lote, sesión de 12 h, revisión manual) ya lo comprueba `npm test`.
 
 Anota el resultado de cada paso en la tabla del final. Si un paso falla, apunta el modelo de celular, la versión de Chrome y una captura.
 
@@ -8,9 +8,9 @@ Anota el resultado de cada paso en la tabla del final. Si un paso falla, apunta 
 
 | Recurso | Detalle |
 |---|---|
-| Servidor de pruebas con HTTPS | `docker-compose.prod.yml` con Caddy y dominio propio. Sin HTTPS no funcionan el Service Worker, la instalación, el GPS ni el Bluetooth. `http://192.168.x.x` **no sirve**. |
-| 2 celulares Android | Los de los cobradores, con Chrome actualizado. En iPhone no existe Web Bluetooth: allí el recibo se comparte por WhatsApp. |
-| Impresora térmica de 58 mm | Bluetooth LE con comandos ESC/POS (servicio `ffe0`, `18f0` o `1200`). Papel cargado y batería llena. |
+| Servidor de pruebas con HTTPS | `docker-compose.prod.yml` con Caddy y dominio propio. Sin HTTPS no funcionan el Service Worker, la instalación, el GPS ni la hoja de compartir. `http://192.168.x.x` **no sirve**. |
+| 2 celulares Android | Los de los cobradores, con Chrome actualizado y WhatsApp instalado. |
+| Tickets preimpresos | Un lote asignado a cada cobrador (lo asigna el `super_admin`). |
 | Cuentas | Una cuenta de cobrador por celular y una de administrador (en una PC). |
 | Padrón | Al menos 30 comerciantes activos con saldo en el periodo actual. |
 | Acceso a la base | Para las consultas de verificación: `docker compose -f docker-compose.prod.yml exec postgres psql -U sisrec sisrec` |
@@ -32,18 +32,19 @@ Anota el resultado de cada paso en la tabla del final. Si un paso falla, apunta 
 
 **Esperado:** aparece la franja amarilla *"Sin señal…"*, cada búsqueda encuentra al comerciante y muestra su saldo del padrón.
 
-## C. Impresora térmica de 58 mm (con cada celular)
+## C. Recibo por WhatsApp, ticket y portal (con cada celular)
 
-1. Enciende la impresora. Con señal, haz un cobro pequeño (S/ 1.00) y pulsa **Imprimir térmica / PDF**.
-2. La primera vez Chrome pide elegir el dispositivo Bluetooth: elige la impresora.
-3. Revisa el papel:
-   - encabezado *MUNI SALCEDO* centrado y *RECIBO DE PAGO*;
-   - número `R-000123`, fecha, comerciante, concepto, método, monto y hash;
-   - las tildes y la ñ (*Liquidación*, *Método*, *Ñuñoa*). **Si salen símbolos raros, anótalo**: hay que configurar la página de códigos de la impresora (ESC t) en una fase posterior;
-   - que ninguna línea se corte a la mitad (58 mm ≈ 32 caracteres) y que el papel avance y se corte al final.
-4. Haz un segundo cobro: debe imprimir sin volver a pedir la impresora.
-5. En modo avión, haz un cobro e imprime: el papel debe decir **RECIBO PROVISIONAL** y un número `PROV-XXXXXXXX`.
-6. Apaga la impresora e intenta imprimir: la app no debe colgarse; el recibo queda en la cola de impresión y sale al volver a encenderla con la app abierta.
+No se usa impresora térmica: el comprobante físico es el ticket preimpreso.
+
+1. Con señal, haz un cobro pequeño (S/ 1.00), entrega el ticket que indica la pantalla y pulsa **Enviar por WhatsApp**.
+2. Revisa la imagen en WhatsApp:
+   - número `R-000123`, fecha, comerciante, concepto, método, monto y ticket;
+   - las tildes y la ñ;
+   - que **no** aparezca el DNI completo;
+   - que el QR abra la verificación con el número, el monto y el estado.
+3. En modo avión, haz un cobro: el recibo debe decir **provisional**. Entrega el ticket.
+4. Vuelve a tener señal y espera la sincronización. En la cola sin señal, pulsa **Enviar recibo oficial**: ahora lleva número `R-` y QR.
+5. En otro celular, entra al portal con el carnet del comerciante. El pago debe aparecer con su **Ticket: S3 N° …** y **Descargar PDF** debe bajar el recibo oficial.
 
 ## D. 30 cobros en modo avión
 
@@ -109,10 +110,10 @@ SELECT device_id, estado, COUNT(*) FROM colas_sincronizacion GROUP BY 1, 2 ORDER
 |---|---|---|---|
 | A. Instalación y apertura sin señal | | | |
 | B. Padrón y búsqueda sin señal | | | |
-| C. Impresión en línea | | | |
-| C. Tildes y ñ en el papel | | | |
-| C. Recibo provisional sin señal | | | |
-| C. Impresora apagada / cola de impresión | | | |
+| C. Recibo por WhatsApp en línea | | | |
+| C. Tildes y ñ, sin DNI, QR verifica | | | |
+| C. Recibo provisional sin señal y oficial al sincronizar | | | |
+| C. Portal: pago con su ticket y PDF | | | |
 | D. 15 cobros en modo avión | | | |
 | D. Sincronización sin duplicados | | | |
 | D. Corte a mitad de la sincronización | | | |
@@ -122,4 +123,4 @@ SELECT device_id, estado, COUNT(*) FROM colas_sincronizacion GROUP BY 1, 2 ORDER
 | F. Revocación desde el panel | | | |
 | G. Actualización de versión | | | |
 
-Modelos probados: celular 1 ______________________ · celular 2 ______________________ · impresora ______________________
+Modelos probados: celular 1 ______________________ · celular 2 ______________________
