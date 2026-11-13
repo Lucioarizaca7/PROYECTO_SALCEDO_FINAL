@@ -24,6 +24,7 @@
 - `features/offline`: `useJornada`, `useOfflineQueue`, `ReviewPanel`, `DeviceSessions`, `FieldWorkPanel`.
 - `components/features/map`: `SitesMap` (Leaflet), `SitesMap25D` (mapbox-gl) y `sitesGeo.js`, que es lógica pura y tiene pruebas.
 - `services`: `session.js` (tokens, `authFetch`, renovación), `offlineQueue.js` + `offlineStore.js` (IndexedDB, huella SHA-256), `jornadaOffline.js` y `mapaOffline.js` + `colaMapa.js` (cambios del mapa sin señal; los rechazados se ven en `CambiosRechazadosMapa`).
+- `pwa`: `PwaPrompt.jsx` (avisos de instalar, sin señal y versión nueva), `instalacion.js` (guarda el aviso `beforeinstallprompt` de Chrome; `modoInstalacion`: directa, pasos de iPhone o del menú ⋮) y `BotonInstalarApp.jsx` (entrada fija "Instalar app" del menú). La PWA solo existe en el build de producción: `vite dev` no sirve manifiesto ni Service Worker, así que no se puede instalar desde el servidor de desarrollo.
 
 ## Flujo de datos
 

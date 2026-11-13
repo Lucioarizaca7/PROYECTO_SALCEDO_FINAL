@@ -1,18 +1,22 @@
 import { useEffect, useState } from 'react';
 import { useRegisterSW } from 'virtual:pwa-register/react';
+import { instalarApp, useModoInstalacion } from './instalacion';
 
 // Revisa si hay versión nueva cada hora mientras la app está abierta (una jornada dura horas).
 const UPDATE_CHECK_MS = 60 * 60 * 1000;
 
 /**
  * Avisos de la PWA:
- *  - "Instalar SISREC" en Android/Chrome (evento beforeinstallprompt);
+ *  - "Instalar SISREC" en Android/Chrome (evento beforeinstallprompt, guardado en instalacion.js). Cerrar
+ *    este aviso no pierde la instalación: sigue el botón "Instalar app" del menú (BotonInstalarApp);
  *  - "Lista para trabajar sin señal" la primera vez que el Service Worker guarda la app;
  *  - "Nueva versión disponible" con botón para actualizar. No se recarga sola para no
  *    interrumpir un cobro a medio llenar.
  */
 export function PwaPrompt() {
-  const [installEvent, setInstallEvent] = useState(null);
+  const modo = useModoInstalacion();
+  const [avisoCerrado, setAvisoCerrado] = useState(false);
+  const installEvent = modo === 'directa' && !avisoCerrado;
   const {
     offlineReady: [offlineReady, setOfflineReady],
     needRefresh: [needRefresh, setNeedRefresh],
@@ -27,31 +31,12 @@ export function PwaPrompt() {
   });
 
   useEffect(() => {
-    const onBeforeInstall = (event) => {
-      event.preventDefault();
-      setInstallEvent(event);
-    };
-    const onInstalled = () => setInstallEvent(null);
-    window.addEventListener('beforeinstallprompt', onBeforeInstall);
-    window.addEventListener('appinstalled', onInstalled);
-    return () => {
-      window.removeEventListener('beforeinstallprompt', onBeforeInstall);
-      window.removeEventListener('appinstalled', onInstalled);
-    };
-  }, []);
-
-  useEffect(() => {
     if (!offlineReady) return undefined;
     const timer = setTimeout(() => setOfflineReady(false), 6000);
     return () => clearTimeout(timer);
   }, [offlineReady, setOfflineReady]);
 
-  const install = async () => {
-    if (!installEvent) return;
-    installEvent.prompt();
-    await installEvent.userChoice.catch(() => null);
-    setInstallEvent(null);
-  };
+  const install = () => instalarApp();
 
   if (!needRefresh && !offlineReady && !installEvent) return null;
 
@@ -72,7 +57,7 @@ export function PwaPrompt() {
         <>
           <span>Instala SISREC en este celular para abrirla sin navegador y sin señal.</span>
           <button type="button" className="primary-button compact" onClick={install}>Instalar</button>
-          <button type="button" className="pwa-toast-close" aria-label="Ahora no" onClick={() => setInstallEvent(null)}>×</button>
+          <button type="button" className="pwa-toast-close" aria-label="Ahora no" onClick={() => setAvisoCerrado(true)}>×</button>
         </>
       )}
     </div>
