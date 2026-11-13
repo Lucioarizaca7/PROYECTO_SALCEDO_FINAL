@@ -78,6 +78,8 @@ $C node dist/cli/crear-usuario.js --rol cobrador       # una vez por cada cobrad
 $C node dist/cli/crear-usuario.js --rol auditor        # jefa de área / auditor
 ```
 
+Después del primer administrador, los demás usuarios (otros super administradores, cobradores y auditores) se pueden crear desde la web, en **Configuración → Usuarios**, y quedan en la auditoría. Los comandos de arriba siguen sirviendo.
+
 | Rol | Qué puede hacer |
 |---|---|
 | `super_admin` | todo: tarifas, zonas, lotes de tickets, carnets, anular cobros, resolver los cobros observados y revocar sesiones de celulares |
@@ -197,8 +199,8 @@ git tag sisrec-v1.0.0 && git push origin sisrec-v1.0.0
 | El navegador avisa de un certificado inválido | el DNS aún no apunta al servidor o los puertos 80/443 están cerrados | revisar el registro A y `ufw status`; luego `docker compose … restart web` |
 | El celular dice "El servidor no respondió" | el servidor está caído o lento | el cobrador sigue cobrando: el cobro queda en la cola sin señal y se sincroniza solo. Revisar el paso 8 |
 | Un cobro aparece "En revisión" | llegó sin señal con algo dudoso (hora, tickets, sin tarifa) | el `super_admin` lo resuelve en *Control → Revisión de cobros*: el dinero ya se recibió, nunca se descarta |
-| Un cobrador olvidó su clave | todavía no hay cambio de clave desde la web | crearle una cuenta nueva con otro correo (`crear-usuario`) y desactivar la vieja (sección 11.4, paso 3) |
-| Falta el super administrador titular (vacaciones, se fue, olvidó su clave o falleció) | nadie puede crear usuarios desde la web | mientras tanto actúa el suplente; para reemplazar al titular o si faltan los dos, sección 11 |
+| Un cobrador olvidó su clave | — | un super administrador le pone una clave nueva en **Usuarios → Clave nueva** y se la entrega; el cobrador puede cambiarla por una suya en **Mi clave** |
+| Falta el super administrador titular (vacaciones, se fue, olvidó su clave o falleció) | — | el suplente entra, le pone clave nueva o desactiva su cuenta y crea al reemplazo en **Usuarios**; si faltan los dos, sección 11 |
 | Se perdió un celular | la sesión del celular sigue abierta | en *Configuración → Dispositivos*, revocar su sesión: tendrá que volver a ingresar con la clave |
 
 ## 11. Continuidad: cambio de gestión y contingencia
@@ -262,6 +264,7 @@ $C exec postgres psql -U sisrec sisrec -c "UPDATE usuarios SET activo = false WH
 
 - Una cuenta desactivada ya no puede ingresar ni renovar su sesión; si tenía una abierta, se corta como máximo en 15 minutos (`JWT_EXPIRES_IN`).
 - El cambio hecho con `psql` no queda en la auditoría de SISREC: por eso se anota en el acta (quién, qué cuenta, fecha y hora).
+- Si ya hay un super administrador que puede entrar, es mejor desactivar las cuentas desde **Usuarios**: corta la sesión al instante y queda en la auditoría.
 
 **4. Cambiar las claves del servidor y preparar un sobre nuevo:**
 

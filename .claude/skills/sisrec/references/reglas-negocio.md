@@ -277,12 +277,21 @@ No se usa la impresora térmica en el piloto. El recibo se envía por WhatsApp *
 
 ## Autenticación y auditoría
 
+- **Usuarios del personal** (decisión del usuario, 13/11/2026; pantalla Usuarios, `routes/usuarios.ts`, sección "Usuarios del personal" de `db.js`):
+  - solo `super_admin` ve la lista, crea cuentas, las desactiva o reactiva y les pone clave nueva;
+  - puede crear **super_admin, cobradores y auditores** (no comerciantes: el comerciante entra al portal con su carnet);
+  - una cuenta **no se borra, se desactiva**: sus cobros, cierres de caja y la auditoría guardan quién los hizo. Desactivar cierra sus sesiones al instante;
+  - nadie desactiva su propia cuenta, y no se desactiva al **último super_admin activo** (nadie podría volver a administrar);
+  - la clave nueva **no obliga a cambiarla** al entrar. Mínimo `MIN_CLAVE = 10` caracteres. Cambiarla cierra las otras sesiones de esa persona;
+  - **cada persona cambia su propia clave** en la pantalla Mi clave (super_admin, cobrador y auditor; `PUT /auth/mi-clave`, `cambiarMiClave`): pide la clave actual, la nueva debe ser distinta, y se cierran sus sesiones en otros dispositivos (la del que la cambia sigue). Clave actual errada = 400, no 401, para que el cliente no crea vencida la sesión;
+  - los comandos `crear-admin` / `crear-usuario` siguen para el primer administrador y para la contingencia sin ningún super_admin (`docs/despliegue-produccion.md`, sección 11).
 - **Roles del personal** (decisión del usuario, 04/11/2026):
   - `super_admin` es la Jefa de Rentas: hace todos los cambios.
   - `auditor` es la gerencia o la alcaldía (en la tesis, "administrador"): **solo consulta y audita**. Ve el panel, reportes, analítica, comerciantes, sitios, caja, tickets, tarifas, zonas, revisión de cobros y la auditoría, y descarga la plantilla del padrón. No escribe en ninguna ruta: zonas, calles, padrón, comerciantes, preferencias y notificaciones quedaron para `super_admin` (preferencias y notificaciones, también el cobrador). Solo puede cerrar sus propias sesiones.
   - `cobrador`: cobra, marca asistencia y cierra su caja.
   - Lo comprueba `tests/api-seguridad.test.js` ("el auditor solo consulta"): recorre todas las rutas que escriben y exige 403.
 - `POST /auth/login` devuelve un JWT corto (`config.jwtExpiresIn`) en el cuerpo y deja el refresh token de 12 h, ligado al dispositivo (`createDeviceSession`), en la cookie HttpOnly `sisrec_refresh`. `/auth/refresh` y `/auth/logout` solo leen la cookie.
+- **Una sesión por navegador, no por pestaña** (13/11/2026): la cookie `sisrec_refresh` es del navegador, así que si en otra pestaña se entra con otra cuenta, todas pasan a esa cuenta. Cada pestaña muestra siempre al usuario de la cookie (`services/sesionPestanas.js`: `cambioDeSesion`), con dos señales: el usuario que trae `/auth/refresh` y el evento `storage` de `sisrec-user` (solo datos visibles, nunca tokens). Si cambia de cuenta, la pestaña lo avisa en la barra superior; si otra pestaña cierra la sesión, esta también. Antes una pestaña podía mostrar al super_admin mientras su token ya era del cobrador.
 - En el cliente ningún token va en `localStorage`: el de acceso vive en memoria y, al recargar, `authFetch` pide uno nuevo con la cookie (`credentials: 'include'`).
 - Portal del comerciante (`portalAcceso.js`): **solo con la llave del carnet** (decisión del usuario, 28/10/2026, como el Penpot P3). El PIN de 6 dígitos se quitó (migración 0017: sin ruta que lo genere ni login que lo acepte; quien solo tenía PIN necesita su carnet).
   - DNI o código + llave del carnet (`XXXX-XXXX-XX`);

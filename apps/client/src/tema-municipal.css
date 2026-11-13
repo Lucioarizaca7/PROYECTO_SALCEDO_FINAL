@@ -1355,3 +1355,17 @@ tbody td {
 }
 .instalar-app-boton:hover, .instalar-app-boton:focus-visible { background: rgba(255, 255, 255, 0.1); }
 .instalar-app-pasos { margin: 0; color: #C9DDD1; font-size: 13px; line-height: 1.4; }
+
+/* Pantalla Usuarios (pages/UsuariosPage.jsx) */
+.usuario-inactivo td { color: var(--tinta-2); }
+.usuario-usted { color: var(--tinta-2); font-size: 12px; }
+.usuario-clave { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
+.usuario-clave input { min-height: 34px; max-width: 180px; padding: 0 8px; border: 1px solid var(--borde-campo); border-radius: var(--radio-sm); background: var(--tarjeta); font-size: 13px; }
+.usuario-clave-aviso { color: var(--rojo-tinta); font-size: 12px; }
+
+/* Aviso: esta pestaña pasó a la cuenta con que se entró en otra pestaña (useSesion + sesionPestanas.js) */
+.aviso-sesion { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin: 12px 24px 0; padding: 12px 16px; border-left: 4px solid var(--dorado); border-radius: var(--radio-md); background: var(--dorado-bg); color: var(--tinta); font-size: 14px; font-weight: 500; }
+@media (max-width: 760px) { .aviso-sesion { margin: 10px 16px 0; } }
+
+/* Pantalla Mi clave (pages/MiClavePage.jsx) */
+.mi-clave { max-width: 560px; }
