@@ -74,7 +74,7 @@ Pendientes menores:
 
 ## Pendientes de la auditoría full-stack (2026-10-27)
 
-- **Calles sin estado.** La tabla `calles` no tiene columna `estado`; la pantalla ofrecía Activo/Inactivo y no se guardaba (todas salían "Inactivo"). Se quitó el selector. Si hace falta dar de baja calles, va una migración nueva con `estado` y su CHECK.
+- **Tabla `calles` sin uso.** El 14/11/2026 se quitaron las calles de la pantalla y de la API (ver `reglas-negocio.md`). La tabla `calles` y la columna `puestos.calle_id` (migración 0002) siguen en la base, vacías de uso. Borrarlas pide una migración nueva y la confirmación del usuario, porque elimina datos.
 - **Barra superior.** Se quitaron la caja "Buscar registro" y el botón de notificaciones porque no tenían ninguna acción. Una búsqueda global sería una función nueva.
 - **Riesgo de morosidad N+1.** `recalcularRiesgoMorosidad` corre por detrás una vez al día: una `calcularDeudaAcumulada` por comerciante, de a 8 en paralelo (los pagos ya salen de una sola consulta). Con decenas de miles de comerciantes conviene la liquidación en lote (paso 6).
 - **Tarifas superpuestas.** (Resuelto el 02/11/2026, migración 0020, ver `reglas-negocio.md`.)
