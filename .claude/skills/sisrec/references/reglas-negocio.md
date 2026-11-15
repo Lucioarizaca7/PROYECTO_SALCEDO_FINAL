@@ -16,7 +16,7 @@ Funciones de `db.js`:
   - **Alta idempotente** (migración 0022, 11/11/2026): el celular manda `clave_cliente` (una por alta, la misma en línea y en la cola del mapa). Si ya existe un puesto con esa clave, se devuelve ese puesto (`ya_registrado`, HTTP 200) y no se crea otro.
   - Con señal débil (el navegador cree que hay red pero la petición no llega), el alta y la corrección de ubicación pasan a la cola del mapa en vez de perderse (`useSitios`, `encolarSiFalla`).
 - `updatePuesto`: si recibe `comerciante_id` sin estado, pasa a `ocupado` (con id) o a `disponible` (con null).
-- **Solo `super_admin` cambia la zona de un puesto** (decisión del usuario, 28/10/2026): la zona fija la tarifa del cobro por día. El cobrador recibe 403 si pide otra zona, y reenviar la misma no confirma una "zona por regularizar"; sí mueve el puesto en el mapa y asigna o libera al titular. La importación del padrón (solo super_admin) sí asigna zonas.
+- **Solo `super_admin` cambia la zona de un puesto** (decisión del usuario, 28/10/2026): la zona fija el precio del cobro por día. Es la zona habitual del puesto; la **zona del día** sí la elige el cobrador en campo (12/11/2026) y queda en Observaciones. El cobrador recibe 403 si pide otra zona, y reenviar la misma no confirma una "zona por regularizar"; sí mueve el puesto en el mapa y asigna o libera al titular. La importación del padrón (solo super_admin) sí asigna zonas.
 - `liberarPuesto` y `deactivatePuesto`.
 - `parseComercianteId`: `undefined` = no se envió; `null`, `''` o `0` = puesto libre.
 - `validatePuestoPlacement`: estado válido, zona existente, comerciante activo, y que no haya otro puesto en el mismo lugar físico.
@@ -148,12 +148,12 @@ Antes pasar a un ferial a eventual borraba su deuda atrasada entera, y pasar un 
 - **Varios puestos:** filas con el mismo DNI y el mismo nombre son un comerciante con varios puestos; el mismo DNI con otro nombre es error de fila.
 - **DNI de un dado de baja** (12/11/2026): el documento es único en la base aunque su dueño esté de baja. Registrarlo en otro comerciante responde 409 con el código del dado de baja, para reactivarlo en vez de duplicar a la persona.
 - **Errores por fila:** código de otro titular, puesto físico ocupado (zona + dirección, como `validatePuestoPlacement`), código repetido en el libro. Una baja que reaparece se reactiva (`reactivatedMerchants`).
-- **Metraje:** opcional en una zona con tipo de vía (cobro por día, sin metros); obligatorio sin tipo de vía. `insertPuesto` acepta `metros_cuadrados: null` solo en una zona con tipo de vía.
+- **Metraje:** siempre opcional y solo informativo (13/11/2026): el cobro es por día y no usa metros. Sin metraje en el libro se conserva el que tenía el puesto.
 - **Zona por regularizar** (decisión del usuario, 28/10/2026; migración 0018). La zona se busca por nombre exacto (sin mayúsculas, tildes ni espacios de más) en la columna Zona o, si viene vacía, en el nombre de la hoja.
   - Si no hay coincidencia, la fila **no es error**: el puesto queda en la primera zona, paga con su tarifa y se guarda `puestos.zona_por_regularizar` (`''` = venía sin zona; texto = la zona del libro que no está registrada). La vista previa lo avisa por fila y cuenta `zonePendingPosts`.
   - Antes la búsqueda era aproximada: "Barrio Alto Salcedo" caía en la zona "SALCEDO" sin avisar.
 - **Rubro exacto** (decisión del usuario, 11/11/2026): el rubro de la columna se busca por nombre exacto, igual que la zona. Si no está registrado, el comerciante queda en "otros" y la vista previa lo avisa por fila (no impide importar). Antes "Ropa de bebé" caía en "ropa" sin avisar. Si la columna viene vacía se usa el rubro del nombre del archivo ("FERIA ZAPATILLAS.xlsx") o de la hoja.
-  - Se regulariza en Sitios ("Asignar zona…", solo `super_admin` en la pantalla) o reimportando con una zona registrada: enviar `zona_id` borra la marca; mover el puesto en el mapa no. Solo cambia la zona del **puesto** (la que usa el cobro por día); la zona del comerciante (tarifa mensual y su código) se corrige en Comerciantes.
+  - Se regulariza en Sitios ("Asignar zona…", solo `super_admin` en la pantalla) o reimportando con una zona registrada: enviar `zona_id` borra la marca; mover el puesto en el mapa no. Solo cambia la zona del **puesto** (la que usa el cobro por día); la zona del comerciante (su código y la agrupación de los reportes) se corrige en Comerciantes.
 - **Ausente:** sigue la convención de puestos (queda `disponible` con titular).
 - **Plantilla oficial:** `GET /comerciantes/plantilla-padron` (super_admin, auditor), `padronPlantilla.js`; la hoja oculta `LISTAS_SISREC` no se lee como padrón.
 
@@ -309,7 +309,7 @@ No se usa la impresora térmica en el piloto. El recibo se envía por WhatsApp *
 
 ## Portal del comerciante (11/11/2026)
 
-- Sin tarifa vigente el portal abre igual: la deuda del mes va en 0 con `sin_tarifa`, y la pantalla dice "Aún no hay una tarifa vigente para su puesto" en vez de "Cuenta al día". Antes respondía 400 y no se veían ni los recibos.
+- Si la zona no tiene precio el portal abre igual: la deuda del mes va en 0 con `sin_tarifa`, y la pantalla dice "La zona de su puesto aún no tiene precio por día" en vez de "Cuenta al día". Antes respondía 400 y no se veían ni los recibos.
 - Un cobro observado que aún no se revisó sale "En revisión", no "Válido": la municipalidad todavía puede anularlo.
 
 ## Super administrador titular y suplente (13/11/2026)
