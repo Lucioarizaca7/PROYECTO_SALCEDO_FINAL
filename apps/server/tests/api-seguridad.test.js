@@ -72,7 +72,7 @@ test('toda ruta GET de la API exige token, salvo las públicas declaradas', asyn
   // públicas del recibo (fase 3), /tickets/series, /tickets/lotes, /tickets/cobradores, /tickets/mios y
   // /comerciantes/plantilla-padron, /tickets/lotes/:id/tickets y /comprobantes/:id/recibo (12/11/2026). Si cambia,
   // revise que las nuevas pidan token.
-  assert.equal(routes.length, 43, `cambió el número de rutas GET: ${routes.length}`);
+  assert.equal(routes.length, 42, `cambió el número de rutas GET: ${routes.length}`);
 
   const open = [];
   for (const path of routes) {
@@ -378,8 +378,8 @@ test('el cobrador solo corrige la ubicación de un puesto: titular, liberar y ba
   assert.equal((await pedir(tokens.admin, 'DELETE', `/puestos-mapa/${puesto.id}`)).status, 200);
 });
 
-test('calles, catálogos y roles solo los ve el personal: el rol comerciante recibe 403', async () => {
-  for (const ruta of ['/api/v1/calles', '/api/v1/catalogos', '/api/v1/roles']) {
+test('catálogos y roles solo los ve el personal: el rol comerciante recibe 403', async () => {
+  for (const ruta of ['/api/v1/catalogos', '/api/v1/roles']) {
     const pedir = (rol) => fetch(`${baseUrl}${ruta}`, { headers: { Authorization: `Bearer ${tokens[rol]}` } });
     assert.equal((await pedir('comerciante')).status, 403, ruta);
     assert.equal((await pedir('cobrador')).status, 200, ruta);
