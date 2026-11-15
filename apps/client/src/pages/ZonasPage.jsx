@@ -1,4 +1,5 @@
 import { useSisrec } from '../app/SisrecContext';
+import { precioSugerido } from '../hooks/useTarifas';
 import { useZonas } from '../hooks/useZonas';
 
 const TIPO_VIA_TEXTO = { asfaltada: 'Asfaltada', sin_asfaltar: 'Sin asfaltar' };
@@ -11,6 +12,13 @@ export function ZonasPage() {
   const puedeEditar = user?.rol === 'super_admin';
   const zonas = useZonas();
   const { zoneForm, setZoneForm } = zonas;
+  // Al crear, elegir el tipo de vía sugiere el precio (S/ 3 asfaltada, S/ 2 sin asfaltar) si aún no se escribió
+  // otro: solo sugiere, el super_admin puede cambiarlo antes de guardar.
+  const alElegirVia = (tipoVia) => {
+    const sugeridoAntes = precioSugerido({ tipo_via: zoneForm.tipo_via });
+    const seguirSugerencia = !zonas.editingZoneId && (zoneForm.precio_dia === '' || zoneForm.precio_dia === sugeridoAntes);
+    setZoneForm({ ...zoneForm, tipo_via: tipoVia, ...(seguirSugerencia ? { precio_dia: precioSugerido({ tipo_via: tipoVia }) } : {}) });
+  };
 
   return (
     <section className="page">
@@ -18,7 +26,7 @@ export function ZonasPage() {
         <div>
           <div className="eyebrow">CONFIGURACIÓN / ZONAS</div>
           <h1>Zonas</h1>
-          <p>Una zona es un área donde todos pagan el mismo precio por día. El precio de cada zona se pone en Tarifas.</p>
+          <p>Una zona es un área donde todos pagan el mismo precio por día.</p>
         </div>
       </div>
 
@@ -28,7 +36,7 @@ export function ZonasPage() {
           <li>Si una feria tiene una parte asfaltada y otra sin asfaltar, regístrela como <b>dos zonas</b>: por ejemplo «Feria sábado – asfaltada» y «Feria sábado – sin asfaltar».</li>
           <li>Si un comerciante se cambia de sitio dentro de la misma zona, no hay que registrar nada: paga lo mismo.</li>
           <li>Si un día vende en otra zona, el cobrador elige esa zona al cobrar («Zona de hoy») y ese día paga el precio de esa zona.</li>
-          <li>El precio por día de cada zona se pone en <b>Tarifas</b>. Lo usual es S/ 3 en vía asfaltada y S/ 2 sin asfaltar.</li>
+          <li>Al crear la zona se le pone su precio por día: al elegir el tipo de vía se sugiere S/ 3 (asfaltada) o S/ 2 (sin asfaltar). Para cambiarlo después, vaya a <b>Tarifas</b>.</li>
         </ul>
       </div>
 
@@ -47,11 +55,14 @@ export function ZonasPage() {
           <div className="merchant-form-grid">
             <input required placeholder="Nombre de la zona" aria-label="Nombre de la zona" value={zoneForm.nombre} onChange={(event) => setZoneForm({ ...zoneForm, nombre: event.target.value })} />
             <input placeholder="Descripción" aria-label="Descripción" value={zoneForm.descripcion} onChange={(event) => setZoneForm({ ...zoneForm, descripcion: event.target.value })} />
-            <select aria-label="Tipo de vía" value={zoneForm.tipo_via} onChange={(event) => setZoneForm({ ...zoneForm, tipo_via: event.target.value })}>
+            <select aria-label="Tipo de vía" value={zoneForm.tipo_via} onChange={(event) => alElegirVia(event.target.value)}>
               <option value="">Tipo de vía: sin dato</option>
               <option value="asfaltada">Vía asfaltada</option>
               <option value="sin_asfaltar">Vía sin asfaltar</option>
             </select>
+            {!zonas.editingZoneId && (
+              <input type="number" inputMode="decimal" min="0.01" step="0.01" placeholder="Precio por día (S/)" aria-label="Precio por día en soles" value={zoneForm.precio_dia} onChange={(event) => setZoneForm({ ...zoneForm, precio_dia: event.target.value })} />
+            )}
             <button className="primary-button" type="submit">{zonas.editingZoneId ? 'Actualizar zona' : 'Guardar zona'}</button>
             {zonas.editingZoneId && <button type="button" className="secondary-button" onClick={zonas.cancelZone}>Cancelar</button>}
           </div>
