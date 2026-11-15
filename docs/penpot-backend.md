@@ -1,11 +1,6 @@
----
-name: penpot-backend
-description: Lee las pantallas de SISREC en Penpot y adapta el backend (apps/server) para que la API entregue lo que el diseño muestra. Úsala cuando el usuario diga "mira mi Penpot", "según el diseño", "lo que sale en la pantalla X de Penpot" o pida cambiar el backend a partir de una pantalla. Para cambios solo visuales del cliente usa ui-ux-pro-max; para reglas de negocio, la skill sisrec.
----
-
 # Del diseño en Penpot al backend de SISREC
 
-Traída de la rama `claude/gifted-mendel-9fxas5` y ajustada a la estructura de `correccion/logica-cobros`, donde las rutas viven en `routes/` y el cliente en `pages/` y `hooks/` (28/10/2026).
+Las rutas viven en `routes/` y el cliente se organiza en `pages/` y `hooks/`. Las reglas de negocio están en la [guía de desarrollo](sisrec/guia-desarrollo.md).
 
 El diseño vive en el archivo de Penpot **"New File 1"**, con 4 páginas:
 
@@ -80,7 +75,7 @@ npx tsc --noEmit         # tipos
 ```
 
 - Añade una prueba en `apps/server/tests/` por cada regla nueva. Toma como modelo `portal-llave.test.js` (API levantada de verdad, cada prueba con sus propios datos).
-- Con los servidores `api` y `web` de `.claude/launch.json`, comprueba en el navegador que la pantalla muestre los campos del tablero de Penpot.
+- Con los servidores de desarrollo iniciados desde la raíz con `npm run dev`, comprueba en el navegador que la pantalla muestre los campos del tablero de Penpot.
 
 ## 5. Cerrar
 

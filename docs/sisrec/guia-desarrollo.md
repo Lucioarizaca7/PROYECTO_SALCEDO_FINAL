@@ -1,13 +1,6 @@
----
-name: sisrec
-description: "Skill único de SISREC (recaudación municipal de Salcedo): stack, arquitectura, base de datos PostgreSQL, reglas de negocio (cobro por día, tickets, offline, caja), seguridad y forma de trabajar. Úsala SIEMPRE antes de cambiar código en apps/server, apps/client o migrations, al crear o tocar endpoints /api/v1, al tocar cobros, deuda, puestos, tarifas, tickets, asistencia, caja, sesiones o roles, y para revisar un cambio antes de un commit. Para cambios solo visuales (colores, layout) usa además ui-ux-pro-max."
----
-
 # SISREC: cómo trabajar en este proyecto sin romperlo
 
-Esta skill existe para evitar los cinco fallos típicos del código hecho con IA:
-**deuda técnica invisible, falta de comprensión, huecos de seguridad, costo de tokens y suposiciones sobre el negocio.**
-Cada sección dice qué hacer y qué está prohibido. Si una regla choca con lo que pide el usuario, se le dice antes de escribir código.
+Esta guía reúne las reglas de negocio, la arquitectura y los controles de seguridad que se aplican al mantener SISREC.
 
 ## 0. El stack (no cambiarlo sin que el usuario lo pida)
 
@@ -81,7 +74,7 @@ grep -rn "nombreFuncion(" apps/server/src apps/client/src
 - Copiar y pegar una función para "una variante": se parametriza la existente.
 - Un tercer endpoint para lo mismo (ya hay dos para crear puestos: no agregar otro).
 - Un archivo nuevo de "utils" genérico: va en el módulo del dominio.
-- Hacer crecer `db.js` sin sección: cada bloque nuevo va bajo su comentario de sección, como `// Tickets preimpresos (migrations/0014_tickets_preimpresos.sql)`. La separación en `repos/` y `services/` vive en la rama `claude/compassionate-hermann-e2df59` (ver `references/deuda-tecnica.md`).
+- Hacer crecer `db.js` sin sección: cada bloque nuevo va bajo su comentario de sección, como `// Tickets preimpresos (migrations/0014_tickets_preimpresos.sql)`. La separación en `repos/` y `services/` se trabajó en una rama local de refactorización (ver `references/deuda-tecnica.md`).
 
 ## 3. Base de datos
 
@@ -137,9 +130,9 @@ Cómo se comprueba: <la prueba que lo cubre y el comando>
 ## 7. Git y entorno
 
 - Raíz git: la carpeta `Proyecto_Final_Salcedo_Rentas` (git propio desde el 2026-10-27), remoto `origin` = `Lucioarizaca7/PROYECTO_SALCEDO_FINAL` (público). Rama de trabajo: `correccion/logica-cobros`.
-- `D:/visual_code` es otro repositorio, clon de `luiarca/VISUAL_CODE` (de un compañero, solo lectura): **nunca** se hace commit ni push del proyecto ahí. Sus worktrees viejos de `.claude/worktrees/` siguen siendo de ese repo.
+- `D:/visual_code` es otro repositorio, clon de `luiarca/VISUAL_CODE` (de un compañero, solo lectura): **nunca** se hace commit ni push del proyecto ahí.
 - **No se commitea, no se hace push, no se une ramas ni se abre PR sin que el usuario lo pida.** Las ramas se dejan separadas: las revisa el usuario.
-- Commits en español, sin `package.json`, `package-lock.json` ni `.claude/launch.json` si no son parte del trabajo.
+- Commits en español, sin `package.json` ni `package-lock.json` si no son parte del trabajo.
 - Base local: `docker start sisrec-postgres`.
 
 ## 8. Checklist antes de dar algo por terminado
@@ -150,7 +143,7 @@ Cómo se comprueba: <la prueba que lo cubre y el comando>
 - [ ] Rutas con roles, auditoría y mensajes en español; conteo de `api-seguridad.test.js` al día.
 - [ ] Ningún secreto, token o contraseña en código, logs o chat.
 - [ ] Pasan, en `apps/server`: `npm test` y `npx tsc --noEmit`; en `apps/client`: `node --test tests/*.test.js`; y el build de Vite (`npx vite build --outDir <carpeta temporal>`).
-- [ ] Si cambió algo visible: comprobado en el navegador (servidores `api` y `web` de `.claude/launch.json`).
+- [ ] Si cambió algo visible: comprobado en el navegador (servidores iniciados con `npm run dev`).
 - [ ] Nota de cambio entregada al usuario.
 
 ## Referencias (leer solo la que haga falta)

@@ -1,6 +1,6 @@
 /**
  * Genera libros Excel de prueba para "Importar padrón" (POST /api/v1/comerciantes/importar-padron).
- * Traído de la rama claude/gifted-mendel-9fxas5 (allí en Python) y ajustado a las reglas de esta rama:
+ * Adaptado de una versión en Python a las reglas de SISREC:
  * sin las columnas "Fecha Feria" ni "Tarifa" (aquí no existen) y con metraje en las zonas sin tipo de vía.
  *
  * Salida (datos-prueba/ en la raíz del proyecto):

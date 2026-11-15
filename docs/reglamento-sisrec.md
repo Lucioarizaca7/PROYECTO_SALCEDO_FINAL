@@ -6,7 +6,7 @@ Versión del 14/11/2026. Este documento resume, sin términos técnicos, las reg
 
 - Solo incluye las reglas que **ya rigen** en el sistema.
 - Las reglas propuestas y las decisiones pendientes están en `docs/plan-reglas-negocio.md`.
-- El detalle para quien programa está en `.claude/skills/sisrec/references/reglas-negocio.md`, con los mismos números.
+- El detalle para quien programa está en [Reglas de negocio](sisrec/references/reglas-negocio.md), con los mismos números.
 
 ## En pocas palabras
 

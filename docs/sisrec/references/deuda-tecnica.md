@@ -8,7 +8,7 @@ Ordenada de más a menos grave. Antes de tomar uno de estos puntos, comprobar qu
    - `getPendingDebt` ya no corta en 300 comerciantes; calcula de a 8 en paralelo.
    - El resumen de riesgo cuenta a todos los puntuados, no solo a los 5 que lista.
 
-   Con un padrón de miles sigue siendo una liquidación por comerciante en cada carga del panel. La versión en lote de "Refactor 6" vive en `claude/compassionate-hermann-e2df59`, que no está en el remoto.)
+   Con un padrón de miles sigue siendo una liquidación por comerciante en cada carga del panel. La versión en lote de "Refactor 6" vive en la rama local de refactorización, que no está en el remoto.)
 4. (Resuelto en "Refactor 6": `calcularLiquidacionLote` reemplaza el bucle N+1 en el panel, el mapa, la jornada y el riesgo de morosidad.)
 5. (Resuelto en "Refactor 5": `App.jsx` quedó en las rutas; cada página tiene su archivo y su hook.) Queda: todos los datos compartidos se recargan juntos con `refresh()` (10 peticiones), sin caché por página.
 6. (Resuelto el 12/11/2026, migración 0031: paga por cada puesto desde noviembre de 2026; ver `reglas-negocio.md`.)
@@ -26,12 +26,12 @@ Resueltos en la rama `correccion/logica-cobros` (commit 5a23ca5f, sale de `segur
 - Editar un puesto sin GPS lo dejaba en (0, 0): `parseCoord` en `db.js`.
 - Periodo en UTC en el cliente: ahora se usa `periodoEnLima` (`services/jornadaOffline.js`).
 
-Los mismos arreglos de servidor están también en `claude/compassionate-hermann-e2df59` (commit acdda653), sobre `repos/cobros.js` (`sumPagadoDelPeriodo`, `getPagadoDelPeriodoPorComerciante`, `bloquearComerciante`), `services/liquidacion.js` (el lote) y `services/puestos.js`. **Al unir:** quedarse con la versión de repos/services y con la prueba `logica-cobros.test.js` de esa rama (llama también al lote). El arreglo del periodo en el cliente solo está en `correccion/logica-cobros`.
+Los mismos arreglos de servidor están también en la rama local de refactorización (commit acdda653), sobre `repos/cobros.js` (`sumPagadoDelPeriodo`, `getPagadoDelPeriodoPorComerciante`, `bloquearComerciante`), `services/liquidacion.js` (el lote) y `services/puestos.js`. **Al unir:** quedarse con la versión de repos/services y con la prueba `logica-cobros.test.js` de esa rama (llama también al lote). El arreglo del periodo en el cliente solo está en `correccion/logica-cobros`.
 
 Resueltos el 2026-10-17:
-- **Filtro de auditoría por comerciante** y **baja por edición** (`updateComerciante` a `inactivo` ahora da de baja los puestos, con `darDeBajaComerciante`): commit e3ac9a8b en la rama `correccion/logica-pendientes` (sale de `correccion/logica-cobros`, copia de trabajo en `.claude/worktrees/logica-pendientes`) y commit 0ab12ac2 en `claude/compassionate-hermann-e2df59` (en `repos/auditoria.js` y `repos/comerciantes.js`). Prueba: `tests/logica-pendientes.test.js`. También aplicados, sin commit, en el checkout principal.
+- **Filtro de auditoría por comerciante** y **baja por edición** (`updateComerciante` a `inactivo` ahora da de baja los puestos, con `darDeBajaComerciante`): commit e3ac9a8b en la rama `correccion/logica-pendientes` (sale de `correccion/logica-cobros`) y commit 0ab12ac2 en la rama local de refactorización (en `repos/auditoria.js` y `repos/comerciantes.js`). Prueba: `tests/logica-pendientes.test.js`. También aplicados, sin commit, en el checkout principal.
 - **Pago de un periodo anterior:** ya lo resolvía el trabajo de despliegue sin commit (`transacciones.periodo_aplicado`, migración 0011, `paidInPeriod`).
-- **Tarifa semanal → cobro por día cobrado** y **observación del cobrador**: sin commit en el checkout principal, sobre el trabajo de despliegue (dependen de las migraciones 0009 y 0010, que no están en ninguna rama). Migración `0013_cobro_por_dia.sql`, prueba `tests/cobro-por-dia.test.js`. No se puede aplicar a `claude/compassionate-hermann-e2df59`: esa rama no tiene la tabla de asistencias. Ver la regla en `reglas-negocio.md`.
+- **Tarifa semanal → cobro por día cobrado** y **observación del cobrador**: sin commit en el checkout principal, sobre el trabajo de despliegue (dependen de las migraciones 0009 y 0010, que no están en ninguna rama). Migración `0013_cobro_por_dia.sql`, prueba `tests/cobro-por-dia.test.js`. No se puede aplicar a la rama local de refactorización: esa rama no tiene la tabla de asistencias. Ver la regla en `reglas-negocio.md`.
 
 Revisión del cobro por día (2026-10-17), corregidos sin commit en el checkout principal y probados en `tests/cobro-por-dia.test.js`:
 - un cobro sin señal que llegaba antes que la marca iba a revisión;
@@ -53,7 +53,7 @@ Decidido: con dos puestos marcados el mismo día paga por cada puesto (S/ 3 por 
   - asigna solo `super_admin`;
   - el ticket convive con el recibo R-;
   - un ticket por día cobrado (también para varios días o varios puestos).
-- No se aplicó a `claude/compassionate-hermann-e2df59`.
+- No se aplicó a la rama local de refactorización.
 
 Pendientes menores:
 - El PDF de `/comprobantes/:id/pdf` siempre imprime "sha256:local", porque `getCobros` no trae `hash_transaccion`, y carga todos los cobros para buscar uno.
@@ -296,13 +296,13 @@ Queda: la baja de un puesto con señal débil no se encola (es del super_admin, 
   Son funciones nuevas con reglas de negocio: hay que decidirlas antes.
 - **Página pública (P1).** Solo tomó fuentes y colores; su estructura sigue siendo la de antes.
 
-## Lo que se trajo y lo que no de `claude/gifted-mendel-9fxas5` (2026-10-28)
+## Cambios revisados para la integración del 28/10/2026
 
 Esa rama de GitHub se separó de `main` el 15/10 y nunca se unió con esta. No se le hace merge: tiene otra estructura (`App.jsx`, `index.ts`), migraciones 0003–0006 que aquí son otras y tokens en `localStorage`. Se trajo a mano, en la rama `feature/carnet-llave`:
 
 - **Carnet con llave del portal:** migración 0016, `emitirCarnets` e `ingresarAlPortal` con llave en `portalAcceso.js`, `MerchantCardDialog.jsx` y el portal con llave o QR. Sin sesión guardada; solo `super_admin` emite.
 - **Libros Excel de prueba:** `datos-prueba/` y `apps/server/scripts/generar-padron-prueba.js`. Allá eran Python con `openpyxl`; aquí son Node con `exceljs`, sin "Fecha Feria" ni "Tarifa".
-- **Skill `penpot-backend`**, con las rutas de `routes/`.
+- **[Guía de Penpot y backend](../penpot-backend.md)**, con las rutas de `routes/`.
 - **Confirmación del padrón en lote:** se trabaja en una sesión aparte.
 
 Lo que **no** se trajo, para decidirlo aparte:
@@ -320,7 +320,7 @@ Lo que **no** se trajo, para decidirlo aparte:
 
 ## Orden de refactorización sugerido (de menor a mayor riesgo)
 
-Los pasos 1 a 3 y el 5 están en la rama `refactor/arquitectura` (commits "Refactor 1" a "Refactor 3" y "Refactor 5", 2026-10-16). El paso 4 está en la rama `claude/compassionate-hermann-e2df59` (commit 84e687e7), y el 6 se trabaja encima de ella; falta unirlas.
+Los pasos 1 a 3 y el 5 están en la rama `refactor/arquitectura` (commits "Refactor 1" a "Refactor 3" y "Refactor 5", 2026-10-16). El paso 4 está en la rama la rama local de refactorización (commit 84e687e7), y el 6 se trabaja encima de ella; falta unirlas.
 
 | Paso | Cambio | Condición para darlo por terminado |
 |---|---|---|

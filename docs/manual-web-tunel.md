@@ -125,10 +125,6 @@ Esa es la dirección que vas a abrir en el celular. Espera a que la ventana mues
 2. Entra con un usuario de prueba.
 3. Para probar sin señal, la primera vez entra con señal: así el celular guarda el padrón del día.
 
-### Atajo desde la app de Claude
-
-En `.claude/launch.json` están los servidores `api` y `web-tunel` (pasos 2 y 3). Puedes pedirle a Claude «enciende api y web-tunel». La base de datos (paso 1) y el túnel (paso 4) se encienden igual a mano.
-
 ---
 
 ## 4. Versión instalable (para probar «Instalar app» y el trabajo sin señal)
@@ -193,7 +189,7 @@ docker stop sisrec-postgres
 |---|---|---|
 | «El servidor no respondió» o `Failed to execute 'json' on 'Response': Unexpected end of JSON input` | La API está apagada. Casi siempre arrancó antes que la base de datos. | Paso 1 (`pg_isready`) y después reinicia la API (paso 2). Recarga el celular. |
 | Error **530** de Cloudflare, o en la ventana 4 `failed to dial to edge with quic` | La red bloquea QUIC. | Reinicia cloudflared **con** `--protocol http2`. |
-| `Port 5176 is already in use` | Ya hay otra web en el 5176 (la de desarrollo, la instalable o una que encendió Claude). | Detén la otra. Solo puede haber una en ese puerto. |
+| `Port 5176 is already in use` | Ya hay otra web en el 5176 (la de desarrollo o la instalable). | Detén la otra. Solo puede haber una en ese puerto. |
 | `Blocked request. This host is not allowed` | Entraste por una dirección que no es `*.trycloudflare.com`. | Usa la dirección que muestra la ventana 4. |
 | El celular dice que no encuentra la página | El túnel se cerró o cambió la dirección. | Mira la ventana 4. Si la reiniciaste, usa la dirección nueva. |
 | Los cambios no aparecen en la versión instalable | El Service Worker sigue mostrando la versión anterior. | Vuelve a hacer el build (sección 4) y toca **Actualizar** en el celular. |
