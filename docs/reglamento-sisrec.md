@@ -63,6 +63,10 @@ Versión del 14/11/2026. Este documento resume, sin términos técnicos, las reg
 | N.º | Regla | Responsable | Cómo se controla |
 |---|---|---|---|
 | RN-40 | El cobrador cierra su caja una vez por día y declara lo que tiene por método de pago. | Cobrador | El sistema calcula lo esperado y la diferencia. |
+| RN-41 | La entrega del efectivo queda registrada: quién recibe, cuándo y cuánto. La registra el super administrador que lo recibe, nunca quien cerró esa caja. | Super administrador | Constancia de entrega ligada al cierre. Auditoría. |
+| RN-42 | Todo faltante de caja se justifica por escrito al cerrar. Un sobrante, desde S/ 5. | Cobrador | El sistema no deja cerrar sin la justificación. |
+| RN-43 | Un cierre no se edita. Un error se corrige con una rectificación del super administrador, con motivo. | Super administrador | Se conserva el cierre original. Auditoría. |
+| RN-44 | Los cobros que llegan después del cierre se entregan aparte, como entrega complementaria. | Cobrador y super administrador | El sistema los separa y registra la entrega. |
 
 ## Deuda
 

@@ -72,7 +72,7 @@ Roles: `super_admin`, `cobrador`, `auditor`, `comerciante`. `staffOnly` = los tr
 | Asistencia ferial | `GET /asistencias?fecha=`, `POST /asistencias` (una o `{ marcas: [...] }`) | cobrador, super_admin |
 | Cobros en otra zona por cobrador | `GET /asistencias/otra-zona?desde=&hasta=` | super_admin, auditor |
 | Parámetros | `GET /parametros`, `PUT /parametros/inicio_cobro` | super_admin |
-| Caja (`routes/caja.ts`) | `GET /caja/resumen`, `POST /caja/cierre`, `GET /caja/cierres` | cobrador ve solo la suya; cierres: super_admin, auditor |
+| Caja (`routes/caja.ts`) | `GET /caja/resumen`, `POST /caja/cierre`, `GET /caja/cierres`, `POST /caja/cierres/:id/entrega`, `POST /caja/cierres/:id/rectificacion` | cobrador ve solo la suya; cierres: super_admin, auditor; entrega y rectificación: super_admin |
 | Tickets (`routes/tickets.ts`) | `GET /tickets/series`, `/tickets/lotes`, `/tickets/cobradores`, `/tickets/mios`; `POST /tickets/lotes`, `/tickets/lotes/:id/reasignar`, `/tickets/lotes/:id/devolver`, `/tickets/anulaciones` | lotes: solo super_admin (auditor consulta); mios y anulaciones: cobrador, super_admin |
 | Recibo | `GET /comprobantes/:id/pdf` y `GET /comprobantes/:id/recibo` (el recibo oficial con QR para reenviarlo por WhatsApp; el cobrador solo los suyos), `GET /portal/recibos/:token/pdf` (enlace firmado de 30 min), `GET /publico/verificar/:token` (QR) | `src/reciboPdf.js` |
 | Jornada | `GET /jornada/paquete` | cobrador |
@@ -117,3 +117,4 @@ Para ver los roles exactos de una ruta: `grep -rn "'/api/v1/<ruta>" apps/server/
 - **0031:** zona del día (el cambio de zona de un puesto ya no pisa la zona elegida en una marca) y `puestos_tenencia` (qué puestos tuvo cada comerciante cada día), para cobrar por puesto desde noviembre de 2026.
 - **0032:** cobro solo por día cobrado con el precio de cada zona: unidad `dia`, CHECK `tarifas_precio_de_zona` (una tarifa activa es el precio de una zona), las tarifas por rubro o mes quedan inactivas, y `ticket_series` por valor.
 - **0033:** `transacciones.zona_cobro_id` pasa a ser la zona del día del cobro (la de la marca de ese día); corrige los cobros existentes.
+- **0034:** `cierres_caja.justificacion` (obligatoria con faltante o sobrante de S/ 5 o más), `entregas_caja` y `cierres_caja_rectificaciones`.

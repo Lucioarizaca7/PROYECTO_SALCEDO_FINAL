@@ -64,10 +64,13 @@ test('el cobrador cierra su caja: lo esperado lo calcula el servidor y se ve la 
   assert.equal(resumen.body.data.cobros, 3);
   assert.equal(resumen.body.data.cierre, null);
 
-  // Faltan S/ 1 en efectivo.
+  // Faltan S/ 1 en efectivo: un faltante no se cierra sin justificación (RN-42).
+  const sinJustificar = await api('/caja/cierre', { method: 'POST', token: cobrador.token, body: { fecha: dia, declarado: { efectivo: 4, yape: 1.5 } } });
+  assert.equal(sinJustificar.status, 400);
+  assert.match(sinJustificar.body.message, /Faltan S\/ 1\.00: escriba la justificación/);
   const cierre = await api('/caja/cierre', {
     method: 'POST', token: cobrador.token,
-    body: { fecha: dia, declarado: { efectivo: 4, yape: 1.5 }, esperado: { efectivo: 999 } }
+    body: { fecha: dia, declarado: { efectivo: 4, yape: 1.5 }, esperado: { efectivo: 999 }, justificacion: 'Di mal un vuelto de S/ 1' }
   });
   assert.equal(cierre.status, 201, cierre.body?.message);
   assert.equal(cierre.body.data.esperado_efectivo, 5, 'lo esperado no lo decide el celular');
@@ -89,6 +92,68 @@ test('el cobrador cierra su caja: lo esperado lo calcula el servidor y se ve la 
   const cierres = await api(`/caja/cierres?desde=${dia}&hasta=${dia}`, { token: admin.token });
   assert.equal(cierres.body.data.length, 1);
   assert.equal(cierres.body.data[0].cobrador_id, cobrador.id);
+  assert.equal(cierres.body.data[0].justificacion, 'Di mal un vuelto de S/ 1');
+  assert.equal(cierres.body.data[0].entregado, false);
+
+  // Entrega del dinero (RN-41): la registra el super_admin que lo recibe.
+  const id = cierre.body.data.id;
+  const entregar = (token, body) => api(`/caja/cierres/${id}/entrega`, { method: 'POST', token, body });
+  assert.equal((await entregar(cobrador.token, { monto: 4 })).status, 403, 'el cobrador no registra su propia entrega');
+  const otroMonto = await entregar(admin.token, { monto: 3 });
+  assert.equal(otroMonto.status, 400);
+  assert.match(otroMonto.body.message, /declaró S\/ 4\.00 en efectivo/);
+  const entrega = await entregar(admin.token, { monto: 4 });
+  assert.equal(entrega.status, 201, entrega.body?.message);
+  assert.equal(entrega.body.data.entregado, true);
+  assert.deepEqual([entrega.body.data.entregas[0].tipo, entrega.body.data.entregas[0].monto, entrega.body.data.entregas[0].recibido_por], ['cierre', 4, 'Administrador']);
+  assert.equal((await entregar(admin.token, { monto: 4 })).status, 409, 'el efectivo de un cierre se entrega una vez');
+  // El cobro que entró después del cierre se entrega aparte (RN-44).
+  const complementaria = await entregar(admin.token, { tipo: 'complementaria', monto: 1 });
+  assert.equal(complementaria.status, 201, complementaria.body?.message);
+  assert.equal(complementaria.body.data.entregas.length, 2);
+
+  // Rectificación (RN-43): el cierre original no cambia; vale lo rectificado.
+  const rectificar = (token, body) => api(`/caja/cierres/${id}/rectificacion`, { method: 'POST', token, body });
+  const corregido = { efectivo: 5, yape: 1.5, plin: 0, pos: 0 };
+  assert.equal((await rectificar(cobrador.token, { declarado: corregido, motivo: 'Contó mal' })).status, 403);
+  assert.equal((await rectificar(admin.token, { declarado: corregido })).status, 400, 'sin motivo no se rectifica');
+  const rectificado = await rectificar(admin.token, { declarado: corregido, motivo: 'El billete de S/ 1 estaba en otro bolsillo' });
+  assert.equal(rectificado.status, 201, rectificado.body?.message);
+  assert.equal(rectificado.body.data.diferencia, -1, 'el cierre original se conserva');
+  assert.equal(rectificado.body.data.declarado_efectivo, 4);
+  assert.equal(rectificado.body.data.vigente.diferencia, 0);
+  assert.equal(rectificado.body.data.vigente.declarado_efectivo, 5);
+  assert.equal(rectificado.body.data.rectificacion.rectificado_por, 'Administrador');
+  assert.equal((await rectificar(admin.token, { declarado: corregido, motivo: 'Otra vez lo mismo' })).status, 409);
+  assert.equal((await rectificar(admin.token, { declarado: corregido, motivo: 'No existe' }).then(() => api('/caja/cierres/999999999/rectificacion', { method: 'POST', token: admin.token, body: { declarado: corregido, motivo: 'No existe' } }))).status, 404);
+
+  const { rows: auditoria } = await pool.query("SELECT accion FROM auditoria_logs WHERE entidad IN ('entregas_caja', 'cierres_caja') AND recurso_id = $1 ORDER BY id", [String(id)]);
+  assert.deepEqual(auditoria.map((fila) => fila.accion), ['CERRAR_CAJA', 'ENTREGA_CAJA', 'ENTREGA_CAJA', 'RECTIFICAR_CAJA']);
+});
+
+test('un sobrante se justifica desde S/ 5; nadie registra la entrega de su propia caja', async () => {
+  const cobrador = await login('cobrador@salcedo.gob.pe', 'cobro123');
+  const admin = await login('admin@salcedo.gob.pe', 'admin123');
+  const cerrar = (token, body) => api('/caja/cierre', { method: 'POST', token, body });
+  // Días sin cobros: lo declarado es todo sobrante.
+  const menor = await cerrar(cobrador.token, { fecha: '2026-01-17', declarado: { efectivo: 4.99 } });
+  assert.equal(menor.status, 201, menor.body?.message);
+  const mayor = await cerrar(cobrador.token, { fecha: '2026-01-18', declarado: { efectivo: 5 } });
+  assert.equal(mayor.status, 400);
+  assert.match(mayor.body.message, /Sobran S\/ 5\.00/);
+  assert.equal((await cerrar(cobrador.token, { fecha: '2026-01-18', declarado: { efectivo: 5 }, justificacion: 'Un comerciante no quiso su vuelto' })).status, 201);
+  // La base repite la regla aunque el dato entre por otro camino.
+  await assert.rejects(() => pool.query("INSERT INTO cierres_caja (cobrador_id, fecha, declarado_efectivo) VALUES ($1, '2026-01-19', 9)", [cobrador.id]), /cierres_caja_diferencia_justificada/);
+
+  // Sin cobros posteriores no hay entrega complementaria.
+  const sinPosteriores = await api(`/caja/cierres/${menor.body.data.id}/entrega`, { method: 'POST', token: admin.token, body: { tipo: 'complementaria', monto: 1 } });
+  assert.equal(sinPosteriores.status, 409);
+
+  const propio = await cerrar(admin.token, { fecha: '2026-01-17', declarado: {} });
+  assert.equal(propio.status, 201, propio.body?.message);
+  const aSiMismo = await api(`/caja/cierres/${propio.body.data.id}/entrega`, { method: 'POST', token: admin.token, body: { monto: 0 } });
+  assert.equal(aSiMismo.status, 409);
+  assert.match(aSiMismo.body.message, /su propia caja/);
 });
 
 test('un cobro en línea cuenta en la caja de hoy aunque el celular mande otra fecha', async () => {

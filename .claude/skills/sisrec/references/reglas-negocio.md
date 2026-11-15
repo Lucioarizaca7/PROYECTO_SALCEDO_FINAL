@@ -58,6 +58,10 @@ Las reglas propuestas y las decisiones pendientes están en `docs/plan-reglas-ne
 | N.º | Regla | Responsable | Control | Detalle en el anexo |
 |---|---|---|---|---|
 | RN-40 | El cobrador cierra su caja una vez por día y declara lo que tiene por método de pago. | Cobrador | El sistema calcula lo esperado y la diferencia. | Caja |
+| RN-41 | La entrega del efectivo queda registrada: quién recibe, cuándo y cuánto. La registra el super administrador que lo recibe, nunca quien cerró esa caja. | Super administrador | Constancia de entrega ligada al cierre. Auditoría. | Caja |
+| RN-42 | Todo faltante de caja se justifica por escrito al cerrar. Un sobrante, desde S/ 5. | Cobrador | El sistema no deja cerrar sin la justificación. | Caja |
+| RN-43 | Un cierre no se edita. Un error se corrige con una rectificación del super administrador, con motivo. | Super administrador | Se conserva el cierre original. Auditoría. | Caja |
+| RN-44 | Los cobros que llegan después del cierre se entregan aparte, como entrega complementaria. | Cobrador y super administrador | El sistema los separa y registra la entrega. | Caja |
 
 ### Deuda
 
@@ -340,12 +344,15 @@ Antes pasar a un ferial a eventual borraba su deuda atrasada entera, y pasar un 
 
 - **Lo esperado** lo calcula el servidor: los cobros confirmados del cobrador ese día (día de Lima, según `fecha_cobro_cliente`), por método: efectivo, Yape, Plin y POS.
 - **El cobrador declara** lo que tiene por método (`POST /caja/cierre`, cobrador y super_admin). La diferencia es lo declarado menos lo esperado y queda guardada en `cierres_caja`.
-- **Un cierre por cobrador y día.** Un segundo cierre responde 409. No se puede cerrar un día futuro. No hay reapertura ni corrección de un cierre (ver F3 en `docs/plan-reglas-negocio.md`).
+- **Un cierre por cobrador y día.** Un segundo cierre responde 409. No se puede cerrar un día futuro. El cierre no se reabre ni se edita: se rectifica (ver abajo).
 - **Cobros posteriores al cierre:** si entran cobros de ese día después de cerrar (por ejemplo, sincronizados tarde), `resumenCaja` los muestra aparte en `posteriores_al_cierre`.
 - **Tickets:** el cierre guarda el resumen de tickets del día y sus alertas (ver Tickets preimpresos).
 - **Consulta:** `GET /caja/cierres` es para super_admin y auditor. El cierre queda en la auditoría con lo esperado y la diferencia.
 - **Puestos sin marcar hoy** (RN-26, 15/11/2026): antes de cerrar, la pantalla de Caja lista los puestos sin marca del día, por zona. Solo entran las zonas donde ese día ya se marcó al menos un puesto: una feria que hoy no sale no tiene pendientes. Lo calcula el cliente (`puestosSinMarcar`, `services/asistenciaOffline.js`) con `GET /asistencias`. Es un aviso: no bloquea el cierre. **Límite:** todavía no hay zonas asignadas por cobrador (RN-64, decisión pendiente), así que la lista incluye los puestos de esas zonas que le tocaban a otro cobrador.
-- **Sin regla todavía:** la entrega del dinero a tesorería, el tope de diferencia y la conciliación de Yape, Plin y POS (F1, F2 y F5 del plan).
+- **Justificación de la diferencia** (RN-42, decisión del usuario del 15/11/2026; migración 0034): todo faltante y todo sobrante de S/ 5 o más piden `justificacion` (5 a 500 caracteres) al cerrar; si falta, `cerrarCaja` responde 400. La base repite la regla (`cierres_caja_diferencia_justificada`, `NOT VALID`: no obliga a los cierres anteriores). El tope vive en `SOBRANTE_SIN_JUSTIFICAR` (servidor) y en `lib/caja.js` (cliente, solo para mostrar el campo).
+- **Entrega del dinero** (RN-41 y RN-44, misma decisión): `registrarEntregaCaja`, `POST /caja/cierres/:id/entrega`, solo super_admin. Se entrega el **efectivo**; Yape, Plin y POS llegan a la cuenta. Tabla `entregas_caja`: tipo `cierre` (una sola por cierre, índice único) o `complementaria` (los cobros que entraron después del cierre; solo si los hay y con monto mayor que cero). Si el monto recibido no es el efectivo declarado vigente, las observaciones son obligatorias. **Quien recibe no puede ser quien cerró esa caja** (409): con titular y suplente, uno recibe la caja del otro. La pantalla muestra la constancia (`textoConstancia`, número `E-000012`).
+- **Rectificación** (RN-43, misma decisión): `rectificarCierreCaja`, `POST /caja/cierres/:id/rectificacion`, solo super_admin, con los cuatro montos corregidos y el motivo (5 a 500 caracteres). No toca `cierres_caja`: agrega una fila en `cierres_caja_rectificaciones` y vale la última. Cada cierre devuelve `vigente` (lo declarado y la diferencia que valen hoy), `rectificacion`, `entregas` y `entregado`. Rectificar con los mismos montos responde 409.
+- **Sin regla todavía:** la conciliación de Yape, Plin y POS con el estado de cuenta (el usuario la dejó para después, 15/11/2026). **Límites:** una entrega registrada no se anula ni se corrige; rectificar después de la entrega no cambia la entrega ya registrada.
 
 ## Recibo (12/11/2026)
 
