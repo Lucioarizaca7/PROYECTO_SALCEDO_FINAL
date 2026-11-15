@@ -1,5 +1,89 @@
 # Reglas de negocio de SISREC
 
+Este archivo tiene dos partes:
+
+1. **Reglamento:** las reglas vigentes, numeradas, con su responsable y su control. Es lo que se valida con la Jefa de Rentas. La versión para firmar, sin términos técnicos, está en `docs/reglamento-sisrec.md`.
+2. **Anexo técnico:** el detalle de cada regla para quien programa (funciones, migraciones, casos borde e historia).
+
+Las reglas propuestas y las decisiones pendientes están en `docs/plan-reglas-negocio.md`. Una regla pasa al reglamento cuando el usuario la aprueba y queda programada; conserva su número.
+
+**Cómo mantenerlo:** una regla nueva se agrega primero al reglamento (número, regla, responsable, control) y después su detalle al anexo. Si una regla cambia, se corrige en los dos sitios y en `docs/reglamento-sisrec.md`. La historia («antes hacía…») va solo en el anexo.
+
+## Reglamento
+
+### Padrón y puestos
+
+| N.º | Regla | Responsable | Control | Detalle en el anexo |
+|---|---|---|---|---|
+| RN-01 | Cada persona tiene un solo registro, identificado por su DNI o RUC. | Super administrador | El sistema rechaza un documento repetido, aunque sea de un dado de baja. | Importación del padrón |
+| RN-02 | Un comerciante sin DNI se registra como pendiente de regularización y paga igual. | Super administrador | Lista de pendientes en Comerciantes. | Importación del padrón |
+| RN-03 | Un comerciante no se borra: se da de baja. La baja anula su carnet y da de baja sus puestos. | Super administrador | Auditoría. | Liquidación (Baja) |
+| RN-04 | Un puesto pertenece a una zona. Solo el super administrador cambia la zona habitual de un puesto. | Super administrador | El servidor rechaza el cambio de otro rol. | Puestos |
+
+### Zonas y precios
+
+| N.º | Regla | Responsable | Control | Detalle en el anexo |
+|---|---|---|---|---|
+| RN-10 | Una zona es un área donde todos pagan el mismo precio por día. No hay calles. | Super administrador | Pantalla Zonas. | Liquidación |
+| RN-11 | Una feria con parte asfaltada y parte sin asfaltar se registra como dos zonas. | Super administrador | Explicación en la pantalla Zonas. | Liquidación |
+| RN-12 | La zona nace con su precio. El tipo de vía lo sugiere: S/ 3 asfaltada, S/ 2 sin asfaltar. | Super administrador | El formulario lo propone; se puede cambiar. | Liquidación |
+| RN-13 | Solo el super administrador fija o cambia un precio. | Super administrador | El servidor rechaza a otros roles. Auditoría. | Liquidación |
+| RN-14 | Un precio nuevo rige desde hoy o después, nunca hacia atrás. Los días anteriores conservan su precio. | Sistema | El servidor rechaza una fecha pasada. | Liquidación |
+| RN-16 | Una zona sin precio no puede cobrar en línea. Sin señal, el cobro queda observado. | Sistema | Aviso en Tarifas. | Liquidación |
+
+### Día cobrado
+
+| N.º | Regla | Responsable | Control | Detalle en el anexo |
+|---|---|---|---|---|
+| RN-20 | Se debe solo el día que el cobrador marcó o cobró. Sin día cobrado no hay deuda. | Cobrador | Marca de asistencia o cobro. | Liquidación |
+| RN-21 | Cada puesto marcado paga su día. Dos puestos el mismo día son dos pagos. | Cobrador | Detalle por puesto en la liquidación. | Liquidación (Varios puestos) |
+| RN-23 | Si el comerciante vende ese día en otra zona, el cobrador elige la zona del día y se cobra ese precio. | Cobrador | Queda en Observaciones. | Liquidación (Zona del día) |
+| RN-24 | El cobrador marca hasta 3 días atrás. Más atrás, solo el super administrador. | Sistema | El servidor lo rechaza. Auditoría. | Liquidación |
+| RN-25 | «No salió» no genera deuda. «No vendió» y «se negó a pagar» sí la generan. | Cobrador | Motivo obligatorio y coherente con la marca. | Liquidación (Observación del cobrador) |
+| RN-26 | Antes de cerrar su caja, el cobrador ve los puestos que quedaron sin marcar en las zonas donde ese día ya marcó a otros, y los marca. | Cobrador | Lista «sin marcar hoy» en Cierre de caja. Avisa, no bloquea. | Caja |
+
+### Cobro y comprobantes
+
+| N.º | Regla | Responsable | Control | Detalle en el anexo |
+|---|---|---|---|---|
+| RN-30 | Todo cobro genera un recibo con número correlativo. | Sistema | Automático. | Cobros |
+| RN-31 | Por cada puesto y día cobrado se entrega un ticket preimpreso del valor de ese día. | Cobrador | La suma de los tickets debe ser igual al monto. | Tickets preimpresos |
+| RN-32 | Los talonarios los asigna solo el super administrador. | Super administrador | Lotes con rango único. | Tickets preimpresos |
+| RN-34 | Yape, Plin y POS exigen número de operación, único por método. | Cobrador | El sistema rechaza un número repetido. | Cobros |
+| RN-36 | Sin señal, el cobro se guarda en el celular y se envía después. Un conflicto queda observado, nunca se descarta. | Sistema | Revisión de cobros. | Cobros y Offline |
+| RN-37 | Un cobro no se borra: lo anula el super administrador con un motivo. | Super administrador | Auditoría. | Tickets preimpresos (anularCobro) |
+
+### Caja
+
+| N.º | Regla | Responsable | Control | Detalle en el anexo |
+|---|---|---|---|---|
+| RN-40 | El cobrador cierra su caja una vez por día y declara lo que tiene por método de pago. | Cobrador | El sistema calcula lo esperado y la diferencia. | Caja |
+| RN-41 | La entrega del efectivo queda registrada: quién recibe, cuándo y cuánto. La registra el super administrador que lo recibe, nunca quien cerró esa caja. | Super administrador | Constancia de entrega ligada al cierre. Auditoría. | Caja |
+| RN-42 | Todo faltante de caja se justifica por escrito al cerrar. Un sobrante, desde S/ 5. | Cobrador | El sistema no deja cerrar sin la justificación. | Caja |
+| RN-43 | Un cierre no se edita. Un error se corrige con una rectificación del super administrador, con motivo. | Super administrador | Se conserva el cierre original. Auditoría. | Caja |
+| RN-44 | Los cobros que llegan después del cierre se entregan aparte, como entrega complementaria. | Cobrador y super administrador | El sistema los separa y registra la entrega. | Caja |
+
+### Deuda
+
+| N.º | Regla | Responsable | Control | Detalle en el anexo |
+|---|---|---|---|---|
+| RN-50 | La deuda es la suma de los días cobrados sin pagar, desde el inicio de cobro. | Sistema | Una sola fórmula para todo el sistema. | Liquidación (Deuda acumulada) |
+| RN-51 | Un pago cancela primero el mes más antiguo. | Sistema | Automático. | Liquidación (Deuda acumulada) |
+| RN-52 | El eventual no acumula deuda. | Sistema | Automático. | Liquidación |
+
+### Control y auditoría
+
+| N.º | Regla | Responsable | Control | Detalle en el anexo |
+|---|---|---|---|---|
+| RN-60 | El auditor solo consulta. No escribe en ninguna pantalla. | Sistema | Prueba automática de todas las rutas. | Autenticación y auditoría |
+| RN-61 | Hay dos super administradores: titular y suplente. Cada mes uno revisa lo que hizo el otro. | Gerencia | Memorando y auditoría. | Super administrador titular y suplente |
+| RN-62 | Los reportes por zona cuentan cada cobro en la zona donde se vendió ese día. | Sistema | Automático. | Cobros (Reportes) |
+| RN-63 | Cada mes se revisa el reporte «cobros en otra zona» por cobrador. | Super administrador | Reporte en Reportes, para super administrador y auditor. | Cobros (Reportes) |
+
+---
+
+# Anexo técnico
+
 ## Puestos
 
 | Estado | Comerciante | Significado |
@@ -51,6 +135,7 @@ Si se agrega un `estado_pago` nuevo, hay que actualizar también `SERVER_TO_MAP`
 - **El precio lo fija el `super_admin` para cada zona** en Tarifas ("Precios por zona"): una fila de `tarifas` con `zona_id`, unidad `dia` y `monto_fijo`, con su vigencia. No depende del rubro, del tipo de comerciante ni de los metros. Un cambio de precio "desde tal día" cierra el anterior (`insertTarifa`); los días anteriores conservan su precio.
 - **Zona = área con un solo precio.** Cada zona tiene un tipo de vía (asfaltada / sin asfaltar) y un precio por día. El tipo de vía es un dato de la zona y sugiere el precio al ponerlo (S/ 3 / S/ 2), pero no lo decide. Una parte de la feria con otro tipo de vía va en otra zona. No hay calles (14/11/2026).
 - La base solo acepta activas las tarifas que son precio de una zona (CHECK `tarifas_precio_de_zona`); `validateTariff` rechaza con mensaje claro rubro, tipo de vía, monto variable y unidades mensuales. Las tarifas viejas quedaron inactivas (no se borran: `transacciones.tarifa_id` las referencia). La 0032 dio a cada zona con tipo de vía el precio general de su tipo de vía, con sus fechas; las zonas sin tipo de vía quedaron **sin precio** hasta que el `super_admin` lo ponga.
+- **La zona nace con su precio** (decisión del usuario, 14/11/2026): al crear una zona el formulario pide el precio por día y lo sugiere según el tipo de vía (S/ 3 asfaltada, S/ 2 sin asfaltar); se puede cambiar o dejar vacío. `insertZona` acepta `precio_dia` y guarda la zona y su precio (desde hoy) en una transacción. Cambiarlo después sigue siendo en Tarifas, y cambiar el tipo de vía de una zona que ya existe no cambia su precio.
 - **Zona sin precio:** sin días cobrados no debe nada; un día marcado en ella da `sinTarifaVigente` ("La zona X no tiene precio por día…"). El mapa la muestra como "Zona sin precio" y sin señal el cobro queda observado.
 - El metraje del puesto es opcional y solo informativo.
 - **Tickets por valor:** la serie de un día es la serie activa cuyo `valor` es el precio de ese día en su zona (`ticket_series` sin UNIQUE en `tipo_via`, índice único de `valor` entre las activas). Si la zona tiene un precio sin serie, ese tramo se cobra solo con el recibo R-.
@@ -207,6 +292,8 @@ Antes pasar a un ferial a eventual borraba su deuda atrasada entera, y pasar un 
   - El cobrador ve solo sus cobros, como en `GET /cobros`. Excepción: con `comerciante_id` ve el historial de ese comerciante, que la pantalla de cobro usa para sugerir monto y método.
   - El total de la pantalla suma solo los cobros confirmados.
   - El super_admin anula desde el reporte. Antes solo podía desde los 6 cobros más recientes.
+  - **Los reportes por zona cuentan donde se vendió** (decisión del usuario, 14/11/2026; migración 0033): `zona_cobro_id` es la **zona del día** del cobro, la de la marca de ese día (la que eligió el cobrador en "Zona de hoy" o la del puesto). Antes era la zona del comerciante: quien vendía un día en otra zona pagaba el precio de esa zona, pero el panel y los reportes sumaban el cobro a su zona habitual. Sin marca ese día (pago de un mes atrasado, eventual, fecha fuera de rango) sigue la zona del comerciante. Si en un segundo cobro del mismo día se elige otra zona, los cobros de ese día ya hechos pasan también a esa zona. La 0033 corrigió los cobros existentes. Los días marcados de la proyección se agrupan igual, por la zona de la marca. **Límite:** un cobro que paga días vendidos en zonas distintas cuenta entero en la zona del día del cobro; y cambiar la zona de una marca en el panel de asistencia después de cobrar no mueve el cobro.
+  - **Cobros en otra zona, por cobrador** (RN-63, 15/11/2026): `getCobrosEnOtraZona(db, { desde, hasta })`, `GET /asistencias/otra-zona` (super_admin y auditor; el cobrador recibe 403). Por cada cobrador cuenta las marcas de la app con asistencia, cuántas fueron en una zona distinta a la del puesto ese día (`zona_de_asistencia`), cuántas a una zona más barata o más cara, y la diferencia: precio de la zona del puesto menos precio de la zona del día, con la tarifa vigente ese día. Positivo = se cobró menos que en la zona del puesto. Si una de las dos zonas no tenía precio ese día, la marca cuenta en `sin_precio` y no entra en la diferencia. Solo consulta: no cambia montos ni bloquea al cobrador. Por omisión, del día 1 del mes a hoy.
   - **Zona y rubro del día del cobro** (migración 0028, 11/11/2026, misma decisión "rige desde el cambio"): cada cobro guarda en su fila la zona y el rubro que tenía el comerciante ese día (`zona_cobro_id`, `rubro_cobro_id`; un cobro sin señal fechado días atrás toma el valor de ese día). El panel (`porZona`, `porRubro`), las columnas y filtros de `/reportes` y las series de la proyección agrupan con esa foto: corregir el padrón ya no cambia la recaudación cerrada de los meses pasados. Una fila sin foto (escrita fuera de la API) cae al valor actual. Los días marcados por zona de la proyección usan la zona del comerciante el día de la marca (`CAMBIO_POSTERIOR`). El conteo "comerciantes" por zona del panel sí es el padrón de hoy, sin dados de baja (antes los contaba).
 
 ### Tickets preimpresos (migración 0014, `routes/tickets.ts`)
@@ -252,6 +339,20 @@ Antes pasar a un ferial a eventual borraba su deuda atrasada entera, y pasar un 
   - `services/ticketsOffline.js` (estado en el store `jornada`, clave `tickets`) y `useTicketsCobrador`;
   - los consumidos y las anulaciones pendientes no vuelven a estar disponibles al refrescar.
 - **Límite conocido:** el cobro marca la asistencia solo en el puesto principal (`marcarDiaCobrado`). Para cobrar dos puestos el mismo día, el cobrador debe marcar los dos en el panel de asistencia.
+
+## Caja (`routes/caja.ts`, `resumenCaja`, `cerrarCaja`)
+
+- **Lo esperado** lo calcula el servidor: los cobros confirmados del cobrador ese día (día de Lima, según `fecha_cobro_cliente`), por método: efectivo, Yape, Plin y POS.
+- **El cobrador declara** lo que tiene por método (`POST /caja/cierre`, cobrador y super_admin). La diferencia es lo declarado menos lo esperado y queda guardada en `cierres_caja`.
+- **Un cierre por cobrador y día.** Un segundo cierre responde 409. No se puede cerrar un día futuro. El cierre no se reabre ni se edita: se rectifica (ver abajo).
+- **Cobros posteriores al cierre:** si entran cobros de ese día después de cerrar (por ejemplo, sincronizados tarde), `resumenCaja` los muestra aparte en `posteriores_al_cierre`.
+- **Tickets:** el cierre guarda el resumen de tickets del día y sus alertas (ver Tickets preimpresos).
+- **Consulta:** `GET /caja/cierres` es para super_admin y auditor. El cierre queda en la auditoría con lo esperado y la diferencia.
+- **Puestos sin marcar hoy** (RN-26, 15/11/2026): antes de cerrar, la pantalla de Caja lista los puestos sin marca del día, por zona. Solo entran las zonas donde ese día ya se marcó al menos un puesto: una feria que hoy no sale no tiene pendientes. Lo calcula el cliente (`puestosSinMarcar`, `services/asistenciaOffline.js`) con `GET /asistencias`. Es un aviso: no bloquea el cierre. **Límite:** todavía no hay zonas asignadas por cobrador (RN-64, decisión pendiente), así que la lista incluye los puestos de esas zonas que le tocaban a otro cobrador.
+- **Justificación de la diferencia** (RN-42, decisión del usuario del 15/11/2026; migración 0034): todo faltante y todo sobrante de S/ 5 o más piden `justificacion` (5 a 500 caracteres) al cerrar; si falta, `cerrarCaja` responde 400. La base repite la regla (`cierres_caja_diferencia_justificada`, `NOT VALID`: no obliga a los cierres anteriores). El tope vive en `SOBRANTE_SIN_JUSTIFICAR` (servidor) y en `lib/caja.js` (cliente, solo para mostrar el campo).
+- **Entrega del dinero** (RN-41 y RN-44, misma decisión): `registrarEntregaCaja`, `POST /caja/cierres/:id/entrega`, solo super_admin. Se entrega el **efectivo**; Yape, Plin y POS llegan a la cuenta. Tabla `entregas_caja`: tipo `cierre` (una sola por cierre, índice único) o `complementaria` (los cobros que entraron después del cierre; solo si los hay y con monto mayor que cero). Si el monto recibido no es el efectivo declarado vigente, las observaciones son obligatorias. **Quien recibe no puede ser quien cerró esa caja** (409): con titular y suplente, uno recibe la caja del otro. La pantalla muestra la constancia (`textoConstancia`, número `E-000012`).
+- **Rectificación** (RN-43, misma decisión): `rectificarCierreCaja`, `POST /caja/cierres/:id/rectificacion`, solo super_admin, con los cuatro montos corregidos y el motivo (5 a 500 caracteres). No toca `cierres_caja`: agrega una fila en `cierres_caja_rectificaciones` y vale la última. Cada cierre devuelve `vigente` (lo declarado y la diferencia que valen hoy), `rectificacion`, `entregas` y `entregado`. Rectificar con los mismos montos responde 409.
+- **Sin regla todavía:** la conciliación de Yape, Plin y POS con el estado de cuenta (el usuario la dejó para después, 15/11/2026). **Límites:** una entrega registrada no se anula ni se corrige; rectificar después de la entrega no cambia la entrega ya registrada.
 
 ## Recibo (12/11/2026)
 

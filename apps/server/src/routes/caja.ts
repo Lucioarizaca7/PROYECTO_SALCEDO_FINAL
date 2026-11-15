@@ -1,6 +1,6 @@
 // Cierre de caja diario por cobrador: lo esperado (calculado en el servidor) frente a lo declarado.
 import express from 'express';
-import { resumenCaja, cerrarCaja, getCierresCaja } from '../db.js';
+import { resumenCaja, cerrarCaja, getCierresCaja, registrarEntregaCaja, rectificarCierreCaja } from '../db.js';
 import { requireAuth, requireRoles } from '../auth.js';
 import { auditContext } from '../http/comunes.js';
 import { ValidationError } from '../errors.js';
@@ -23,6 +23,18 @@ router.post('/api/v1/caja/cierre', requireAuth, requireRoles(['cobrador', 'super
   const data = await cerrarCaja(db, req.user.id, req.body || {}, { audit: auditContext(req, 'CERRAR_CAJA') });
   const texto = data.diferencia === 0 ? 'cuadra' : data.diferencia > 0 ? `sobran S/ ${data.diferencia.toFixed(2)}` : `faltan S/ ${Math.abs(data.diferencia).toFixed(2)}`;
   return res.status(201).json({ data, message: `Caja cerrada: ${texto}` });
+});
+
+// Entrega del dinero de un cierre (RN-41, RN-44): la registra el super_admin que lo recibe, nunca el propio cobrador.
+router.post('/api/v1/caja/cierres/:id/entrega', requireAuth, requireRoles(['super_admin']), async (req, res) => {
+  const data = await registrarEntregaCaja(db, req.params.id, req.body || {}, { usuarioId: req.user.id, audit: auditContext(req, 'ENTREGA_CAJA') });
+  return res.status(201).json({ data, message: 'Entrega registrada' });
+});
+
+// Rectificación de un cierre (RN-43): el cierre original no se edita.
+router.post('/api/v1/caja/cierres/:id/rectificacion', requireAuth, requireRoles(['super_admin']), async (req, res) => {
+  const data = await rectificarCierreCaja(db, req.params.id, req.body || {}, { usuarioId: req.user.id, audit: auditContext(req, 'RECTIFICAR_CAJA') });
+  return res.status(201).json({ data, message: 'Cierre rectificado' });
 });
 
 router.get('/api/v1/caja/cierres', requireAuth, requireRoles(['super_admin', 'auditor']), async (req, res) => {
