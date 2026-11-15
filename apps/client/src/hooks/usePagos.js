@@ -9,7 +9,7 @@ import { aComercianteDePantalla, aSaldoDePantalla, hoyEnLima, montoDiaEnZona, pe
 import { CLAVE_ASISTENCIAS, estadoDelDia } from '../services/asistenciaOffline';
 import { crearHashCobro, servidorNoDisponible } from '../services/offlineQueue';
 import { storeFor } from '../services/offlineStore';
-import { montoDeRequeridos, proximosTickets, requeridosEnZona, requeridosPorDefecto, serieDeTipoVia, seriesConMarcaDeHoy, textoTicket } from '../services/ticketsOffline';
+import { montoDeRequeridos, proximosTickets, requeridosEnZona, requeridosPorDefecto, serieDeValor, seriesConMarcaDeHoy, textoTicket } from '../services/ticketsOffline';
 import { useTicketsCobrador } from '../features/offline/useTicketsCobrador';
 import { apiBase, authFetch, leerJson, MENSAJE_SIN_SERVIDOR } from '../services/session';
 
@@ -59,9 +59,9 @@ export function usePagos() {
   const zonas = datosJornada.zonas.length ? datosJornada.zonas : (catalogos?.zonas || []);
   const tarifasDia = datosJornada.tarifas.length ? datosJornada.tarifas : (tariffRecords || []);
   const zonaElegida = zonas.find((zona) => String(zona.id) === String(zonaDia)) || null;
-  // Solo quien paga por día cobrado y en el mes en curso: la zona del día es la de hoy.
-  const cobraPorDia = Boolean(balance && (balance.series_cobro?.length || balance.dias_asistidos !== undefined
-    || ['ferial_sin_asistencia', 'sin_asistencia'].includes(balance.motivo)));
+  // Todos menos el eventual pagan por día marcado (13/11/2026), y la zona del día es la de hoy: solo el mes en curso.
+  const cobraPorDia = Boolean(balance && !balance.cobro_diario && (balance.series_cobro?.length || balance.dias_asistidos !== undefined
+    || ['sin_dias_cobrados', 'ferial_sin_asistencia', 'sin_asistencia'].includes(balance.motivo)));
   const muestraZonaDia = cobraPorDia && (form.periodo || periodoEnLima()) === periodoEnLima();
   // Cada comerciante empieza en la zona de su puesto, o en la de su marca de hoy si se cobra sin señal. La marca se lee
   // del celular después de mostrarlo: va atada al id, así nunca se aplica a otro comerciante.
@@ -72,7 +72,7 @@ export function usePagos() {
   }, [zonaMarcada, merchant?.id]);
 
   useEffect(() => {
-    const serieZona = zonaElegida ? serieDeTipoVia(tickets.estado, zonaElegida.tipo_via) : null;
+    const serieZona = zonaElegida ? serieDeValor(tickets.estado, montoDiaEnZona(tarifasDia, zonaElegida.id) ?? zonaElegida.precio_dia) : null;
     setRequeridos(serieZona ? requeridosEnZona(balance?.series_cobro, serieZona) : requeridosPorDefecto(balance?.series_cobro));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [balance?.series_cobro, zonaDia]);
@@ -85,10 +85,10 @@ export function usePagos() {
     if (montoTickets !== null) setForm((current) => ({ ...current, monto: montoTickets > 0 ? String(montoTickets) : '' }));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [requeridos, usaTickets, balance]);
-  // Sin tickets, la zona del día cambia el monto del día: el de la tarifa de su tipo de vía por cada puesto de hoy.
+  // Sin tickets, la zona del día cambia el monto del día: el precio de esa zona por cada puesto de hoy.
   useEffect(() => {
     if (!zonaElegida || usaTickets) return;
-    const montoDia = montoDiaEnZona(tarifasDia, zonaElegida.tipo_via);
+    const montoDia = montoDiaEnZona(tarifasDia, zonaElegida.id) ?? (zonaElegida.precio_dia == null ? null : Number(zonaElegida.precio_dia));
     const puestosHoy = (balance?.series_cobro || []).reduce((total, item) => total + Number(item.puestos_hoy ?? item.puestos ?? 0), 0) || 1;
     if (montoDia !== null) setForm((current) => ({ ...current, monto: String(Number((montoDia * puestosHoy).toFixed(2))) }));
     // eslint-disable-next-line react-hooks/exhaustive-deps

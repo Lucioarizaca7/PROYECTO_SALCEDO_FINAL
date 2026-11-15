@@ -12,6 +12,7 @@ import { loginUser } from '../src/auth.ts';
 import { config } from '../src/config.ts';
 import { MAX_COBROS_LISTADO, calcularLiquidacion, celdaCsv, closeDatabase, currentPeriod, findUserByEmail, getAuditTrail, getComerciantes, getReportRows, getZonas, insertPuesto, registrarCobro } from '../src/db.js';
 import { pool } from '../src/pg.js';
+import { comercianteConDeuda } from './_deuda.js';
 
 // Únicas rutas GET que se pueden consultar sin iniciar sesión.
 // Públicas a propósito: la verificación del QR del recibo y la descarga con enlace firmado del portal
@@ -243,12 +244,7 @@ test('GET /cobros: el cobrador ve solo sus cobros; el administrador ve todos, co
   const admin = await findUserByEmail(pool, 'admin@salcedo.gob.pe');
   // Un periodo futuro propio para no gastar el saldo que usan las demás pruebas.
   const periodo = '2032-02';
-  let merchant;
-  for (const item of await getComerciantes(pool, { limit: 100 })) {
-    const liquidacion = await calcularLiquidacion(pool, item.id, periodo).catch(() => null);
-    if (liquidacion && !liquidacion.no_devengo && !liquidacion.cobro_diario && liquidacion.saldo >= 2) { merchant = item; break; }
-  }
-  assert.ok(merchant, `la semilla no tiene un comerciante con saldo en ${periodo}`);
+  const { merchant } = await comercianteConDeuda(pool, { periodo });
   const cobrar = (cobradorId) => registrarCobro(pool, {
     comerciante_id: merchant.id, cobrador_id: cobradorId, monto: 1, metodo_pago: 'efectivo', periodo, codigo_operacion: `LIST-${cobradorId}-${Date.now()}`
   });

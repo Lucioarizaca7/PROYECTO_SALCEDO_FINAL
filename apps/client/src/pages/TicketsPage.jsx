@@ -24,7 +24,7 @@ export function TicketsPage() {
             <label>
               <span>Serie</span>
               <select value={nuevo.serie} onChange={(event) => setNuevo({ ...nuevo, serie: event.target.value })}>
-                {tickets.series.map((serie) => <option key={serie.serie} value={serie.serie}>{serie.serie} · S/ {serie.valor.toFixed(2)} ({serie.tipo_via === 'asfaltada' ? 'vía asfaltada' : 'sin asfaltar'})</option>)}
+                {tickets.series.map((serie) => <option key={serie.serie} value={serie.serie}>{serie.serie} · S/ {serie.valor.toFixed(2)} por día</option>)}
               </select>
             </label>
             <label><span>Desde el N°</span><input required type="number" min="1" inputMode="numeric" value={nuevo.numero_desde} onChange={(event) => setNuevo({ ...nuevo, numero_desde: event.target.value })} /></label>

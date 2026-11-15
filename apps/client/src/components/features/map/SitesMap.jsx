@@ -227,7 +227,8 @@ export function SitesMap({ sites = [], zonas = [], searchMerchants, onCollect, o
         zona_id: zonaDelTitular ?? form.get('zona_id'),
         comerciante_id: draftTitular.merchant?.id ?? null,
         direccion: form.get('direccion'),
-        metros_cuadrados: form.get('metros_cuadrados'),
+        // Opcional: el cobro es por día y no usa metros.
+        metros_cuadrados: form.get('metros_cuadrados') || null,
         latitud: draftLocation.lat,
         longitud: draftLocation.lng
       });
@@ -360,7 +361,7 @@ export function SitesMap({ sites = [], zonas = [], searchMerchants, onCollect, o
               </select>
             )}
             <TitularPicker id="titular-nuevo-puesto" value={draftTitular} onChange={setDraftTitular} searchMerchants={searchMerchants} placeholder="Titular: nombre, DNI o código (vacío = libre)" />
-            <input name="metros_cuadrados" required defaultValue="1" type="number" min="0.1" step="0.1" placeholder="m²" aria-label="Metros cuadrados" />
+            <input name="metros_cuadrados" type="number" min="0.1" step="0.1" placeholder="m² (opcional)" aria-label="Metros cuadrados (opcional)" />
             <button type="submit" className="primary-button" disabled={savingDraft}>{savingDraft ? 'Guardando…' : 'Guardar puesto'}</button>
           </div>
           <p className="map-form-hint">
@@ -384,7 +385,7 @@ export function SitesMap({ sites = [], zonas = [], searchMerchants, onCollect, o
           </div>
           <p className={currentSite.estadoPago === 'deuda' ? 'popup-debt' : 'popup-ok'}>
             {paymentStatusText(currentSite)}
-            {currentSite.monto_total > 0 && ` · Cuota: S/ ${Number(currentSite.monto_total).toFixed(2)} · Pagado: S/ ${Number(currentSite.monto_pagado).toFixed(2)}`}
+            {currentSite.monto_total > 0 && ` · Días cobrados: S/ ${Number(currentSite.monto_total).toFixed(2)} · Pagado: S/ ${Number(currentSite.monto_pagado).toFixed(2)}`}
           </p>
           <div className="map-edit-grid">
             {currentSite.estadoPago === 'deuda' && (

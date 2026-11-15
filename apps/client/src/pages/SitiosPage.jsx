@@ -29,7 +29,7 @@ export function SitiosPage() {
         <div>
           <div className="eyebrow">GESTIÓN / SITIOS</div>
           <h1>Sitios de venta</h1>
-          <p>Puestos, titulares y estado de pago del mes. La deuda es la misma que calcula Pagos.</p>
+          <p>Puestos, titulares y lo que deben por sus días cobrados del mes. La deuda es la misma que calcula Pagos.</p>
         </div>
       </div>
       {message && <div className="form-message">{message}</div>}
@@ -37,7 +37,7 @@ export function SitiosPage() {
       <div className="map-toolbar">
         <div>
           <strong>{rows.length} puestos</strong>
-          <span>Saldo pendiente del mes: {formatPEN(totalSaldo)}</span>
+          <span>Saldo de días cobrados del mes: {formatPEN(totalSaldo)}</span>
         </div>
         <div className="map-filters" aria-label="Filtros de sitios">
           <select value={filters.estado} onChange={(event) => setFilters((current) => ({ ...current, estado: event.target.value }))} aria-label="Filtrar por estado de pago">
@@ -66,7 +66,7 @@ export function SitiosPage() {
               <th>Dirección</th>
               <th>Zona</th>
               <th>Titular</th>
-              <th>Cuota del mes</th>
+              <th>Días cobrados</th>
               <th>Pagado</th>
               <th>Saldo</th>
               <th>Estado de pago</th>

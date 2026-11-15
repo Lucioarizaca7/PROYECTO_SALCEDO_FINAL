@@ -3,7 +3,7 @@ import { useZonas } from '../hooks/useZonas';
 
 const TIPO_VIA_TEXTO = { asfaltada: 'Asfaltada', sin_asfaltar: 'Sin asfaltar' };
 
-// Zonas: una zona es un área con un solo precio por día, el de su tipo de vía (decisión del 14/11/2026).
+// Zonas: una zona es un área con un solo precio por día, que fija el super_admin en Tarifas (14/11/2026).
 // No hay calles: el comerciante se mueve dentro de la feria y lo que cambia el cobro es la zona del día.
 export function ZonasPage() {
   const { user } = useSisrec();
@@ -18,7 +18,7 @@ export function ZonasPage() {
         <div>
           <div className="eyebrow">CONFIGURACIÓN / ZONAS</div>
           <h1>Zonas</h1>
-          <p>Una zona es un área donde todos pagan el mismo precio por día. El precio depende del tipo de vía.</p>
+          <p>Una zona es un área donde todos pagan el mismo precio por día. El precio de cada zona se pone en Tarifas.</p>
         </div>
       </div>
 
@@ -28,7 +28,7 @@ export function ZonasPage() {
           <li>Si una feria tiene una parte asfaltada y otra sin asfaltar, regístrela como <b>dos zonas</b>: por ejemplo «Feria sábado – asfaltada» y «Feria sábado – sin asfaltar».</li>
           <li>Si un comerciante se cambia de sitio dentro de la misma zona, no hay que registrar nada: paga lo mismo.</li>
           <li>Si un día vende en otra zona, el cobrador elige esa zona al cobrar («Zona de hoy») y ese día paga el precio de esa zona.</li>
-          <li>El precio de cada tipo de vía se fija en <b>Tarifas</b>.</li>
+          <li>El precio por día de cada zona se pone en <b>Tarifas</b>. Lo usual es S/ 3 en vía asfaltada y S/ 2 sin asfaltar.</li>
         </ul>
       </div>
 
@@ -38,7 +38,7 @@ export function ZonasPage() {
         <div className="panel-heading">
           <div>
             <div className="panel-title">{puedeEditar ? 'Crear o editar zona' : 'Zonas'}</div>
-            <div className="panel-subtitle">Cada zona tiene un solo tipo de vía y, por eso, un solo precio.</div>
+            <div className="panel-subtitle">Cada zona tiene un solo tipo de vía y un solo precio por día.</div>
           </div>
         </div>
 
@@ -61,7 +61,7 @@ export function ZonasPage() {
         <div className="table-card" style={{ marginTop: '16px' }}>
           <table>
             <thead>
-              <tr><th>Zona</th><th>Descripción</th><th>Tipo de vía</th><th>Puestos</th>{puedeEditar && <th>Acciones</th>}</tr>
+              <tr><th>Zona</th><th>Descripción</th><th>Tipo de vía</th><th>Precio por día</th><th>Puestos</th>{puedeEditar && <th>Acciones</th>}</tr>
             </thead>
             <tbody>
               {zonas.zoneRecords.map((zona) => (
@@ -69,6 +69,7 @@ export function ZonasPage() {
                   <td>{zona.nombre}</td>
                   <td>{zona.descripcion || 'Sin descripción'}</td>
                   <td>{TIPO_VIA_TEXTO[zona.tipo_via] || 'Sin dato'}</td>
+                  <td>{zona.precio_dia == null ? <span className="status pending">Sin precio</span> : `S/ ${Number(zona.precio_dia).toFixed(2)}`}</td>
                   <td>{Number(zona.total_puestos || 0)}</td>
                   {puedeEditar && (
                     <td>

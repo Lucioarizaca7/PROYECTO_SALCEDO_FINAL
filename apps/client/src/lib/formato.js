@@ -60,14 +60,15 @@ export const getInitials = (nombre) => {
   return words.slice(0, 2).map((word) => word.charAt(0)).join('').toUpperCase();
 };
 
-// Línea "Tarifa" de Pagos. Con cobro por día: monto de un día × días cobrados; cada puesto marcado un día
-// es un día cobrado, y si los puestos pagan montos distintos (vía asfaltada y sin asfaltar) va el detalle.
+// Línea "Tarifa" de Pagos: precio por día de la zona × días cobrados; cada puesto marcado un día es un día cobrado,
+// y si los puestos pagan precios distintos (zonas de distinto precio) va el detalle. El eventual paga el día
+// que se le encuentra: un día por cada puesto que tenga.
 export function textoTarifa(balance = {}) {
   const puestos = balance.puestos_cobrados || [];
   const dias = Number(balance.dias_asistidos || 0);
   // Sin días cobrados no hay tarifa que aplicar: "S/ 0" parecía una tarifa gratis.
   if (!dias && balance.no_devengo) return 'Sin días cobrados en el mes';
-  // Cuota por puesto (desde noviembre de 2026): S/ 30 × 2 puestos.
+  // Eventual: S/ 3 × 2 puestos (el día de hoy).
   const cantidad = Number(balance.cantidad_puestos || 1);
   if (!dias) return `S/ ${balance.tarifa?.monto_fijo ?? 0}${cantidad > 1 ? ` × ${cantidad} puestos` : ''}`;
   // Un puesto que cambió de zona en el mes trae una fila por zona: se cuentan puestos, no filas.

@@ -13,6 +13,7 @@ import {
 } from '../src/db.js';
 import { ValidationError } from '../src/errors.js';
 import { pool } from '../src/pg.js';
+import { insertZonaConPrecio } from './_deuda.js';
 
 before(async () => { await initializeDatabase(); });
 after(async () => { await closeDatabase(); });
@@ -23,7 +24,7 @@ let documento = 20777300000;
 
 // Ferial en zona asfaltada: S/ 3 por día cobrado (tarifa general de la 0013).
 async function ferial() {
-  const zona = await insertZona(pool, { nombre: `Zona céntimos ${unico()}`, tipo_via: 'asfaltada' });
+  const zona = await insertZonaConPrecio(pool, { nombre: `Zona céntimos ${unico()}`, tipo_via: 'asfaltada' });
   const rubro = (await pool.query("SELECT id FROM rubros WHERE nombre = 'ropa'")).rows[0].id;
   const comerciante = await insertComerciante(pool, {
     dni_ruc: String(documento += 1), nombre: `Céntimos ${documento}`, rubro_id: rubro, zona_id: zona.id,

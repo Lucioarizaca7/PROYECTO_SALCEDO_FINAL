@@ -99,7 +99,7 @@ export function PortalPage() {
           </div>
           {/* Sin tarifa vigente el servidor no puede calcular el mes: no se dice "al día" (podría no estarlo). */}
           {data.deuda.sin_tarifa ? (
-            <div className="offline-banner" role="status">Aún no hay una tarifa vigente para su puesto: consulte en la municipalidad. Sus pagos y recibos están abajo.</div>
+            <div className="offline-banner" role="status">La zona de su puesto aún no tiene precio por día: consulte en la municipalidad. Sus pagos y recibos están abajo.</div>
           ) : (
           <div className="portal-debt panel">
             <div><span>Periodo</span><strong>{data.deuda.periodo}</strong></div>

@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 
 import { loginUser, hasRoleAccess, requireAuth, requireRoles } from '../src/auth.ts';
 import { initializeDatabase, recordAudit, getAuditTrail, syncOfflineCobro, createNotification, getNotifications, obtenerPortalComerciante, generateForecastProjection, scoreMorosidadComerciante, verifyAuditChain } from '../src/db.js';
+import { comercianteConDeuda } from './_deuda.js';
 
 test('loginUser acepta credenciales válidas y devuelve usuario', async () => {
   const db = await initializeDatabase();
@@ -123,8 +124,9 @@ test('recordAudit persiste trazabilidad inmutable del cambio y bloquea ediciones
 
 test('syncOfflineCobro detecta duplicados por hash idempotente y evita reinsertar cobros', async () => {
   const db = await initializeDatabase();
+  const { merchant } = await comercianteConDeuda(db, { periodo: '2026-09' });
   const payload = {
-    comerciante_id: 1,
+    comerciante_id: merchant.id,
     cobrador_id: 2,
     monto: 25,
     concepto: 'Cobro offline',

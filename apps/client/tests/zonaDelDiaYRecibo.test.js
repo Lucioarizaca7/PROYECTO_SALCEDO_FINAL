@@ -13,7 +13,7 @@ import { textoTarifa } from '../src/lib/formato.js';
 import { aplicarMarca, estadoDelDia, marcarEnviadas, marcasPendientes } from '../src/services/asistenciaOffline.js';
 import { aSaldoDePantalla, montoDiaEnZona, normalizarComerciante } from '../src/services/jornadaOffline.js';
 import { aPayloadServidor } from '../src/services/offlineQueue.js';
-import { desdeServidor, requeridosEnZona, requeridosPorDefecto, serieDeTipoVia } from '../src/services/ticketsOffline.js';
+import { desdeServidor, requeridosEnZona, requeridosPorDefecto, serieDeValor } from '../src/services/ticketsOffline.js';
 
 const hoy = '2026-11-12';
 
@@ -48,23 +48,29 @@ test('tickets de hoy: puestos_hoy manda y la zona del día pasa todo a su serie'
   assert.deepEqual(requeridosPorDefecto([{ serie: 'S3', valor: 3, puestos: 2 }]).map((item) => item.cantidad), [2]);
 
   const estado = desdeServidor(null, { series: [{ serie: 'S3', valor: 3, tipo_via: 'asfaltada', disponibles: [1] }, { serie: 'S2', valor: 2, tipo_via: 'sin_asfaltar', disponibles: [1] }] });
-  const s2 = serieDeTipoVia(estado, 'sin_asfaltar');
+  // La serie de la zona del día es la de valor igual a su precio (13/11/2026).
+  const s2 = serieDeValor(estado, 2);
   assert.deepEqual(s2, { serie: 'S2', valor: 2 });
+  assert.equal(serieDeValor(estado, 4), null, 'sin serie de S/ 4: se cobra sin ticket');
   const enZona = requeridosEnZona([{ serie: 'S3', valor: 3, puestos: 1, puestos_hoy: 1 }], s2);
   assert.deepEqual(enZona.map((item) => [item.serie, item.cantidad]), [['S2', 1], ['S3', 0]]);
 });
 
-test('sin tickets, el día en otra zona vale lo de su tipo de vía', () => {
+test('sin tickets, el día en otra zona vale el precio de esa zona', () => {
   const tarifas = [
-    { estado: 1, unidad_medida: 'semanal', tipo_via: 'asfaltada', rubro_id: null, zona_id: null, monto_fijo: 3, vigencia_inicio: '2026-01-01', vigencia_fin: null },
-    { estado: 1, unidad_medida: 'semanal', tipo_via: 'sin_asfaltar', rubro_id: null, zona_id: null, monto_fijo: 2, vigencia_inicio: '2026-01-01', vigencia_fin: null }
+    { estado: 1, unidad_medida: 'dia', zona_id: 1, monto_fijo: 3, vigencia_inicio: '2026-01-01', vigencia_fin: null },
+    { estado: 1, unidad_medida: 'dia', zona_id: 2, monto_fijo: 2, vigencia_inicio: '2026-01-01', vigencia_fin: null },
+    // Un precio que ya terminó y una tarifa vieja por rubro no cuentan.
+    { estado: 1, unidad_medida: 'dia', zona_id: 3, monto_fijo: 9, vigencia_inicio: '2026-01-01', vigencia_fin: '2026-02-01' },
+    { estado: 0, unidad_medida: 'mensual', zona_id: null, rubro_id: 1, monto_fijo: 90, vigencia_inicio: '2026-01-01', vigencia_fin: null }
   ];
-  assert.equal(montoDiaEnZona(tarifas, 'sin_asfaltar', hoy), 2);
-  assert.equal(montoDiaEnZona(tarifas, 'asfaltada', hoy), 3);
+  assert.equal(montoDiaEnZona(tarifas, 2, hoy), 2);
+  assert.equal(montoDiaEnZona(tarifas, '1', hoy), 3);
+  assert.equal(montoDiaEnZona(tarifas, 3, hoy), null, 'zona sin precio vigente');
   assert.equal(montoDiaEnZona(tarifas, null, hoy), null);
 });
 
-test('la cuota por puesto se ve en la línea de tarifa, también sin señal', () => {
+test('el eventual con varios puestos ve "× N puestos" en la línea de tarifa, también sin señal', () => {
   assert.equal(textoTarifa({ tarifa: { monto_fijo: 30 }, cantidad_puestos: 2 }), 'S/ 30 × 2 puestos');
   const registro = normalizarComerciante({ id: 9, nombre: 'Dos puestos', periodo: '2026-11', tarifa_id: 1, tarifa_monto_fijo: 90, monto_total: 180, saldo: 180, cantidad_puestos: 2 });
   assert.equal(textoTarifa(aSaldoDePantalla(registro)), 'S/ 90 × 2 puestos', 'antes el celular decía S/ 90 con saldo de S/ 180');

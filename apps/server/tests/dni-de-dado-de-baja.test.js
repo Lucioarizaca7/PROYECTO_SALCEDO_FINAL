@@ -9,6 +9,7 @@ import assert from 'node:assert/strict';
 import { closeDatabase, deactivateComerciante, findComerciante, initializeDatabase, insertComerciante, insertZona, updateComerciante } from '../src/db.js';
 import { ConflictError } from '../src/errors.js';
 import { pool } from '../src/pg.js';
+import { insertZonaConPrecio } from './_deuda.js';
 
 before(async () => { await initializeDatabase(); });
 after(async () => { await closeDatabase(); });
@@ -22,7 +23,7 @@ async function comerciante(zonaId, rubroId) {
 }
 
 test('el DNI de un dado de baja: el mensaje dice de quién es', async () => {
-  const zona = await insertZona(pool, { nombre: `Zona documento ${process.pid}` });
+  const zona = await insertZonaConPrecio(pool, { nombre: `Zona documento ${process.pid}` });
   const rubro = (await pool.query("SELECT id FROM rubros WHERE nombre = 'ropa'")).rows[0].id;
   const antiguo = await comerciante(zona.id, rubro);
   await deactivateComerciante(pool, antiguo.id);

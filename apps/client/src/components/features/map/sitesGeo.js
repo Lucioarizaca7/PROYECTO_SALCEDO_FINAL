@@ -40,7 +40,7 @@ export const SERVER_PAYMENT_STATUS = {
   ausente: { label: 'Ausente', tone: 'neutral' },
   libre: { label: 'Libre', tone: 'neutral' },
   reservado: { label: 'Reservado', tone: 'neutral' },
-  sin_tarifa: { label: 'Sin tarifa', tone: 'neutral' },
+  sin_tarifa: { label: 'Zona sin precio', tone: 'neutral' },
   inactivo: { label: 'Dado de baja', tone: 'neutral' }
 };
 
@@ -51,9 +51,12 @@ export function mapPaymentStatus(site) {
   return Number(site.saldo_pendiente || 0) > 0 ? 'deuda' : 'al-dia';
 }
 
+// Solo se cobra el día que se sale a cobrar (13/11/2026): sin días cobrados no hay deuda. Los motivos viejos
+// quedan por las instantáneas guardadas en el celular antes del cambio.
 const NO_DEVENGO_TEXT = {
-  ferial_sin_asistencia: 'Ferial: no devenga por inasistencia',
-  sin_asistencia: 'Cobro por día: sin días cobrados en el mes',
+  sin_dias_cobrados: 'Sin días cobrados en el mes: no debe nada',
+  ferial_sin_asistencia: 'Sin días cobrados en el mes: no debe nada',
+  sin_asistencia: 'Sin días cobrados en el mes: no debe nada',
   eventual: 'Eventual: se cobra solo el día que vende',
   dado_de_baja: 'Dado de baja: no paga este mes'
 };
@@ -62,15 +65,15 @@ const NO_DEVENGO_TEXT = {
 export function paymentStatusText(site) {
   const saldo = money(site.saldo_pendiente);
   switch (site.estado_pago) {
-    case 'pendiente': return `${site.cobro_diario ? 'Saldo de hoy' : 'Saldo del mes'}: ${saldo}`;
-    case 'pagado': return site.cobro_diario ? 'Pagado hoy' : 'Mes pagado';
-    // Cada puesto paga su cuota (12/11/2026), pero se cobra junta en el puesto principal.
-    case 'incluido': return `Su cuota se cobra junto con la del puesto ${site.puesto_principal}`;
+    case 'pendiente': return `${site.cobro_diario ? 'Saldo de hoy' : 'Debe por días cobrados'}: ${saldo}`;
+    case 'pagado': return site.cobro_diario ? 'Pagado hoy' : 'Días cobrados pagados';
+    // Cada puesto paga sus días, pero se cobran juntos en el puesto principal.
+    case 'incluido': return `Sus días se cobran junto con el puesto ${site.puesto_principal}`;
     case 'no_devenga': return NO_DEVENGO_TEXT[site.motivo] || 'No devenga este mes';
     case 'ausente': return 'Ferial ausente: no devenga';
     case 'libre': return 'Puesto libre, sin titular';
     case 'reservado': return 'Puesto reservado';
-    case 'sin_tarifa': return 'Sin tarifa vigente para su rubro';
+    case 'sin_tarifa': return 'Su zona no tiene precio por día: póngalo en Tarifas';
     case 'inactivo': return 'Dado de baja';
     default:
       if (site.estadoPago === 'deuda') return `Saldo pendiente: ${saldo}`;
