@@ -9,9 +9,7 @@ const zonaPorRegularizar = (site) => site.zona_por_regularizar !== null && site.
 
 export function SitiosPage() {
   const { user, mapPuestos, catalogos } = useSisrec();
-  const { message, filters, setFilters, sitesWithInactive, toggleInactive, collectFromSite, regularizarZona, updateSite } = useSitios();
-  // La calle ubica el puesto dentro de su zona (13/11/2026); la cambia el super administrador.
-  const callesDe = (zonaId) => (catalogos.calles || []).filter((calle) => Number(calle.zona_id) === Number(zonaId));
+  const { message, filters, setFilters, sitesWithInactive, toggleInactive, collectFromSite, regularizarZona } = useSitios();
   const puedeRegularizar = user?.rol === 'super_admin';
   // "Cobrar" lleva a Pagos y cobros, que el auditor no usa: él solo consulta.
   const puedeCobrar = ['super_admin', 'cobrador'].includes(user?.rol);
@@ -67,7 +65,6 @@ export function SitiosPage() {
               <th>Código</th>
               <th>Dirección</th>
               <th>Zona</th>
-              <th>Calle</th>
               <th>Titular</th>
               <th>Días cobrados</th>
               <th>Pagado</th>
@@ -101,15 +98,6 @@ export function SitiosPage() {
                       </div>
                     )}
                   </td>
-                  <td>
-                    {puedeRegularizar && callesDe(site.zona_id).length ? (
-                      <select value={site.calle_id ? String(site.calle_id) : ''} aria-label={`Calle del puesto ${site.codigo}`}
-                        onChange={(event) => updateSite(site.id, { calle_id: event.target.value ? Number(event.target.value) : null }).catch(() => null)}>
-                        <option value="">Sin calle</option>
-                        {callesDe(site.zona_id).map((calle) => <option key={calle.id} value={String(calle.id)}>{calle.nombre}</option>)}
-                      </select>
-                    ) : (site.calle || '—')}
-                  </td>
                   <td>{site.comerciante || 'Libre'}</td>
                   <td>{conMontos ? formatPEN(site.monto_total) : '—'}</td>
                   <td>{conMontos ? formatPEN(site.monto_pagado) : '—'}</td>
@@ -119,7 +107,7 @@ export function SitiosPage() {
                 </tr>
               );
             })}
-            {!rows.length && <tr><td colSpan="10">{source.length ? 'Ningún puesto coincide con los filtros.' : 'No hay puestos registrados todavía.'}</td></tr>}
+            {!rows.length && <tr><td colSpan="9">{source.length ? 'Ningún puesto coincide con los filtros.' : 'No hay puestos registrados todavía.'}</td></tr>}
           </tbody>
         </table>
       </div>

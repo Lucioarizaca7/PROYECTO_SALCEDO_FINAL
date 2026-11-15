@@ -3,123 +3,84 @@ import { useZonas } from '../hooks/useZonas';
 
 const TIPO_VIA_TEXTO = { asfaltada: 'Asfaltada', sin_asfaltar: 'Sin asfaltar' };
 
+// Zonas: una zona es un área con un solo precio por día, que fija el super_admin en Tarifas (14/11/2026).
+// No hay calles: el comerciante se mueve dentro de la feria y lo que cambia el cobro es la zona del día.
 export function ZonasPage() {
-  const { catalogos, user } = useSisrec();
-  // El auditor solo consulta zonas y calles (decisión del 04/11/2026); el servidor vuelve a comprobarlo.
+  const { user } = useSisrec();
+  // El auditor solo consulta las zonas (decisión del 04/11/2026); el servidor vuelve a comprobarlo.
   const puedeEditar = user?.rol === 'super_admin';
   const zonas = useZonas();
-  const { zoneForm, setZoneForm, calleForm, setCalleForm } = zonas;
+  const { zoneForm, setZoneForm } = zonas;
 
   return (
     <section className="page">
       <div className="page-heading">
         <div>
-          <div className="eyebrow">GESTIÓN / ZONAS Y CALLES</div>
-          <h1>Zonas y calles</h1>
-          <p>Cada zona es un sector con su tipo de vía y su precio por día (se pone en Tarifas). Las calles van dentro de su zona y ubican cada puesto.</p>
+          <div className="eyebrow">CONFIGURACIÓN / ZONAS</div>
+          <h1>Zonas</h1>
+          <p>Una zona es un área donde todos pagan el mismo precio por día. El precio de cada zona se pone en Tarifas.</p>
         </div>
+      </div>
+
+      <div className="panel zonas-ayuda">
+        <strong>Cómo armar las zonas</strong>
+        <ul>
+          <li>Si una feria tiene una parte asfaltada y otra sin asfaltar, regístrela como <b>dos zonas</b>: por ejemplo «Feria sábado – asfaltada» y «Feria sábado – sin asfaltar».</li>
+          <li>Si un comerciante se cambia de sitio dentro de la misma zona, no hay que registrar nada: paga lo mismo.</li>
+          <li>Si un día vende en otra zona, el cobrador elige esa zona al cobrar («Zona de hoy») y ese día paga el precio de esa zona.</li>
+          <li>El precio por día de cada zona se pone en <b>Tarifas</b>. Lo usual es S/ 3 en vía asfaltada y S/ 2 sin asfaltar.</li>
+        </ul>
       </div>
 
       {zonas.message && <div className="form-message">{zonas.message}</div>}
 
-      <div className="page-grid two-grid">
-        <div className="panel detail-card">
-          <div className="panel-heading">
-            <div>
-              <div className="panel-title">{puedeEditar ? 'Crear o editar zona' : 'Zonas'}</div>
-              <div className="panel-subtitle">Si una calle es de otro tipo de vía, va en otra zona: el precio es de la zona.</div>
-            </div>
-          </div>
-
-          {puedeEditar && (
-          <form className="merchant-form" onSubmit={zonas.submitZone}>
-            <div className="merchant-form-grid">
-              <input required placeholder="Nombre de la zona" value={zoneForm.nombre} onChange={(event) => setZoneForm({ ...zoneForm, nombre: event.target.value })} />
-              <input placeholder="Descripción" value={zoneForm.descripcion} onChange={(event) => setZoneForm({ ...zoneForm, descripcion: event.target.value })} />
-              <select aria-label="Tipo de vía" value={zoneForm.tipo_via} onChange={(event) => setZoneForm({ ...zoneForm, tipo_via: event.target.value })}>
-                <option value="">Tipo de vía: sin dato</option>
-                <option value="asfaltada">Vía asfaltada</option>
-                <option value="sin_asfaltar">Vía sin asfaltar</option>
-              </select>
-              <button className="primary-button" type="submit">{zonas.editingZoneId ? 'Actualizar zona' : 'Guardar zona'}</button>
-              {zonas.editingZoneId && <button type="button" className="secondary-button" onClick={zonas.cancelZone}>Cancelar</button>}
-            </div>
-          </form>
-          )}
-
-          <div className="table-card" style={{ marginTop: '16px' }}>
-            <table>
-              <thead>
-                <tr><th>Zona</th><th>Descripción</th><th>Tipo de vía</th><th>Precio por día</th><th>Calles</th>{puedeEditar && <th>Acciones</th>}</tr>
-              </thead>
-              <tbody>
-                {zonas.zoneRecords.map((zona) => (
-                  <tr key={zona.id}>
-                    <td>{zona.nombre}</td>
-                    <td>{zona.descripcion || 'Sin descripción'}</td>
-                    <td>{TIPO_VIA_TEXTO[zona.tipo_via] || 'Sin dato'}</td>
-                    <td>{zona.precio_dia == null ? <span className="status pending">Sin precio</span> : `S/ ${Number(zona.precio_dia).toFixed(2)}`}</td>
-                    <td>{Number(zona.total_calles || 0)}</td>
-                    {puedeEditar && (
-                      <td>
-                        <button className="table-action" type="button" onClick={() => zonas.editZone(zona)}>Editar</button>
-                        <button className="table-action peligro" type="button" onClick={() => zonas.deleteZone(zona.id)}>Eliminar</button>
-                      </td>
-                    )}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+      <div className="panel detail-card">
+        <div className="panel-heading">
+          <div>
+            <div className="panel-title">{puedeEditar ? 'Crear o editar zona' : 'Zonas'}</div>
+            <div className="panel-subtitle">Cada zona tiene un solo tipo de vía y un solo precio por día.</div>
           </div>
         </div>
 
-        <div className="panel detail-card">
-          <div className="panel-heading">
-            <div>
-              <div className="panel-title">{puedeEditar ? 'Crear o editar calle' : 'Calles'}</div>
-              <div className="panel-subtitle">Cada calle es de una zona; al registrar un puesto se elige su calle.</div>
-            </div>
+        {puedeEditar && (
+        <form className="merchant-form" onSubmit={zonas.submitZone}>
+          <div className="merchant-form-grid">
+            <input required placeholder="Nombre de la zona" aria-label="Nombre de la zona" value={zoneForm.nombre} onChange={(event) => setZoneForm({ ...zoneForm, nombre: event.target.value })} />
+            <input placeholder="Descripción" aria-label="Descripción" value={zoneForm.descripcion} onChange={(event) => setZoneForm({ ...zoneForm, descripcion: event.target.value })} />
+            <select aria-label="Tipo de vía" value={zoneForm.tipo_via} onChange={(event) => setZoneForm({ ...zoneForm, tipo_via: event.target.value })}>
+              <option value="">Tipo de vía: sin dato</option>
+              <option value="asfaltada">Vía asfaltada</option>
+              <option value="sin_asfaltar">Vía sin asfaltar</option>
+            </select>
+            <button className="primary-button" type="submit">{zonas.editingZoneId ? 'Actualizar zona' : 'Guardar zona'}</button>
+            {zonas.editingZoneId && <button type="button" className="secondary-button" onClick={zonas.cancelZone}>Cancelar</button>}
           </div>
+        </form>
+        )}
 
-          {puedeEditar && (
-          <form className="merchant-form" onSubmit={zonas.submitCalle}>
-            <div className="merchant-form-grid">
-              <select value={calleForm.zona_id} onChange={(event) => setCalleForm({ ...calleForm, zona_id: event.target.value })}>
-                <option value="">Selecciona zona</option>
-                {(catalogos.zonas || []).map((item) => (
-                  <option key={item.id} value={item.id}>{item.nombre}</option>
-                ))}
-              </select>
-              <input required placeholder="Nombre de la calle" value={calleForm.nombre} onChange={(event) => setCalleForm({ ...calleForm, nombre: event.target.value })} />
-              <input placeholder="Descripción" value={calleForm.descripcion} onChange={(event) => setCalleForm({ ...calleForm, descripcion: event.target.value })} />
-              <button className="primary-button" type="submit">{zonas.editingCalleId ? 'Actualizar calle' : 'Guardar calle'}</button>
-              {zonas.editingCalleId && <button type="button" className="secondary-button" onClick={zonas.cancelCalle}>Cancelar</button>}
-            </div>
-          </form>
-          )}
-
-          <div className="table-card" style={{ marginTop: '16px' }}>
-            <table>
-              <thead>
-                <tr><th>Zona</th><th>Calle</th><th>Descripción</th>{puedeEditar && <th>Acciones</th>}</tr>
-              </thead>
-              <tbody>
-                {zonas.calleRecords.map((calle) => (
-                  <tr key={calle.id}>
-                    <td>{calle.zona || 'Sin zona'}</td>
-                    <td>{calle.nombre}</td>
-                    <td>{calle.descripcion || '—'}</td>
-                    {puedeEditar && (
-                      <td>
-                        <button className="table-action" type="button" onClick={() => zonas.editCalle(calle)}>Editar</button>
-                        <button className="table-action peligro" type="button" onClick={() => zonas.deleteCalle(calle.id)}>Eliminar</button>
-                      </td>
-                    )}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+        <div className="table-card" style={{ marginTop: '16px' }}>
+          <table>
+            <thead>
+              <tr><th>Zona</th><th>Descripción</th><th>Tipo de vía</th><th>Precio por día</th><th>Puestos</th>{puedeEditar && <th>Acciones</th>}</tr>
+            </thead>
+            <tbody>
+              {zonas.zoneRecords.map((zona) => (
+                <tr key={zona.id}>
+                  <td>{zona.nombre}</td>
+                  <td>{zona.descripcion || 'Sin descripción'}</td>
+                  <td>{TIPO_VIA_TEXTO[zona.tipo_via] || 'Sin dato'}</td>
+                  <td>{zona.precio_dia == null ? <span className="status pending">Sin precio</span> : `S/ ${Number(zona.precio_dia).toFixed(2)}`}</td>
+                  <td>{Number(zona.total_puestos || 0)}</td>
+                  {puedeEditar && (
+                    <td>
+                      <button className="table-action" type="button" onClick={() => zonas.editZone(zona)}>Editar</button>
+                      <button className="table-action peligro" type="button" onClick={() => zonas.deleteZone(zona.id)}>Eliminar</button>
+                    </td>
+                  )}
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       </div>
     </section>

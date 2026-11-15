@@ -8,8 +8,8 @@
 --                       su vigencia. Lo fija el super_admin; un cambio de precio "desde tal día" cierra el
 --                       anterior (insertTarifa) y el trigger de la 0020 impide que dos se crucen.
 --   zonas.tipo_via      queda como dato del sector (asfaltada / sin asfaltar); ya no decide el monto.
---   Zona = sector       las calles son las de su zona y ubican el puesto: puestos.calle_id debe ser una
---                       calle de la zona del puesto.
+--   Zona = área         un área con un solo precio por día. No hay calles (decisión del 14/11/2026): la
+--                       tabla calles y puestos.calle_id de la 0002 quedan sin uso.
 --   ticket_series       se identifican por su valor (S3 = S/ 3): el día de una zona lleva la serie activa
 --                       cuyo valor es el precio de ese día; sin serie, solo el recibo R-.
 --
@@ -20,7 +20,6 @@
 --   - Las zonas sin tipo de vía quedan sin precio hasta que el super_admin lo ponga: no se inventa un monto.
 --   - Las demás tarifas (por rubro, generales, mensuales, diarias, por m²) se desactivan. No se borran:
 --     transacciones.tarifa_id las referencia.
---   - Un puesto con una calle de otra zona se queda sin calle.
 BEGIN;
 
 -- 1. Unidad 'dia'.
@@ -66,42 +65,5 @@ ALTER TABLE tarifas ADD CONSTRAINT tarifas_precio_de_zona CHECK (
 ALTER TABLE ticket_series DROP CONSTRAINT IF EXISTS ticket_series_tipo_via_key;
 ALTER TABLE ticket_series ALTER COLUMN tipo_via DROP NOT NULL;
 CREATE UNIQUE INDEX ticket_series_valor_activa_uq ON ticket_series (valor) WHERE activa;
-
--- 7. La calle de un puesto es una calle de su zona.
-UPDATE puestos p SET calle_id = NULL
-FROM calles c WHERE c.id = p.calle_id AND c.zona_id <> p.zona_id;
-
-CREATE FUNCTION puesto_calle_de_su_zona() RETURNS trigger
-LANGUAGE plpgsql AS $$
-BEGIN
-  IF NEW.calle_id IS NULL THEN
-    RETURN NEW;
-  END IF;
-  IF EXISTS (SELECT 1 FROM calles c WHERE c.id = NEW.calle_id AND c.zona_id = NEW.zona_id) THEN
-    RETURN NEW;
-  END IF;
-  -- El puesto se movió de zona sin elegir calle nueva: deja la calle de la zona anterior.
-  IF TG_OP = 'UPDATE' AND NEW.zona_id IS DISTINCT FROM OLD.zona_id AND NEW.calle_id IS NOT DISTINCT FROM OLD.calle_id THEN
-    NEW.calle_id := NULL;
-    RETURN NEW;
-  END IF;
-  RAISE EXCEPTION 'La calle no pertenece a la zona del puesto' USING ERRCODE = 'check_violation';
-END;
-$$;
-
-CREATE TRIGGER trg_puesto_calle_de_su_zona BEFORE INSERT OR UPDATE OF calle_id, zona_id ON puestos
-  FOR EACH ROW EXECUTE FUNCTION puesto_calle_de_su_zona();
-
--- Una calle que pasa a otra zona deja de ubicar a los puestos de la zona anterior.
-CREATE FUNCTION calle_cambia_zona() RETURNS trigger
-LANGUAGE plpgsql AS $$
-BEGIN
-  UPDATE puestos SET calle_id = NULL WHERE calle_id = NEW.id AND zona_id <> NEW.zona_id;
-  RETURN NEW;
-END;
-$$;
-
-CREATE TRIGGER trg_calle_cambia_zona AFTER UPDATE OF zona_id ON calles
-  FOR EACH ROW WHEN (NEW.zona_id IS DISTINCT FROM OLD.zona_id) EXECUTE FUNCTION calle_cambia_zona();
 
 COMMIT;
