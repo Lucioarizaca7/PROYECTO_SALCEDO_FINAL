@@ -3,27 +3,31 @@ import { useSisrec } from '../app/SisrecContext';
 import { hoyEnLima } from '../services/jornadaOffline';
 import { apiBase, authFetch, leerJson } from '../services/session';
 
-// Una tarifa nueva empieza hoy por omisión: con una fecha pasada (antes venía 2026-01-01) cambiaba la deuda de
-// los meses anteriores.
-const nuevaTarifa = () => ({ rubro_id: '1', aplica_a: '', tipo_tarifa: 'fija', monto_fijo: '18', monto_variable: '0', unidad_medida: 'diaria', vigencia_inicio: hoyEnLima(), vigencia_fin: '' });
-
-/** Una tarifa que ya empezó a regir no cambia lo que cobra: solo se puede cerrar (decisión del 11/11/2026). */
+/** Un precio que ya empezó a regir no cambia lo que cobra: solo se puede cerrar (decisión del 11/11/2026). */
 export const tarifaYaRige = (tarifa, hoy = hoyEnLima()) => Boolean(tarifa?.vigencia_inicio) && tarifa.vigencia_inicio <= hoy;
 
-// Rubro vacío: la tarifa es para todos los rubros.
-// "Aplica a" en un solo selector: todas las zonas (''), un tipo de vía ('via:asfaltada') o una zona ('zona:3').
-const aplicaA = (item) => (item.zona_id ? `zona:${item.zona_id}` : item.tipo_via ? `via:${item.tipo_via}` : '');
-function conAlcance({ aplica_a: alcance = '', ...form }) {
-  const [tipo, valor] = String(alcance).split(':');
-  return { ...form, zona_id: tipo === 'zona' ? Number(valor) : null, tipo_via: tipo === 'via' ? valor : null };
-}
+/**
+ * Precio sugerido para una zona que aún no tiene: el de su tipo de vía (S/ 3 asfaltada, S/ 2 sin asfaltar). Solo
+ * sugiere: el precio lo decide el super_admin (13/11/2026).
+ */
+export const precioSugerido = (zona) => (zona?.precio_dia != null ? String(Number(zona.precio_dia))
+  : zona?.tipo_via === 'asfaltada' ? '3' : zona?.tipo_via === 'sin_asfaltar' ? '2' : '');
 
-// Página Tarifas: crear y editar tarifas (el servidor rechaza la edición si otro usuario la cambió antes).
+// Un precio nuevo empieza hoy por omisión: con una fecha pasada cambiaría la deuda de días ya cobrados.
+const nuevoPrecio = (zona = null) => ({ zona_id: zona ? String(zona.id) : '', monto_fijo: precioSugerido(zona), vigencia_inicio: hoyEnLima(), vigencia_fin: '' });
+
+// Página Tarifas: el precio por día de cada zona (cobro solo por día cobrado, 13/11/2026). Crear un precio
+// cierra el anterior de esa zona el día previo; el servidor rechaza la edición si otro usuario la cambió antes.
 export function useTarifas() {
   const { refresh, user } = useSisrec();
   const [showForm, setShowForm] = useState(false);
   // Primer mes desde el que se suma la deuda acumulada (lo cambia solo el administrador).
   const [inicioCobro, setInicioCobro] = useState('');
+  const [editingId, setEditingId] = useState(null);
+  const [editingVersion, setEditingVersion] = useState(null);
+  const [yaRige, setYaRige] = useState(false);
+  const [message, setMessage] = useState('');
+  const [form, setForm] = useState(nuevoPrecio);
 
   useEffect(() => {
     authFetch(`${apiBase}/parametros`).then((response) => response.json())
@@ -47,27 +51,28 @@ export function useTarifas() {
       setMessage(error.message);
     }
   };
-  const [editingId, setEditingId] = useState(null);
-  const [message, setMessage] = useState('');
-  const [form, setForm] = useState(nuevaTarifa);
 
-  // Sin vaciar el formulario, "Nueva tarifa" tras editar mostraba esa tarifa y guardaba un duplicado.
-  const toggleNew = () => {
+  /** "Poner precio" / "Cambiar precio" de una zona: un precio nuevo desde hoy (o la fecha que se elija). */
+  const cambiarPrecio = (zona = null) => {
     setEditingId(null);
+    setEditingVersion(null);
     setYaRige(false);
-    setForm(nuevaTarifa());
+    setForm(nuevoPrecio(zona));
     setMessage('');
-    setShowForm((current) => !current);
-  };
-
-  const [yaRige, setYaRige] = useState(false);
-
-  const edit = (item) => {
-    setEditingId(item.id);
-    setYaRige(tarifaYaRige(item));
-    setForm({ rubro_id: item.rubro_id === null ? '' : String(item.rubro_id), aplica_a: aplicaA(item), tipo_tarifa: item.tipo_tarifa, monto_fijo: String(item.monto_fijo), monto_variable: String(item.monto_variable), unidad_medida: item.unidad_medida, vigencia_inicio: item.vigencia_inicio, vigencia_fin: item.vigencia_fin || '' });
     setShowForm(true);
   };
+
+  // Editar un precio del historial: uno que todavía no empieza se corrige; uno que ya rige solo se cierra.
+  const edit = (item) => {
+    setEditingId(item.id);
+    setEditingVersion(item.version);
+    setYaRige(tarifaYaRige(item));
+    setForm({ zona_id: String(item.zona_id), monto_fijo: String(Number(item.monto_fijo)), vigencia_inicio: item.vigencia_inicio, vigencia_fin: item.vigencia_fin || '' });
+    setMessage('');
+    setShowForm(true);
+  };
+
+  const cerrarFormulario = () => { setShowForm(false); setEditingId(null); };
 
   const submit = async (event) => {
     event.preventDefault();
@@ -76,18 +81,20 @@ export function useTarifas() {
       const response = await authFetch(`${apiBase}/tarifas${editingId ? `/${editingId}` : ''}`, {
         method: editingId ? 'PUT' : 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(conAlcance(form))
+        body: JSON.stringify({ ...form, zona_id: Number(form.zona_id), ...(editingId ? { version: editingVersion } : {}) })
       });
       const data = await leerJson(response);
-      if (!response.ok) throw new Error(data.message || 'No se pudo guardar la tarifa');
+      if (!response.ok) throw new Error(data.message || 'No se pudo guardar el precio');
       setMessage(data.message);
-      setShowForm(false);
-      setEditingId(null);
+      cerrarFormulario();
       await refresh();
     } catch (tariffError) {
       setMessage(tariffError.message);
     }
   };
 
-  return { showForm, editingId, yaRige, message, form, setForm, toggleNew, edit, submit, inicioCobro, setInicioCobro, guardarInicioCobro, puedeEditar: user?.rol === 'super_admin' };
+  return {
+    showForm, editingId, yaRige, message, form, setForm, cambiarPrecio, edit, cerrarFormulario, submit,
+    inicioCobro, setInicioCobro, guardarInicioCobro, puedeEditar: user?.rol === 'super_admin'
+  };
 }

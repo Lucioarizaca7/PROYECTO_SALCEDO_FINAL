@@ -11,6 +11,7 @@ import {
   insertPuesto, insertZona, setInicioCobro, tipoEnPeriodo, updateComerciante
 } from '../src/db.js';
 import { pool } from '../src/pg.js';
+import { insertZonaConPrecio } from './_deuda.js';
 
 before(async () => { await initializeDatabase(); });
 after(async () => { await closeDatabase(); });
@@ -37,7 +38,7 @@ test('tipoEnPeriodo: cada mes con el tipo que tenía; un mes con días de ferial
 test('pasar a un ferial a eventual no borra los días que debe del mes pasado', async () => {
   const mesPasado = anterior(currentPeriod());
   await setInicioCobro(pool, mesPasado);
-  const zona = await insertZona(pool, { nombre: `Zona tipo ${process.pid}`, tipo_via: 'asfaltada' });
+  const zona = await insertZonaConPrecio(pool, { nombre: `Zona tipo ${process.pid}`, tipo_via: 'asfaltada' });
   const rubro = (await pool.query("SELECT id FROM rubros WHERE nombre = 'ropa'")).rows[0].id;
   const comerciante = await insertComerciante(pool, {
     dni_ruc: `4657${String(process.pid).slice(-4).padStart(4, '0')}`, nombre: 'Ferial que pasa a eventual', rubro_id: rubro,

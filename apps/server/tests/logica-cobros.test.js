@@ -9,18 +9,15 @@ import assert from 'node:assert/strict';
 
 import { calcularLiquidacion, closeDatabase, currentPeriod, initializeDatabase, insertComerciante, insertPuesto, insertTarifa, registrarCobro, updatePuesto } from '../src/db.js';
 import { pool } from '../src/pg.js';
+import { comercianteConDeuda } from './_deuda.js';
 
 let correlativo = 0;
 const idDe = async (tabla, nombre) => (await pool.query(`SELECT id FROM ${tabla} WHERE nombre = $1`, [nombre])).rows[0].id;
 
-async function nuevoComerciante(rubro) {
+// Debe precio × días este mes (por omisión 3 días × S/ 30 = S/ 90, antes la cuota mensual de "otros").
+async function nuevoComerciante(opciones = {}) {
   correlativo += 1;
-  return insertComerciante(pool, {
-    dni_ruc: `4700${String(correlativo).padStart(4, '0')}`,
-    nombre: `Prueba lógica ${correlativo}`,
-    rubro_id: await idDe('rubros', rubro),
-    zona_id: await idDe('zonas', 'Mercado Central')
-  });
+  return comercianteConDeuda(pool, { nombre: `Prueba lógica ${correlativo}`, ...opciones });
 }
 
 const cobrar = (comercianteId, monto) => registrarCobro(pool, { comerciante_id: comercianteId, cobrador_id: 1, monto, metodo_pago: 'efectivo' });
@@ -29,7 +26,7 @@ before(async () => { await initializeDatabase(); });
 after(async () => { await closeDatabase(); });
 
 test('cobros simultáneos del mismo comerciante no pasan del saldo', async () => {
-  const merchant = await nuevoComerciante('otros'); // tarifa mensual de S/ 90
+  const { merchant } = await nuevoComerciante();
   const { saldo } = await calcularLiquidacion(pool, merchant.id);
   assert.equal(saldo, 90);
 
@@ -44,21 +41,22 @@ test('cobros simultáneos del mismo comerciante no pasan del saldo', async () =>
   assert.equal(final.saldo, 0);
 });
 
-test('una tarifa nueva desde el día 1 del mes no borra lo ya pagado', async () => {
-  const merchant = await nuevoComerciante('comida');
+test('un precio nuevo de la zona desde el día 1 del mes no borra lo ya pagado', async () => {
+  const { merchant, zona } = await nuevoComerciante({ dias: 5 }); // 5 × S/ 30 = S/ 150
   await cobrar(merchant.id, 100);
   assert.equal((await calcularLiquidacion(pool, merchant.id)).monto_pagado, 100);
 
-  await insertTarifa(pool, { rubro_id: await idDe('rubros', 'comida'), monto_fijo: 20, unidad_medida: 'diaria', vigencia_inicio: `${currentPeriod()}-01` }, { permitirInicioPasado: true });
+  await insertTarifa(pool, { zona_id: zona.id, monto_fijo: 20, vigencia_inicio: `${currentPeriod()}-01` }, { permitirInicioPasado: true });
 
   const despues = await calcularLiquidacion(pool, merchant.id);
-  assert.equal(Number(despues.tarifa.monto_fijo), 20, 'se aplica la tarifa nueva');
-  assert.equal(despues.monto_pagado, 100, 'lo cobrado con la tarifa anterior sigue contando');
-  assert.equal(despues.saldo, Number((despues.monto_total - 100).toFixed(2)));
+  assert.equal(Number(despues.tarifa.monto_fijo), 20, 'se aplica el precio nuevo');
+  assert.equal(despues.monto_total, 100, '5 días × S/ 20');
+  assert.equal(despues.monto_pagado, 100, 'lo cobrado con el precio anterior sigue contando');
+  assert.equal(despues.saldo, 0);
 });
 
 test('editar un puesto sin coordenadas no lo manda a (0, 0)', async () => {
-  const merchant = await nuevoComerciante('ropa');
+  const { merchant } = await nuevoComerciante();
   const zonaId = await idDe('zonas', 'Mercado Central');
 
   const sinUbicar = await insertPuesto(pool, { comerciante_id: merchant.id, zona_id: zonaId, direccion: 'Pasaje sin GPS 1', metros_cuadrados: 4, latitud: null, longitud: '' });

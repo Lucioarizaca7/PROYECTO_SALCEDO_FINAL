@@ -57,7 +57,7 @@ export function lineasRecibo(receipt) {
     ['Comerciante', receipt.comerciante || 'Comerciante'],
     ['Fecha', fechaHoraEnLima(receipt.fecha_cobro || receipt.fecha) || fechaHoraEnLima(new Date())],
     ['Concepto', receipt.concepto || 'Liquidación de deuda'],
-    ...(receipt.periodo_aplicado ? [['Mes pagado', receipt.periodo_aplicado]] : []),
+    ...(receipt.periodo_aplicado ? [['Días cobrados de', receipt.periodo_aplicado]] : []),
     ['Método', textoMetodo(receipt.metodo_pago)],
     ['Cobrador', receipt.cobrador || 'Cobrador'],
     // En efectivo no hay número de operación: el servidor guarda un código interno que no se muestra.
