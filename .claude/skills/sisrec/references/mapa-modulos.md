@@ -61,7 +61,7 @@ Roles: `super_admin`, `cobrador`, `auditor`, `comerciante`. `staffOnly` = los tr
 |---|---|---|
 | Salud / público | `GET /health`, `GET /publico/resumen` | públicas |
 | Panel y analítica | `GET /dashboard`, `/analitica/prediccion`, `/analitica/riesgo`, `/reportes` | lectura del personal |
-| Catálogos | `GET /roles`, `/catalogos`, `/calles` (lectura del personal); CRUD `/zonas`, `/calles` | super_admin |
+| Catálogos | `GET /roles`, `/catalogos` (lectura del personal); CRUD `/zonas` | super_admin |
 | Comerciantes | CRUD `/comerciantes`, `POST /comerciantes/importar-padron`, `GET /comerciantes/plantilla-padron`, `/comerciantes/:id/preferencias` | super_admin (las preferencias también cobrador); el auditor solo descarga la plantilla |
 | Puestos | `GET /puestos?incluirInactivos=1`, `POST /puestos`, `POST/PUT /puestos-mapa` (el cobrador solo la ubicación) | super_admin, cobrador |
 | Puestos (titular y baja) | `POST /puestos/:id/liberar`, `DELETE /puestos-mapa/:id` | super_admin |
@@ -84,7 +84,7 @@ Para ver los roles exactos de una ruta: `grep -rn "'/api/v1/<ruta>" apps/server/
 ## Esquema
 
 - **0001 (núcleo):** `roles`, `usuarios`, `zonas`, `rubros`, `comerciantes`, `puestos`, `tarifas`, `comprobantes`, `transacciones`, `colas_sincronizacion`, `auditoria_logs`, `modelos_ia_metricas`.
-- **0002:** `calles`, `notificaciones`, `comerciante_preferencias`, `asistencias_feriales`.
+- **0002:** `calles` (sin uso desde el 14/11/2026), `notificaciones`, `comerciante_preferencias`, `asistencias_feriales`.
 - **0003 (fase 2, offline):** `sesiones_dispositivo` (refresh de 12 h, revocable) y `cobros_observados`.
 - **0004:** código de negocio del comerciante `COM-{correlativo}-{iniciales}-{rubro}-{documento}-{zona}-{estado}-{AAAAMMDD}` y `comerciante_codigos_historicos`.
 - **0005:** el código solo muestra los 3 últimos dígitos del DNI/RUC (Ley 29733). Los códigos antiguos pasan al historial para que los QR ya impresos sigan funcionando.
@@ -114,4 +114,4 @@ Para ver los roles exactos de una ruta: `grep -rn "'/api/v1/<ruta>" apps/server/
 - **0029:** repara en `comerciantes_estado_cambios` las reactivaciones de la importación del padrón que la 0027 no pudo reconstruir (sin datos nuevos ni restricciones).
 - **0030:** quita la marca de asistencia que puso un cobro sin señal con fecha fuera de rango, si su revisión sigue pendiente (desde ahora `registrarCobro` no la pone).
 - **0031:** zona del día (el cambio de zona de un puesto ya no pisa la zona elegida en una marca) y `puestos_tenencia` (qué puestos tuvo cada comerciante cada día), para cobrar por puesto desde noviembre de 2026.
-- **0032:** cobro solo por día cobrado con el precio de cada zona: unidad `dia`, CHECK `tarifas_precio_de_zona` (una tarifa activa es el precio de una zona), las tarifas por rubro o mes quedan inactivas, `ticket_series` por valor y trigger `trg_puesto_calle_de_su_zona` (la calle de un puesto es de su zona).
+- **0032:** cobro solo por día cobrado con el precio de cada zona: unidad `dia`, CHECK `tarifas_precio_de_zona` (una tarifa activa es el precio de una zona), las tarifas por rubro o mes quedan inactivas, y `ticket_series` por valor.

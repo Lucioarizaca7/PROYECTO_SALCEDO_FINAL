@@ -1,15 +1,14 @@
 /**
- * Precio por zona y calles (decisión del usuario, 13/11/2026; migración 0032). Reemplaza a tarifa-tipo-via.test.js:
+ * Precio por zona (decisión del usuario, 13/11/2026; migración 0032). Reemplaza a tarifa-tipo-via.test.js:
  * - el precio de un día lo fija el super_admin para cada zona; no depende del rubro, de los metros ni del tipo de
  *   vía (que queda como dato del sector);
- * - zona = sector: la calle de un puesto es una calle de su zona.
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
-  calcularLiquidacion, getZonas, initializeDatabase, insertCalle, insertComerciante, insertPuesto, insertTarifa, insertZona,
-  updateCalle, updatePuesto, updateZona
+  calcularLiquidacion, getZonas, initializeDatabase, insertComerciante, insertPuesto, insertTarifa, insertZona,
+  updatePuesto, updateZona
 } from '../src/db.js';
 import { marcarDias } from './_deuda.js';
 
@@ -54,31 +53,4 @@ test('una zona sin precio aparece así en la lista', async () => {
   const zona = await insertZona(db, { nombre: `Zona sin precio ${unico()}` });
   const [enLista] = (await getZonas(db)).filter((item) => item.id === zona.id);
   assert.equal(enLista.precio_dia, null);
-});
-
-test('la calle del puesto es de su zona; mover el puesto o la calle a otra zona le quita la calle', async () => {
-  const db = await initializeDatabase();
-  const norte = await insertZona(db, { nombre: `Norte ${unico()}` });
-  const sur = await insertZona(db, { nombre: `Sur ${unico()}` });
-  const calleNorte = await insertCalle(db, { nombre: 'Jr. Lima', zona_id: norte.id });
-  const calleSur = await insertCalle(db, { nombre: 'Jr. Puno', zona_id: sur.id });
-
-  await assert.rejects(() => insertPuesto(db, { zona_id: norte.id, direccion: `Calle ${unico()}`, calle_id: calleSur.id }), /no pertenece a la zona/);
-  const puesto = await insertPuesto(db, { zona_id: norte.id, direccion: `Calle ${unico()}`, calle_id: calleNorte.id });
-  assert.equal(puesto.calle_id, calleNorte.id);
-  assert.equal(puesto.calle, 'Jr. Lima');
-  assert.equal(puesto.metros_cuadrados, null, 'el metraje es opcional');
-
-  // Sin calle en el pedido se conserva; pasar a otra zona la quita, salvo que se elija una de la zona nueva.
-  assert.equal((await updatePuesto(db, puesto.id, { direccion: 'Otra dirección' })).calle_id, calleNorte.id);
-  assert.equal((await updatePuesto(db, puesto.id, { zona_id: sur.id })).calle_id, null);
-  assert.equal((await updatePuesto(db, puesto.id, { calle_id: calleSur.id })).calle, 'Jr. Puno');
-  await assert.rejects(() => updatePuesto(db, puesto.id, { calle_id: calleNorte.id }), /no pertenece a la zona/);
-
-  // La base lo vuelve a exigir aunque se entre por otro camino.
-  await assert.rejects(() => db.query('UPDATE puestos SET calle_id = $1 WHERE id = $2', [calleNorte.id, puesto.id]), /no pertenece a la zona/);
-
-  // La calle pasa a otra zona: el puesto de la zona anterior se queda sin calle.
-  await updateCalle(db, calleSur.id, { zona_id: norte.id });
-  assert.equal((await db.query('SELECT calle_id FROM puestos WHERE id = $1', [puesto.id])).rows[0].calle_id, null);
 });

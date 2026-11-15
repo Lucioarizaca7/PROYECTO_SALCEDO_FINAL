@@ -95,7 +95,7 @@ Después del primer administrador, los demás usuarios (otros super administrado
 
 Todo esto se hace en la web, con la cuenta `super_admin`.
 
-1. **Zonas y calles [tú confirmas las zonas]:** en *Configuración → Zonas y calles*, crear cada zona con su **Tipo de vía** (*Vía asfaltada* o *Vía sin asfaltar*) y sus calles.
+1. **Zonas [tú confirmas las zonas]:** en *Configuración → Zonas*, crear cada zona con su **Tipo de vía** (*Vía asfaltada* o *Vía sin asfaltar*). Una zona es un área con un solo precio: si una feria tiene una parte asfaltada y otra sin asfaltar, se crean dos zonas.
 2. **Tarifas: el precio lo pone la zona [tú confirmas la ordenanza vigente]:** en *Configuración → Tarifas*, *Nueva tarifa*:
    - **Rubro:** *Todos los rubros*. El rubro y los metros no cambian el precio.
    - **Aplica a:** *Zonas con vía asfaltada*, *Zonas con vía sin asfaltar* o *Solo <zona>* si una zona tiene un precio propio.

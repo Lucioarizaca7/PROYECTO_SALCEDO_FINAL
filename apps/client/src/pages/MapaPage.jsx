@@ -23,7 +23,6 @@ export function MapaPage() {
       <SitesMap
         sites={mapPuestos.filter((site) => site.estado !== 'inactivo')}
         zonas={catalogos.zonas}
-        calles={catalogos.calles}
         searchMerchants={sitios.searchMerchants}
         onCreate={sitios.createSite}
         onUpdate={sitios.updateSite}

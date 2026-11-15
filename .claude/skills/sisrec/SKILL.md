@@ -36,7 +36,7 @@ Cada sección dice qué hacer y qué está prohibido. Si una regla choca con lo 
 4. Cuando el usuario decide algo nuevo, se escribe en `reglas-negocio.md` (con fecha) y, si hay término nuevo, en el glosario. Así la siguiente sesión no adivina.
 
 Decisiones que más se olvidan:
-- Cobro **solo por día cobrado** (13/11/2026): cada puesto paga el **precio por día de su zona** (lo fija el `super_admin` en Tarifas) por cada día que el cobrador salió a cobrar, igual para todos los rubros y sin metros. Sin día cobrado no hay deuda; no hay cuota mensual. Zona = sector (tipo de vía + precio); las calles van dentro de su zona.
+- Cobro **solo por día cobrado** (13/11/2026): cada puesto paga el **precio por día de su zona** (lo fija el `super_admin` en Tarifas) por cada día que el cobrador salió a cobrar, igual para todos los rubros y sin metros. Sin día cobrado no hay deuda; no hay cuota mensual. Zona = área con un solo precio (tipo de vía + precio); no hay calles (14/11/2026).
 - Ferial y permanente pagan sus días marcados (o cobrados); el eventual paga el día que se le encuentra, sin marca.
 - Deuda acumulada desde `max(mes de alta, inicio_cobro)`.
 - Un ticket preimpreso por puesto y día cobrado, de la serie cuyo valor es el precio del día (S3 = S/ 3, S2 = S/ 2); los lotes los asigna solo `super_admin`; el ticket convive con el recibo `R-`.

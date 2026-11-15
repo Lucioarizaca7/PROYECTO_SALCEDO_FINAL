@@ -133,18 +133,6 @@ async function seedDemoData() {
     const zonaId = async (nombre) => (await first(client, 'SELECT id FROM zonas WHERE nombre = $1', [nombre])).id;
     const rubroId = async (nombre) => (await first(client, 'SELECT id FROM rubros WHERE nombre = $1', [nombre])).id;
 
-    const calles = [
-      ['Jr. Lima', 'Calle principal del mercado', 'Mercado Central'],
-      ['Av. Salcedo', 'Avenida central de la ciudad', 'Mercado Central'],
-      ['Pasaje los Sauces', 'Pasaje residencial', 'Parque Principal'],
-      ['Calle Comercio', 'Zona de locales comerciales', 'Parque Principal'],
-      ['Av. del Norte', 'Avenida de acceso al norte', 'Zona Norte'],
-      ['Jr. los Álamos', 'Calle residencial norte', 'Zona Norte']
-    ];
-    for (const [nombre, descripcion, zona] of calles) {
-      await client.query('INSERT INTO calles (nombre, descripcion, zona_id) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING', [nombre, descripcion, await zonaId(zona)]);
-    }
-
     for (const [nombre, , , precio] of zonas) {
       await client.query(
         `INSERT INTO tarifas (zona_id, tipo_tarifa, monto_fijo, monto_variable, unidad_medida, vigencia_inicio)
@@ -1060,7 +1048,8 @@ export async function buildReportCsv(db, options = {}) {
 }
 
 // ---------------------------------------------------------------------------
-// Catálogos: rubros, zonas, calles
+// Catálogos: rubros y zonas. Una zona es un área con un solo precio por día (su tipo de vía).
+// No hay calles (decisión del usuario, 14/11/2026): nada las usaba y el comerciante se mueve dentro de la feria.
 // ---------------------------------------------------------------------------
 
 export async function getRubros(db) {
@@ -1072,7 +1061,7 @@ export async function getRubros(db) {
 export async function getZonas(db) {
   return rows(db, `
     SELECT z.id, z.codigo, z.nombre, z.descripcion, z.tipo_via,
-           (SELECT COUNT(*)::int FROM calles c WHERE c.zona_id = z.id) AS total_calles,
+           (SELECT COUNT(*)::int FROM puestos p WHERE p.zona_id = z.id) AS total_puestos,
            precio.monto_fijo AS precio_dia, precio.id AS precio_tarifa_id, ${DAY('precio.vigencia_inicio')} AS precio_desde
     FROM zonas z
     LEFT JOIN LATERAL (
@@ -1132,59 +1121,6 @@ export async function deleteZona(db, id) {
     throw error;
   }
   return { id: zonaId, eliminado: true };
-}
-
-export async function getCalles(db, options = {}) {
-  const zonaId = Number(options.zona_id || 0);
-  return rows(db, `
-    SELECT c.id, c.nombre, c.descripcion, c.zona_id, z.nombre AS zona
-    FROM calles c JOIN zonas z ON z.id = c.zona_id
-    ${zonaId ? 'WHERE c.zona_id = $1' : ''}
-    ORDER BY c.nombre ASC`, zonaId ? [zonaId] : []);
-}
-
-async function findCalle(db, id) {
-  return first(db, `
-    SELECT c.id, c.nombre, c.descripcion, c.zona_id, z.nombre AS zona
-    FROM calles c JOIN zonas z ON z.id = c.zona_id WHERE c.id = $1`, [Number(id)]);
-}
-
-export async function insertCalle(db, payload) {
-  const nombre = String(payload.nombre || '').trim();
-  const descripcion = String(payload.descripcion || '').trim();
-  const zonaId = Number(payload.zona_id);
-  if (!nombre || !zonaId) throw new ValidationError('Nombre y zona son obligatorios');
-
-  if (!(await first(db, 'SELECT id FROM zonas WHERE id = $1', [zonaId]))) throw new ValidationError('La zona especificada no existe');
-  const duplicate = await first(db, 'SELECT id FROM calles WHERE lower(btrim(nombre)) = lower(btrim($1)) AND zona_id = $2', [nombre, zonaId]);
-  if (duplicate) throw new ConflictError('Ya existe una calle con ese nombre en la zona especificada');
-
-  const created = await first(db, 'INSERT INTO calles (nombre, descripcion, zona_id) VALUES ($1, $2, $3) RETURNING id', [nombre, descripcion, zonaId]);
-  return findCalle(db, created.id);
-}
-
-export async function updateCalle(db, id, payload) {
-  const current = await findCalle(db, id);
-  if (!current) throw new NotFoundError('Calle no encontrada');
-
-  const nombre = payload.nombre === undefined ? current.nombre : String(payload.nombre).trim();
-  const descripcion = payload.descripcion === undefined ? current.descripcion : String(payload.descripcion).trim();
-  const zonaId = payload.zona_id === undefined ? current.zona_id : Number(payload.zona_id);
-  if (!nombre || !zonaId) throw new ValidationError('Nombre y zona son obligatorios');
-
-  if (!(await first(db, 'SELECT id FROM zonas WHERE id = $1', [zonaId]))) throw new ValidationError('La zona especificada no existe');
-  const duplicate = await first(db, 'SELECT id FROM calles WHERE lower(btrim(nombre)) = lower(btrim($1)) AND zona_id = $2 AND id <> $3', [nombre, zonaId, Number(id)]);
-  if (duplicate) throw new ConflictError('Ya existe una calle con ese nombre en la zona especificada');
-
-  await db.query('UPDATE calles SET nombre = $1, descripcion = $2, zona_id = $3 WHERE id = $4', [nombre, descripcion, zonaId, Number(id)]);
-  return findCalle(db, id);
-}
-
-export async function deleteCalle(db, id) {
-  const calleId = Number(id);
-  if (!(await first(db, 'SELECT id FROM calles WHERE id = $1', [calleId]))) throw new NotFoundError('Calle no encontrada');
-  await db.query('DELETE FROM calles WHERE id = $1', [calleId]);
-  return { id: calleId, eliminado: true };
 }
 
 // ---------------------------------------------------------------------------
@@ -1434,12 +1370,11 @@ export async function deactivateComerciante(db, id) {
 
 const PUESTO_SELECT = `
   SELECT p.id, p.comerciante_id, c.nombre AS comerciante, c.estado AS comerciante_estado,
-         p.zona_id, z.nombre AS zona, p.calle_id, ca.nombre AS calle, p.direccion, p.metros_cuadrados, p.estado,
+         p.zona_id, z.nombre AS zona, p.direccion, p.metros_cuadrados, p.estado,
          p.codigo_puesto AS codigo, p.latitud, p.longitud, p.zona_por_regularizar,
          c.tipo_comerciante AS categoria, c.tipo_comerciante, c.codigo AS comerciante_codigo
   FROM puestos p
   LEFT JOIN comerciantes c ON c.id = p.comerciante_id
-  LEFT JOIN calles ca ON ca.id = p.calle_id
   JOIN zonas z ON z.id = p.zona_id`;
 
 // Estado de pago de cada puesto en el periodo. La deuda es del comerciante: se calcula con
@@ -1563,7 +1498,6 @@ export async function insertPuesto(db, payload, { devolver = true, soloZonaDelTi
   if (!zonaId || !direccion || (metros !== null && (!Number.isFinite(metros) || metros <= 0))) {
     throw new ValidationError('Zona y dirección son obligatorias, y los metros cuadrados, si se envían, deben ser mayores que cero');
   }
-  const calleId = await calleDeLaZona(db, payload.calle_id, zonaId);
   if (estado === 'inactivo') throw new ValidationError('Estado de puesto no válido');
   if (soloZonaDelTitular && comercianteId) {
     const titular = await first(db, 'SELECT zona_id FROM comerciantes WHERE id = $1', [comercianteId]);
@@ -1577,9 +1511,9 @@ export async function insertPuesto(db, payload, { devolver = true, soloZonaDelTi
   const finalCode = codigo || `S-${String(next.id).padStart(3, '0')}`;
   try {
     await db.query(`
-      INSERT INTO puestos (id, comerciante_id, zona_id, direccion, metros_cuadrados, estado, codigo_puesto, latitud, longitud, zona_por_regularizar, clave_cliente, calle_id)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
-    [next.id, comercianteId, zonaId, direccion, metros, estado, finalCode, latitud, longitud, zonaPorRegularizar, claveCliente, calleId]);
+      INSERT INTO puestos (id, comerciante_id, zona_id, direccion, metros_cuadrados, estado, codigo_puesto, latitud, longitud, zona_por_regularizar, clave_cliente)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+    [next.id, comercianteId, zonaId, direccion, metros, estado, finalCode, latitud, longitud, zonaPorRegularizar, claveCliente]);
   } catch (error) {
     // Dos envíos del mismo alta a la vez: el segundo choca con la clave del primero y recibe ese puesto.
     if (error.code === '23505' && error.constraint === 'uq_puestos_clave_cliente') {
@@ -1590,18 +1524,6 @@ export async function insertPuesto(db, payload, { devolver = true, soloZonaDelTi
     throw error;
   }
   return devolver ? findPuesto(db, next.id) : { id: Number(next.id) };
-}
-
-// Calle del puesto (opcional): una de las calles de su zona, que ubica el puesto dentro del sector (13/11/2026).
-// La base lo vuelve a exigir (trigger de la 0032); aquí se valida para dar un buen mensaje.
-async function calleDeLaZona(db, value, zonaId) {
-  if (value === undefined || value === null || value === '') return null;
-  const calleId = Number(value);
-  if (!Number.isInteger(calleId) || calleId <= 0) throw new ValidationError('La calle no es válida');
-  if (!(await first(db, 'SELECT id FROM calles WHERE id = $1 AND zona_id = $2', [calleId, Number(zonaId)]))) {
-    throw new ValidationError('La calle no pertenece a la zona del puesto');
-  }
-  return calleId;
 }
 
 const CLAVE_CLIENTE_RE = /^[A-Za-z0-9-]{8,80}$/;
@@ -1659,20 +1581,14 @@ export async function updatePuesto(db, id, payload, { devolver = true, puedeCamb
   if (!zonaId || !direccion || (metros !== null && (!Number.isFinite(metros) || metros <= 0))) {
     throw new ValidationError('Zona y dirección son obligatorias, y los metros cuadrados, si se envían, deben ser mayores que cero');
   }
-  // Sin calle en el pedido se conserva la actual, salvo que el puesto pase a otra zona: esa calle ya no es suya.
-  const calleId = payload.calle_id !== undefined ? await calleDeLaZona(db, payload.calle_id, zonaId)
-    : zonaId === Number(current.zona_id) ? current.calle_id : null;
-  if (soloUbicacion && payload.calle_id !== undefined && Number(calleId || 0) !== Number(current.calle_id || 0)) {
-    throw new ForbiddenError('Solo el super administrador cambia la calle de un puesto');
-  }
   await validatePuestoPlacement(db, { comercianteId, zonaId, direccion, estado, excludeId: puestoId });
 
   await db.query(`
     UPDATE puestos
     SET comerciante_id = $1, zona_id = $2, direccion = $3, metros_cuadrados = $4, estado = $5, latitud = $6, longitud = $7,
-        zona_por_regularizar = $8, calle_id = $10
+        zona_por_regularizar = $8
     WHERE id = $9`,
-  [comercianteId, zonaId, direccion, metros, estado, latitud, longitud, zonaPorRegularizar, puestoId, calleId]);
+  [comercianteId, zonaId, direccion, metros, estado, latitud, longitud, zonaPorRegularizar, puestoId]);
 
   return devolver ? findPuesto(db, puestoId) : { id: puestoId };
 }
