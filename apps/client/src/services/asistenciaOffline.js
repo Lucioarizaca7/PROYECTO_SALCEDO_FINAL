@@ -107,3 +107,20 @@ export function marcarEnviadas(estado, enviadas, rechazadas = []) {
     && !rechazadas.some((otra) => mismoDia(item, otra)));
   return { ...estado, marcas, anteriores };
 }
+
+/**
+ * Puestos sin marcar hoy, por zona (RN-26): lo que el cobrador revisa antes de cerrar su caja.
+ * Recibe los puestos de GET /asistencias del día. Solo entran las zonas donde hoy ya se marcó al menos un
+ * puesto: una feria que hoy no sale no tiene nada pendiente, y sin esto saldría entera como "sin marcar".
+ */
+export function puestosSinMarcar(puestos = []) {
+  const zonas = new Map();
+  for (const puesto of puestos) {
+    const nombre = puesto.zona || 'Sin zona';
+    if (!zonas.has(nombre)) zonas.set(nombre, { zona: nombre, total: 0, sinMarcar: [] });
+    const zona = zonas.get(nombre);
+    zona.total += 1;
+    if (typeof puesto.asistio !== 'boolean') zona.sinMarcar.push(puesto);
+  }
+  return [...zonas.values()].filter((zona) => zona.sinMarcar.length && zona.sinMarcar.length < zona.total);
+}

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useSisrec } from '../app/SisrecContext';
+import { puestosSinMarcar } from '../services/asistenciaOffline';
 import { hoyEnLima } from '../services/jornadaOffline';
 import { apiBase, authFetch, leerJson } from '../services/session';
 
@@ -29,6 +30,8 @@ export function useCaja() {
   const [declarado, setDeclarado] = useState(VACIO);
   const [observaciones, setObservaciones] = useState('');
   const [cierres, setCierres] = useState([]);
+  // Puestos sin marcar del día, por zona (RN-26): un aviso antes de cerrar; no bloquea el cierre.
+  const [sinMarcar, setSinMarcar] = useState([]);
   const [message, setMessage] = useState('');
 
   const cargar = useCallback(async () => {
@@ -39,6 +42,10 @@ export function useCaja() {
         const body = await leerJson(response);
         if (!response.ok) throw new Error(body.message || 'No se pudo cargar la caja');
         setResumen(body.data);
+        // Si falla, la caja se cierra igual: es solo un aviso.
+        const asistencia = await authFetch(`${apiBase}/asistencias?fecha=${fecha}`);
+        const marcas = await leerJson(asistencia);
+        setSinMarcar(asistencia.ok ? puestosSinMarcar(marcas.data?.puestos) : []);
       }
       if (veTodos) {
         const response = await authFetch(`${apiBase}/caja/cierres?desde=${fecha.slice(0, 7)}-01&hasta=${fecha}`);
@@ -74,6 +81,6 @@ export function useCaja() {
 
   return {
     hoy: hoyEnLima(), esCobrador, veTodos, fecha, setFecha, resumen, declarado, setDeclarado, observaciones, setObservaciones,
-    cierres, message, cerrar, recargar: cargar, diferencia: diferenciaCaja(resumen?.esperado, declarado)
+    cierres, sinMarcar, message, cerrar, recargar: cargar, diferencia: diferenciaCaja(resumen?.esperado, declarado)
   };
 }

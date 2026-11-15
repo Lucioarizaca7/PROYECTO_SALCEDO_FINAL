@@ -61,6 +61,29 @@ function AvisoPorSubir({ onSynced }) {
   );
 }
 
+// Puestos que quedaron sin marcar en las zonas donde hoy se cobró (RN-26). El cobrador los revisa antes de
+// cerrar: si el comerciante no salió, se marca "no salió" en Pagos y cobros; así el día no queda en duda.
+function SinMarcarHoy({ zonas }) {
+  if (!zonas.length) return null;
+  const total = zonas.reduce((suma, zona) => suma + zona.sinMarcar.length, 0);
+  return (
+    <details className="panel">
+      <summary className="panel-title">{total} puesto(s) sin marcar hoy</summary>
+      <p className="panel-subtitle">En estas zonas ya marcó a otros puestos. Antes de cerrar, marque cada uno en Pagos y cobros: si no salió, «No salió»; si estuvo, se cobra o se anota el motivo.</p>
+      <div className="table-card">
+        <table>
+          <thead><tr><th>Zona</th><th>Puesto</th><th>Comerciante</th></tr></thead>
+          <tbody>
+            {zonas.flatMap((zona) => zona.sinMarcar.map((puesto) => (
+              <tr key={puesto.puesto_id}><td>{zona.zona} ({zona.sinMarcar.length} de {zona.total})</td><td>{puesto.codigo_puesto || '—'}</td><td>{puesto.comerciante}</td></tr>
+            )))}
+          </tbody>
+        </table>
+      </div>
+    </details>
+  );
+}
+
 function CierreHecho({ cierre, posteriores }) {
   return (
     <div className="panel">
@@ -101,6 +124,7 @@ export function CajaPage() {
       </div>
       {caja.message && <div className="form-message">{caja.message}</div>}
       {caja.esCobrador && <AvisoPorSubir onSynced={caja.recargar} />}
+      {caja.esCobrador && resumen && !resumen.cierre && <SinMarcarHoy zonas={caja.sinMarcar} />}
 
       {caja.esCobrador && resumen && (resumen.cierre
         ? <CierreHecho cierre={resumen.cierre} posteriores={resumen.posteriores_al_cierre} />

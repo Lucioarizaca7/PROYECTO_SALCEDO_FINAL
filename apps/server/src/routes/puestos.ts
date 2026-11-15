@@ -1,6 +1,6 @@
 // Puestos y mapa de sitios.
 import express from 'express';
-import { getPuestos, insertPuesto, updatePuesto, liberarPuesto, deactivatePuesto, getAsistencias, marcarAsistencias, getObservacionesCobro } from '../db.js';
+import { getPuestos, insertPuesto, updatePuesto, liberarPuesto, deactivatePuesto, getAsistencias, marcarAsistencias, getObservacionesCobro, getCobrosEnOtraZona } from '../db.js';
 import { requireAuth, requireRoles, auditMutation } from '../auth.js';
 import { staffOnly, rowById, auditContext } from '../http/comunes.js';
 import { pool as db } from '../pg.js';
@@ -123,6 +123,13 @@ router.get('/api/v1/asistencias/observaciones', requireAuth, requireRoles(['supe
     cobradorId: req.user?.rol === 'cobrador' ? req.user.id : req.query.cobrador_id || undefined
   });
   res.json({ data, total: data.observaciones.length });
+});
+
+// Cobros en otra zona por cobrador (RN-63): control mensual del super_admin; el auditor lo consulta.
+// El cobrador no lo ve: es un reporte sobre su propio trabajo.
+router.get('/api/v1/asistencias/otra-zona', requireAuth, requireRoles(['super_admin', 'auditor']), async (req, res) => {
+  const data = await getCobrosEnOtraZona(db, { desde: req.query.desde || undefined, hasta: req.query.hasta || undefined });
+  res.json({ data, total: data.cobradores.length });
 });
 
 // Una marca ({ puesto_id, fecha?, asistio, motivo?, observacion? }) o varias ({ marcas: [...] }, p. ej. las guardadas sin señal).
