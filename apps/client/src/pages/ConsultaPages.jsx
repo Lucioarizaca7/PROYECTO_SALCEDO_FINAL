@@ -12,7 +12,7 @@ import { apiBase, authFetch } from '../services/session';
 // Páginas de solo lectura: muestran datos que ya cargó useDatosSisrec (y, en Analítica, el tiempo por cobro).
 
 export function ReportesPage() {
-  const { catalogos } = useSisrec();
+  const { catalogos, user } = useSisrec();
   const { filtro, setFiltro, filas, cargando, mensaje, exportarCsv, anular, puedeAnular, total, confirmadas } = useReportes();
   const cambiar = (campo) => (event) => setFiltro((actual) => ({ ...actual, [campo]: event.target.value }));
   return (
@@ -62,7 +62,60 @@ export function ReportesPage() {
         </table>
       </div>
       <ObservacionesCobro />
+      {['super_admin', 'auditor'].includes(user?.rol) && <CobrosEnOtraZona />}
     </section>
+  );
+}
+
+// Cobros en otra zona por cobrador (RN-63): control mensual. El cobrador puede elegir la zona del día, y en una
+// zona más barata el día vale menos; aquí se ve cuánto usa cada uno esa opción y cuánto dinero mueve.
+const soles = (valor) => `S/ ${Math.abs(Number(valor)).toFixed(2)}`;
+const textoDiferenciaZona = (valor) => (valor > 0 ? `${soles(valor)} menos` : valor < 0 ? `${soles(valor)} más` : 'Sin diferencia');
+
+function CobrosEnOtraZona() {
+  const hoy = hoyEnLima();
+  const [filtro, setFiltro] = useState({ desde: `${hoy.slice(0, 7)}-01`, hasta: hoy });
+  const [data, setData] = useState({ cobradores: [] });
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    const controller = new AbortController();
+    authFetch(`${apiBase}/asistencias/otra-zona?${new URLSearchParams(filtro)}`, { signal: controller.signal })
+      .then(async (response) => {
+        const body = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(body.message || 'No se pudo cargar el reporte de cobros en otra zona');
+        setError('');
+        setData(body.data || { cobradores: [] });
+      })
+      .catch((cause) => { if (!controller.signal.aborted) setError(cause.message); });
+    return () => controller.abort();
+  }, [filtro.desde, filtro.hasta]);
+
+  return (
+    <div className="table-card">
+      <div className="panel-heading">
+        <div><div className="panel-title">Cobros en otra zona, por cobrador</div><div className="panel-subtitle">Días que cada cobrador marcó en una zona distinta a la del puesto, y la diferencia frente al precio de la zona del puesto.</div></div>
+        <div className="report-actions">
+          <input type="date" aria-label="Otra zona: desde" value={filtro.desde} max={filtro.hasta} onChange={(event) => setFiltro({ ...filtro, desde: event.target.value })} />
+          <input type="date" aria-label="Otra zona: hasta" value={filtro.hasta} min={filtro.desde} onChange={(event) => setFiltro({ ...filtro, hasta: event.target.value })} />
+        </div>
+      </div>
+      {error && <div className="form-error">{error}</div>}
+      <table>
+        <thead><tr><th>Cobrador</th><th>Días marcados</th><th>En otra zona</th><th>A zona más barata</th><th>A zona más cara</th><th>Diferencia</th><th>Detalle (zona del puesto → zona del día)</th></tr></thead>
+        <tbody>
+          {data.cobradores.map((fila) => (
+            <tr key={fila.cobrador_id ?? 'sin-dato'}>
+              <td>{fila.cobrador}</td><td>{fila.dias_marcados}</td><td>{fila.dias_otra_zona} ({fila.porcentaje}%)</td>
+              <td>{fila.a_zona_mas_barata}</td><td>{fila.a_zona_mas_cara}</td>
+              <td><span className={`status ${fila.diferencia > 0 ? 'pending' : 'paid'}`}>{textoDiferenciaZona(fila.diferencia)}</span>{fila.sin_precio > 0 && ` · ${fila.sin_precio} sin precio`}</td>
+              <td>{fila.detalle.map((item) => `${item.zona_puesto || 'Sin zona'} → ${item.zona_dia || 'Sin zona'}: ${item.dias} día(s)`).join(' · ')}</td>
+            </tr>
+          ))}
+          {!data.cobradores.length && <tr><td colSpan={7} className="empty-state">Nadie cobró en una zona distinta a la del puesto en el rango.</td></tr>}
+        </tbody>
+      </table>
+    </div>
   );
 }
 

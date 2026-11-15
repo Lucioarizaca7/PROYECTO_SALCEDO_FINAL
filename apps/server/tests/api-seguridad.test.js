@@ -72,8 +72,8 @@ test('toda ruta GET de la API exige token, salvo las públicas declaradas', asyn
   // 27 rutas GET al dividir index.ts en routers, más /cobros/tiempos, /asistencias, /parametros, /caja/resumen, /caja/cierres, /asistencias/observaciones y las dos
   // públicas del recibo (fase 3), /tickets/series, /tickets/lotes, /tickets/cobradores, /tickets/mios y
   // /comerciantes/plantilla-padron, /tickets/lotes/:id/tickets y /comprobantes/:id/recibo (12/11/2026). Si cambia,
-  // revise que las nuevas pidan token.
-  assert.equal(routes.length, 42, `cambió el número de rutas GET: ${routes.length}`);
+  // revise que las nuevas pidan token. /asistencias/otra-zona (15/11/2026).
+  assert.equal(routes.length, 43, `cambió el número de rutas GET: ${routes.length}`);
 
   const open = [];
   for (const path of routes) {
@@ -130,6 +130,17 @@ test('el auditor solo consulta: toda ruta que escribe le responde 403', async ()
   for (const path of ['/dashboard', '/reportes', '/auditoria', '/auditoria/verificacion', '/caja/cierres', '/tickets/lotes', '/cobros/observados', '/cobros', '/comerciantes', '/tarifas', '/zonas']) {
     const response = await fetch(`${baseUrl}/api/v1${path}`, { headers });
     assert.equal(response.status, 200, `el auditor consulta ${path}`);
+  }
+});
+
+test('el reporte de cobros en otra zona es del administrador y del auditor, no del cobrador', async () => {
+  const pedir = (rol) => fetch(`${baseUrl}/api/v1/asistencias/otra-zona`, { headers: { Authorization: `Bearer ${tokens[rol]}` } });
+  assert.equal((await pedir('cobrador')).status, 403, 'es un control sobre el trabajo del cobrador');
+  assert.equal((await pedir('comerciante')).status, 403);
+  for (const rol of ['admin', 'auditor']) {
+    const response = await pedir(rol);
+    assert.equal(response.status, 200, rol);
+    assert.ok(Array.isArray((await response.json()).data.cobradores));
   }
 });
 

@@ -54,3 +54,18 @@ test('una zona sin precio aparece así en la lista', async () => {
   const [enLista] = (await getZonas(db)).filter((item) => item.id === zona.id);
   assert.equal(enLista.precio_dia, null);
 });
+
+test('una zona nueva puede nacer con su precio por día, que rige desde hoy', async () => {
+  const db = await initializeDatabase();
+  const creada = await insertZona(db, { nombre: `Zona con precio ${unico()}`, tipo_via: 'sin_asfaltar', precio_dia: '2' });
+  assert.equal(Number(creada.precio_dia), 2);
+  const enLista = (await getZonas(db)).find((zona) => Number(zona.id) === Number(creada.id));
+  assert.equal(Number(enLista.precio_dia), 2, 'ya no queda "sin precio" hasta ir a Tarifas');
+
+  // Sin precio sigue naciendo sin precio, y un precio inválido no deja la zona a medias.
+  const sinPrecio = await insertZona(db, { nombre: `Zona sin precio ${unico()}` });
+  assert.equal((await getZonas(db)).find((zona) => Number(zona.id) === Number(sinPrecio.id)).precio_dia, null);
+  const nombre = `Zona precio malo ${unico()}`;
+  await assert.rejects(() => insertZona(db, { nombre, precio_dia: '-1' }), /mayor que cero/);
+  assert.ok(!(await getZonas(db)).some((zona) => zona.nombre === nombre));
+});

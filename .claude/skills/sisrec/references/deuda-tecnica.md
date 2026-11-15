@@ -74,7 +74,6 @@ Pendientes menores:
 
 ## Pendientes de la auditoría full-stack (2026-10-27)
 
-- **Reportes por zona con la zona del comerciante, no la del día** (análisis del 14/11/2026): `transacciones.zona_cobro_id` guarda la zona del comerciante el día del cobro (0028), no la zona donde vendió ese día. Si vende en otra zona, el panel y los reportes suman ese cobro a su zona habitual. Cambiarlo es una decisión del usuario.
 - **Dos zonas por comerciante** (análisis del 14/11/2026): `comerciantes.zona_id` (código, reportes, `soloZonaDelTitular`) y `puestos.zona_id` (precio). Desde el precio por zona del día, la del comerciante solo agrupa.
 - **Tabla `calles` sin uso.** El 14/11/2026 se quitaron las calles de la pantalla y de la API (ver `reglas-negocio.md`). La tabla `calles` y la columna `puestos.calle_id` (migración 0002) siguen en la base, vacías de uso. Borrarlas pide una migración nueva y la confirmación del usuario, porque elimina datos.
 - **Barra superior.** Se quitaron la caja "Buscar registro" y el botón de notificaciones porque no tenían ninguna acción. Una búsqueda global sería una función nueva.

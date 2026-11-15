@@ -4,7 +4,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { aplicarMarca, estadoDelDia, ferialesDelPadron, marcarEnviadas, marcasPendientes, observacionQueSeConserva } from '../src/services/asistenciaOffline.js';
+import { aplicarMarca, estadoDelDia, ferialesDelPadron, marcarEnviadas, marcasPendientes, observacionQueSeConserva, puestosSinMarcar } from '../src/services/asistenciaOffline.js';
 import { normalizarComerciante } from '../src/services/jornadaOffline.js';
 
 const padron = [
@@ -86,4 +86,20 @@ test('volver a tocar Asistió o Faltó conserva la observación solo si sigue si
   assert.deepEqual(observacionQueSeConserva({ asistio: true, motivo: 'otro', observacion: 'Llegó tarde' }, false), { motivo: 'otro', observacion: 'Llegó tarde' });
   assert.deepEqual(observacionQueSeConserva({ asistio: true }, false), {});
   assert.deepEqual(observacionQueSeConserva(undefined, true), {});
+});
+
+test('sin marcar hoy: solo las zonas donde ya se marcó a alguien, con los puestos que faltan', () => {
+  const puestos = [
+    { puesto_id: 1, zona: 'Feria sábado', comerciante: 'Ana', asistio: true },
+    { puesto_id: 2, zona: 'Feria sábado', comerciante: 'Beto', asistio: null },
+    { puesto_id: 3, zona: 'Feria sábado', comerciante: 'Caro', asistio: false },
+    // La feria del miércoles hoy no sale: nadie marcado, no es un pendiente.
+    { puesto_id: 4, zona: 'Feria miércoles', comerciante: 'Dina', asistio: null },
+    { puesto_id: 5, zona: 'Feria miércoles', comerciante: 'Elio' },
+    // Zona completa: no aparece.
+    { puesto_id: 6, zona: 'Mercado', comerciante: 'Fany', asistio: true }
+  ];
+  const pendientes = puestosSinMarcar(puestos);
+  assert.deepEqual(pendientes.map((zona) => [zona.zona, zona.total, zona.sinMarcar.map((puesto) => puesto.puesto_id)]), [['Feria sábado', 3, [2]]]);
+  assert.deepEqual(puestosSinMarcar([]), []);
 });

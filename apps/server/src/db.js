@@ -647,19 +647,19 @@ async function enGrupos(db, lista, fn) {
 // en 3 s, el respaldo local con el mismo algoritmo (prediccion.js). Nada de factores fijos.
 const MESES_HISTORIA = 12;
 
-// Días marcados por mes y zona que tenía el comerciante el día de la marca (0028), la misma zona con la que
-// se agrupan los cobros en la proyección.
+// Días marcados por mes y zona de la marca (donde se vendió ese día, 0033), la misma zona con la que se
+// agrupan los cobros en la proyección. Una marca sin zona cae a la del comerciante ese día (0028).
 // Sirve para saber si una caída viene de menos asistencia o de que asisten y no pagan. Como en la liquidación,
 // la marca de la app manda sobre las del Excel de ese puesto y día.
 function diasMarcadosPorZona(db, desde, hasta) {
   return rows(db, `
     SELECT to_char(a.fecha, 'YYYY-MM') AS mes, a.zona_id, z.nombre AS zona, COUNT(DISTINCT (a.puesto_id, a.fecha))::int AS dias
     FROM (
-      SELECT a.puesto_id, a.fecha, a.sesion, a.asistio, c.zona_id
+      SELECT a.puesto_id, a.fecha, a.sesion, a.asistio, COALESCE(a.zona_id, c.zona_id) AS zona_id
       FROM asistencias_feriales a JOIN comerciantes c ON c.id = a.comerciante_id
       WHERE NOT EXISTS (SELECT 1 FROM comerciantes_datos_cambios d WHERE d.comerciante_id = a.comerciante_id AND d.campo = 'zona_id')
       UNION ALL
-      SELECT a.puesto_id, a.fecha, a.sesion, a.asistio, COALESCE(zc.valor_anterior, c.zona_id)
+      SELECT a.puesto_id, a.fecha, a.sesion, a.asistio, COALESCE(a.zona_id, zc.valor_anterior, c.zona_id)
       FROM asistencias_feriales a JOIN comerciantes c ON c.id = a.comerciante_id
       ${CAMBIO_POSTERIOR('zc', 'zona_id', 'a.comerciante_id', 'a.fecha')}
       WHERE EXISTS (SELECT 1 FROM comerciantes_datos_cambios d WHERE d.comerciante_id = a.comerciante_id AND d.campo = 'zona_id')
@@ -1089,10 +1089,27 @@ export async function insertZona(db, payload) {
   const tipoVia = parseTipoVia(payload.tipo_via) ?? null;
   if (!nombre) throw new ValidationError('El nombre de la zona es obligatorio');
 
+  // Precio por día opcional (decisión del 14/11/2026): la zona nace con su precio, que rige desde hoy, en vez
+  // de quedar "sin precio" hasta que alguien vaya a Tarifas. Cambiarlo después sigue siendo en Tarifas.
+  const conPrecio = !vacio(payload.precio_dia);
+  const precio = conPrecio ? Number(Number(payload.precio_dia).toFixed(2)) : null;
+  if (conPrecio && (!Number.isFinite(precio) || precio <= 0)) throw new ValidationError('El precio por día debe ser mayor que cero');
+
   const duplicate = await first(db, 'SELECT id FROM zonas WHERE lower(btrim(nombre)) = lower(btrim($1))', [nombre]);
   if (duplicate) throw new ConflictError('Ya existe una zona con ese nombre');
 
-  return first(db, 'INSERT INTO zonas (nombre, descripcion, tipo_via) VALUES ($1, $2, $3) RETURNING id, codigo, nombre, descripcion, tipo_via', [nombre, descripcion, tipoVia]);
+  // La zona y su precio se guardan juntos: si falla el precio, no queda la zona a medias.
+  const crear = async (client) => {
+    const zona = await first(client, 'INSERT INTO zonas (nombre, descripcion, tipo_via) VALUES ($1, $2, $3) RETURNING id, codigo, nombre, descripcion, tipo_via', [nombre, descripcion, tipoVia]);
+    if (!conPrecio) return zona;
+    const tarifa = validateTariff({ zona_id: zona.id, monto_fijo: precio, vigencia_inicio: todayInLima() });
+    await client.query(`
+      INSERT INTO tarifas (rubro_id, zona_id, tipo_via, tipo_tarifa, monto_fijo, monto_variable, unidad_medida, vigencia_inicio, vigencia_fin, activo, version)
+      VALUES (NULL, $1, NULL, $2, $3, 0, $4, $5, NULL, TRUE, 1)`,
+    [tarifa.zonaId, tarifa.tipoTarifa, tarifa.montoFijo, tarifa.unidadMedida, tarifa.vigenciaInicio]);
+    return { ...zona, precio_dia: tarifa.montoFijo.toFixed(2), precio_desde: tarifa.vigenciaInicio };
+  };
+  return db === pool ? withTransaction(crear) : crear(db);
 }
 
 export async function updateZona(db, id, payload) {
@@ -2438,24 +2455,117 @@ export async function getObservacionesCobro(db, { desde, hasta, comercianteId, c
   };
 }
 
+// Precio por día de una zona en la fecha de la marca (la tarifa vigente ese día, como en la liquidación).
+const PRECIO_DE_ZONA_EL_DIA = (zona, fecha) => `(
+  SELECT t.monto_fijo FROM tarifas t
+  WHERE t.zona_id = ${zona} AND t.activo AND t.vigencia_inicio <= ${fecha} AND (t.vigencia_fin IS NULL OR t.vigencia_fin >= ${fecha})
+  ORDER BY t.vigencia_inicio DESC, t.id DESC LIMIT 1)`;
+
+// Cobros en otra zona, por cobrador (RN-63, plan de reglas del 15/11/2026). El cobrador puede elegir la zona
+// del día, y en una zona sin asfaltar el día vale menos: este reporte deja ver cuánto usa cada cobrador esa
+// opción y cuánto dinero mueve, para la revisión mensual del super_admin. No cambia ningún monto.
+//  - Cuenta las marcas de la app con asistencia (sesion '', asistio), por quien las registró.
+//  - "En otra zona" = la zona de la marca no es la del puesto ese día (zona_de_asistencia, 0019).
+//  - diferencia = precio de la zona del puesto − precio de la zona del día, sumado: positivo es dinero que se
+//    dejó de cobrar frente a la zona del puesto. Si alguna de las dos zonas no tenía precio ese día, la marca
+//    cuenta en sin_precio y no entra en la diferencia (no se inventa un monto).
+export async function getCobrosEnOtraZona(db, { desde, hasta } = {}) {
+  const hoy = todayInLima();
+  const fin = hasta ? String(hasta) : hoy;
+  const inicio = desde ? String(desde) : `${fin.slice(0, 7)}-01`;
+  for (const fecha of [inicio, fin]) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(fecha) || Number.isNaN(Date.parse(fecha))) throw new ValidationError('Las fechas deben usar formato AAAA-MM-DD');
+  }
+  if (inicio > fin) throw new ValidationError('La fecha inicial no puede ser posterior a la final');
+  const MARCAS = `
+    SELECT m.*, m.zona_dia IS DISTINCT FROM m.zona_puesto AS otra,
+           ${PRECIO_DE_ZONA_EL_DIA('m.zona_dia', 'm.fecha')} AS precio_dia,
+           ${PRECIO_DE_ZONA_EL_DIA('m.zona_puesto', 'm.fecha')} AS precio_puesto
+    FROM (
+      SELECT a.registrado_por, a.fecha, a.zona_id AS zona_dia, zona_de_asistencia(a.puesto_id, a.fecha) AS zona_puesto
+      FROM asistencias_feriales a
+      WHERE a.sesion = '' AND a.asistio AND a.fecha BETWEEN $1::date AND $2::date
+    ) m`;
+  const cobradores = await rows(db, `
+    SELECT m.registrado_por AS cobrador_id, COALESCE(u.nombre, 'Sin dato') AS cobrador,
+           COUNT(*)::int AS dias_marcados,
+           COUNT(*) FILTER (WHERE m.otra)::int AS dias_otra_zona,
+           COUNT(*) FILTER (WHERE m.otra AND m.precio_dia < m.precio_puesto)::int AS a_zona_mas_barata,
+           COUNT(*) FILTER (WHERE m.otra AND m.precio_dia > m.precio_puesto)::int AS a_zona_mas_cara,
+           COUNT(*) FILTER (WHERE m.otra AND m.precio_dia = m.precio_puesto)::int AS mismo_precio,
+           COUNT(*) FILTER (WHERE m.otra AND (m.precio_dia IS NULL OR m.precio_puesto IS NULL))::int AS sin_precio,
+           COALESCE(SUM(m.precio_puesto - m.precio_dia) FILTER (WHERE m.otra), 0) AS diferencia
+    FROM (${MARCAS}) m
+    LEFT JOIN usuarios u ON u.id = m.registrado_por
+    GROUP BY m.registrado_por, u.nombre
+    HAVING COUNT(*) FILTER (WHERE m.otra) > 0
+    ORDER BY COALESCE(SUM(m.precio_puesto - m.precio_dia) FILTER (WHERE m.otra), 0) DESC, COUNT(*) FILTER (WHERE m.otra) DESC, u.nombre NULLS LAST`, [inicio, fin]);
+  const detalle = await rows(db, `
+    SELECT m.registrado_por AS cobrador_id, zp.nombre AS zona_puesto, zd.nombre AS zona_dia, COUNT(*)::int AS dias,
+           MIN(m.precio_puesto) AS precio_puesto, MIN(m.precio_dia) AS precio_dia,
+           COALESCE(SUM(m.precio_puesto - m.precio_dia), 0) AS diferencia
+    FROM (${MARCAS}) m
+    LEFT JOIN zonas zp ON zp.id = m.zona_puesto
+    LEFT JOIN zonas zd ON zd.id = m.zona_dia
+    WHERE m.otra
+    GROUP BY m.registrado_por, zp.nombre, zd.nombre
+    ORDER BY COUNT(*) DESC, zp.nombre, zd.nombre`, [inicio, fin]);
+  const monto = (valor) => (valor === null ? null : Number(valor));
+  const id = (valor) => (valor === null ? null : Number(valor));
+  return {
+    desde: inicio,
+    hasta: fin,
+    cobradores: cobradores.map((fila) => ({
+      ...fila,
+      cobrador_id: id(fila.cobrador_id),
+      diferencia: Number(fila.diferencia),
+      porcentaje: Number(((fila.dias_otra_zona * 100) / fila.dias_marcados).toFixed(1)),
+      detalle: detalle.filter((item) => id(item.cobrador_id) === id(fila.cobrador_id))
+        .map(({ cobrador_id: _omitido, ...item }) => ({ ...item, precio_puesto: monto(item.precio_puesto), precio_dia: monto(item.precio_dia), diferencia: Number(item.diferencia) }))
+    }))
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Cierre de caja diario
 // ---------------------------------------------------------------------------
 
 const METODOS_CAJA = ['efectivo', 'yape', 'plin', 'pos'];
 const FECHA_RE = /^\d{4}-\d{2}-\d{2}$/;
+// Tope de la justificación (decisión del usuario, 15/11/2026; RN-42): cualquier faltante se justifica; un
+// sobrante, desde este monto. La base repite la regla (cierres_caja_diferencia_justificada, 0034).
+const SOBRANTE_SIN_JUSTIFICAR = 5;
+const pideJustificacion = (diferencia) => diferencia < 0 || diferencia >= SOBRANTE_SIN_JUSTIFICAR;
 
 const CIERRE_SELECT = `
   SELECT cc.id, cc.cobrador_id, u.nombre AS cobrador, ${DAY('cc.fecha')} AS fecha, cc.cobros,
          cc.esperado_efectivo, cc.esperado_yape, cc.esperado_plin, cc.esperado_pos,
          cc.declarado_efectivo, cc.declarado_yape, cc.declarado_plin, cc.declarado_pos,
-         cc.diferencia, cc.observaciones, cc.tickets, ${TS('cc.cerrado_en')} AS cerrado_en
+         cc.diferencia, cc.observaciones, cc.justificacion, cc.tickets, ${TS('cc.cerrado_en')} AS cerrado_en,
+         (SELECT COALESCE(json_agg(json_build_object('id', e.id, 'tipo', e.tipo, 'monto', e.monto, 'recibido_por', ur.nombre,
+                   'recibido_en', ${TS('e.recibido_en')}, 'observaciones', e.observaciones) ORDER BY e.id), '[]'::json)
+          FROM entregas_caja e JOIN usuarios ur ON ur.id = e.recibido_por WHERE e.cierre_id = cc.id) AS entregas,
+         (SELECT json_build_object('declarado_efectivo', r.declarado_efectivo, 'declarado_yape', r.declarado_yape,
+                   'declarado_plin', r.declarado_plin, 'declarado_pos', r.declarado_pos, 'motivo', r.motivo,
+                   'rectificado_por', ux.nombre, 'rectificado_en', ${TS('r.rectificado_en')})
+          FROM cierres_caja_rectificaciones r JOIN usuarios ux ON ux.id = r.rectificado_por
+          WHERE r.cierre_id = cc.id ORDER BY r.id DESC LIMIT 1) AS rectificacion
   FROM cierres_caja cc JOIN usuarios u ON u.id = cc.cobrador_id`;
 
 function normalizarCierre(fila) {
   if (!fila) return null;
   const out = { ...fila, id: Number(fila.id), cobrador_id: Number(fila.cobrador_id), cobros: Number(fila.cobros) };
   for (const clave of Object.keys(out)) if (/^(esperado|declarado)_|^diferencia$/.test(clave)) out[clave] = Number(out[clave]);
+  out.entregas = (fila.entregas || []).map((entrega) => ({ ...entrega, id: Number(entrega.id), monto: Number(entrega.monto) }));
+  if (fila.rectificacion) {
+    out.rectificacion = { ...fila.rectificacion };
+    for (const metodo of METODOS_CAJA) out.rectificacion[`declarado_${metodo}`] = Number(fila.rectificacion[`declarado_${metodo}`]);
+  } else out.rectificacion = null;
+  // Lo que vale hoy: lo declarado al cerrar o, si hubo rectificación, lo de la última (0034).
+  const fuente = out.rectificacion || out;
+  out.vigente = Object.fromEntries(METODOS_CAJA.map((metodo) => [`declarado_${metodo}`, fuente[`declarado_${metodo}`]]));
+  out.vigente.diferencia = dinero(METODOS_CAJA.reduce((suma, metodo) => suma + fuente[`declarado_${metodo}`] - out[`esperado_${metodo}`], 0));
+  out.entregado = out.entregas.some((entrega) => entrega.tipo === 'cierre');
   return out;
 }
 
@@ -2505,6 +2615,7 @@ export async function cerrarCaja(_db, cobradorId, payload = {}, { audit = null }
     declarado[metodo] = dinero(valor);
   }
   const observaciones = cleanText(payload.observaciones, 500) || null;
+  const justificacion = cleanText(payload.justificacion, 500) || null;
 
   return withTransaction(async (client) => {
     // Un cobrador no cierra dos veces el mismo día; el bloqueo evita dos cierres simultáneos.
@@ -2513,13 +2624,17 @@ export async function cerrarCaja(_db, cobradorId, payload = {}, { audit = null }
       throw new ConflictError('La caja de ese día ya fue cerrada');
     }
     const resumen = await resumenCaja(client, cobradorId, dia);
+    const diferencia = dinero(METODOS_CAJA.reduce((suma, metodo) => suma + declarado[metodo], 0) - resumen.esperado_total);
+    if (pideJustificacion(diferencia) && (justificacion || '').length < 5) {
+      throw new ValidationError(`${diferencia < 0 ? `Faltan S/ ${Math.abs(diferencia).toFixed(2)}` : `Sobran S/ ${diferencia.toFixed(2)}`}: escriba la justificación de la diferencia (al menos 5 caracteres)`);
+    }
     const creado = await first(client, `
       INSERT INTO cierres_caja (cobrador_id, fecha, cobros, esperado_efectivo, esperado_yape, esperado_plin, esperado_pos,
-                                declarado_efectivo, declarado_yape, declarado_plin, declarado_pos, observaciones, tickets)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13::jsonb) RETURNING id`,
+                                declarado_efectivo, declarado_yape, declarado_plin, declarado_pos, observaciones, tickets, justificacion)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13::jsonb, $14) RETURNING id`,
     [Number(cobradorId), dia, resumen.cobros, resumen.esperado.efectivo, resumen.esperado.yape, resumen.esperado.plin, resumen.esperado.pos,
       declarado.efectivo, declarado.yape, declarado.plin, declarado.pos, observaciones,
-      resumen.tickets.series.length ? JSON.stringify(resumen.tickets) : null]);
+      resumen.tickets.series.length ? JSON.stringify(resumen.tickets) : null, justificacion]);
     const cierre = normalizarCierre(await first(client, `${CIERRE_SELECT} WHERE cc.id = $1`, [creado.id]));
     if (audit) {
       await appendAudit(client, {
@@ -2533,6 +2648,81 @@ export async function cerrarCaja(_db, cobradorId, payload = {}, { audit = null }
       });
     }
     return cierre;
+  });
+}
+
+// Entrega del dinero (RN-41 y RN-44, decisión del usuario del 15/11/2026): el super_admin registra que recibió
+// el efectivo de un cierre. Yape, Plin y POS no se entregan: llegan a la cuenta; su conciliación queda para
+// después. tipo 'cierre' = el efectivo declarado (una sola vez); 'complementaria' = cobros de ese día que
+// entraron después del cierre. Quien recibe no puede ser quien cerró esa caja: nadie se entrega a sí mismo.
+export async function registrarEntregaCaja(_db, cierreId, payload = {}, { usuarioId = null, audit = null } = {}) {
+  const tipo = payload.tipo === undefined || payload.tipo === null || payload.tipo === '' ? 'cierre' : String(payload.tipo);
+  if (!['cierre', 'complementaria'].includes(tipo)) throw new ValidationError('El tipo de entrega no es válido');
+  const monto = Number(payload.monto);
+  if (payload.monto === undefined || payload.monto === null || payload.monto === '' || !Number.isFinite(monto) || monto < 0) {
+    throw new ValidationError('Indique el monto recibido en efectivo');
+  }
+  const observaciones = cleanText(payload.observaciones, 500) || null;
+
+  return withTransaction(async (client) => {
+    const fila = await first(client, 'SELECT id, cobrador_id FROM cierres_caja WHERE id = $1 FOR UPDATE', [Number(cierreId)]);
+    if (!fila) throw new NotFoundError('Cierre de caja no encontrado');
+    if (Number(fila.cobrador_id) === Number(usuarioId)) throw new ConflictError('No puede registrar la entrega de su propia caja: debe recibirla otro super administrador');
+    const cierre = normalizarCierre(await first(client, `${CIERRE_SELECT} WHERE cc.id = $1`, [fila.id]));
+    if (tipo === 'cierre') {
+      if (cierre.entregas.some((entrega) => entrega.tipo === 'cierre')) throw new ConflictError('La entrega de ese cierre ya fue registrada');
+      if (dinero(monto) !== cierre.vigente.declarado_efectivo && !observaciones) {
+        throw new ValidationError(`El cobrador declaró S/ ${cierre.vigente.declarado_efectivo.toFixed(2)} en efectivo: si recibe otro monto, explique por qué en observaciones`);
+      }
+    } else {
+      const { posteriores_al_cierre: posteriores } = await resumenCaja(client, cierre.cobrador_id, cierre.fecha);
+      if (!posteriores?.cobros) throw new ConflictError('No hay cobros posteriores al cierre: no corresponde una entrega complementaria');
+      if (monto <= 0) throw new ValidationError('El monto de la entrega complementaria debe ser mayor que cero');
+    }
+    await client.query('INSERT INTO entregas_caja (cierre_id, tipo, monto, recibido_por, observaciones) VALUES ($1, $2, $3, $4, $5)',
+      [cierre.id, tipo, dinero(monto), Number(usuarioId), observaciones]);
+    const actualizado = normalizarCierre(await first(client, `${CIERRE_SELECT} WHERE cc.id = $1`, [cierre.id]));
+    if (audit) {
+      await appendAudit(client, {
+        ...audit, usuarioId: audit.usuarioId ?? usuarioId, entidad: 'entregas_caja', recursoId: cierre.id,
+        detalle: `Entrega ${tipo === 'cierre' ? 'del cierre' : 'complementaria'} de caja ${cierre.fecha} de ${cierre.cobrador}: recibido S/ ${dinero(monto).toFixed(2)} en efectivo`,
+        payloadPrevio: cierre, payloadNuevo: actualizado
+      });
+    }
+    return actualizado;
+  });
+}
+
+// Rectificación de un cierre (RN-43, decisión del usuario del 15/11/2026): el cierre no se edita. El super_admin
+// registra los montos declarados corregidos y el motivo; vale la última rectificación y el original se conserva.
+export async function rectificarCierreCaja(_db, cierreId, payload = {}, { usuarioId = null, audit = null } = {}) {
+  const motivo = cleanText(payload.motivo, 500) || '';
+  if (motivo.length < 5) throw new ValidationError('Indique el motivo de la rectificación (al menos 5 caracteres)');
+  const declarado = {};
+  for (const metodo of METODOS_CAJA) {
+    const valor = Number(payload.declarado?.[metodo] ?? payload[`declarado_${metodo}`] ?? NaN);
+    if (!Number.isFinite(valor) || valor < 0) throw new ValidationError(`Indique el monto corregido en ${metodo}`);
+    declarado[metodo] = dinero(valor);
+  }
+  return withTransaction(async (client) => {
+    const fila = await first(client, 'SELECT id FROM cierres_caja WHERE id = $1 FOR UPDATE', [Number(cierreId)]);
+    if (!fila) throw new NotFoundError('Cierre de caja no encontrado');
+    const previo = normalizarCierre(await first(client, `${CIERRE_SELECT} WHERE cc.id = $1`, [fila.id]));
+    if (METODOS_CAJA.every((metodo) => declarado[metodo] === previo.vigente[`declarado_${metodo}`])) {
+      throw new ConflictError('Los montos son los mismos que ya tiene el cierre: no hay nada que rectificar');
+    }
+    await client.query(`
+      INSERT INTO cierres_caja_rectificaciones (cierre_id, declarado_efectivo, declarado_yape, declarado_plin, declarado_pos, motivo, rectificado_por)
+      VALUES ($1, $2, $3, $4, $5, $6, $7)`, [fila.id, declarado.efectivo, declarado.yape, declarado.plin, declarado.pos, motivo, Number(usuarioId)]);
+    const actualizado = normalizarCierre(await first(client, `${CIERRE_SELECT} WHERE cc.id = $1`, [fila.id]));
+    if (audit) {
+      await appendAudit(client, {
+        ...audit, usuarioId: audit.usuarioId ?? usuarioId, entidad: 'cierres_caja', recursoId: fila.id,
+        detalle: `Rectificación del cierre de caja ${previo.fecha} de ${previo.cobrador}: diferencia de S/ ${previo.vigente.diferencia.toFixed(2)} a S/ ${actualizado.vigente.diferencia.toFixed(2)}. Motivo: ${motivo}`,
+        payloadPrevio: previo, payloadNuevo: actualizado
+      });
+    }
+    return actualizado;
   });
 }
 
@@ -2869,7 +3059,14 @@ export async function registrarCobro(db, payload, { audit = null, allowExcess = 
     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'confirmado', $11, $12, $13, $14::jsonb,
       -- La zona y el rubro del día del cobro quedan en la fila (0028): un cobro sin señal fechado días atrás
       -- toma el valor de ese día, por si el comerciante cambió entre el cobro y la sincronización.
-      COALESCE((SELECT valor_anterior FROM comerciantes_datos_cambios
+      -- La zona es la del día (0033, decisión del 14/11/2026): donde vendió ese día según su marca (la que
+      -- eligió el cobrador o la de su puesto). Sin marca ese día (mes atrasado, eventual, fecha dudosa), la
+      -- zona del comerciante.
+      COALESCE((SELECT a.zona_id FROM asistencias_feriales a
+                 WHERE a.comerciante_id = $1 AND a.fecha = ${LOCAL('$11::timestamptz')}::date AND a.sesion = ''
+                   AND a.asistio AND a.zona_id IS NOT NULL
+                 ORDER BY a.puesto_id LIMIT 1),
+               (SELECT valor_anterior FROM comerciantes_datos_cambios
                  WHERE comerciante_id = $1 AND campo = 'zona_id' AND desde > ${LOCAL('$11::timestamptz')}::date
                  ORDER BY desde, id LIMIT 1), (SELECT zona_id FROM comerciantes WHERE id = $1)),
       COALESCE((SELECT valor_anterior FROM comerciantes_datos_cambios
@@ -2952,6 +3149,11 @@ async function marcarDiaCobrado(db, comercianteId, cobradorId, dia, periodo, zon
       await db.query(`
         UPDATE asistencias_feriales SET zona_id = $3
         WHERE comerciante_id = $1 AND fecha = $2::date AND sesion = '' AND asistio AND zona_id IS DISTINCT FROM $3`, [comercianteId, dia, zonaDia]);
+      // Los cobros de ese día ya registrados cuentan en la misma zona en los reportes (0033).
+      await db.query(`
+        UPDATE transacciones SET zona_cobro_id = $3
+        WHERE comerciante_id = $1 AND ${LOCAL('fecha_cobro_cliente')}::date = $2::date AND estado = 'confirmado'
+          AND zona_cobro_id IS DISTINCT FROM $3`, [comercianteId, dia, zonaDia]);
     }
     return;
   }
@@ -3305,7 +3507,7 @@ async function validarTicketsCobro(db, { merchant, cobradorId, periodo, monto, d
   const resultado = () => ({ validos, problema: problemas.join('; ') || null });
 
   if (!series.length) {
-    if (declarados.length) problemas.push('Este cobro no lleva ticket: el comerciante no cobra por día cobrado con tipo de vía');
+    if (declarados.length) problemas.push('Este cobro no lleva ticket: la zona no tiene precio por día o su precio no tiene serie de tickets');
     return resultado();
   }
   if (!declarados.length) {

@@ -9,7 +9,7 @@ import assert from 'node:assert/strict';
 
 import {
   closeDatabase, createUser, currentPeriod, generateForecastProjection, getOperationalDashboard, getReportRows,
-  initializeDatabase, insertComerciante, insertPuesto, insertTarifa, insertZona, registrarCobro, updateComerciante
+  initializeDatabase, insertComerciante, insertPuesto, insertTarifa, insertZona, registrarCobro, updateComerciante, updatePuesto
 } from '../src/db.js';
 import { pool } from '../src/pg.js';
 import { zonaConPrecio } from './_deuda.js';
@@ -53,6 +53,9 @@ test('mover de zona y rubro no mueve la recaudación de los meses pasados', asyn
   const pasado = await cobroDelMesPasado(merchant.id, cobrador.id);
 
   await updateComerciante(pool, merchant.id, { zona_id: zonaB.id, rubro_id: rubro2 });
+  // Su puesto también pasa a la zona nueva: desde la 0033 el cobro cuenta en la zona donde se vende ese día.
+  const puesto = (await pool.query('SELECT id FROM puestos WHERE comerciante_id = $1', [merchant.id])).rows[0];
+  await updatePuesto(pool, puesto.id, { zona_id: zonaB.id });
   const hoy = await registrarCobro(pool, { comerciante_id: merchant.id, cobrador_id: cobrador.id, monto: 30, metodo_pago: 'efectivo' });
 
   // Panel del mes pasado: el cobro sigue en la zona y el rubro de entonces.
