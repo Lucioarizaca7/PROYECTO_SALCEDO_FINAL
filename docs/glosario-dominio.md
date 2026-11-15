@@ -48,6 +48,8 @@ Los términos que usa la Municipalidad de Salcedo son los mismos en la base de d
 | **Mes aplicado** | Mes al que se aplicó un cobro (puede ser uno anterior con deuda) | `transacciones.periodo_aplicado` | `periodo` | `registrarCobro` | Pagos, recibo |
 | **Anulación** | Un cobro que deja de contar, con motivo y responsable; no se borra | `transacciones.motivo_anulacion` | `/api/v1/cobros/:id/anular` | `anularCobro` | Pagos (admin), recibo ANULADO |
 | **Cierre de caja** | Lo que el cobrador entrega al final del día frente a lo que registró | `cierres_caja` | `/api/v1/caja` | `cerrarCaja`, `resumenCaja` | Cierre de caja |
+| **Entrega de caja** | Registro de que el super administrador recibió el efectivo de un cierre; la complementaria es por los cobros que entraron después del cierre | `entregas_caja` | `/api/v1/caja/cierres/:id/entrega` | `registrarEntregaCaja` | Cierre de caja |
+| **Rectificación de cierre** | Corrección de lo declarado en un cierre, con motivo; el cierre original se conserva | `cierres_caja_rectificaciones` | `/api/v1/caja/cierres/:id/rectificacion` | `rectificarCierreCaja` | Cierre de caja |
 | **Tiempo de atención** | Segundos entre abrir al comerciante y registrar el cobro | `transacciones.inicio_atencion` | `/api/v1/cobros/tiempos` | `getTiemposCobro` | Analítica |
 | **Verificación de recibo** | QR del recibo que comprueba que es auténtico | — (firma HMAC) | `/api/v1/publico/verificar/:token` | `verificarRecibo` | `/verificar/:token` |
 | **Cobrador** | Usuario que cobra en campo | `usuarios` con rol `cobrador` | — | `requireRoles(['cobrador'])` | — |

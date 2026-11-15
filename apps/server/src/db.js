@@ -2532,18 +2532,40 @@ export async function getCobrosEnOtraZona(db, { desde, hasta } = {}) {
 
 const METODOS_CAJA = ['efectivo', 'yape', 'plin', 'pos'];
 const FECHA_RE = /^\d{4}-\d{2}-\d{2}$/;
+// Tope de la justificación (decisión del usuario, 15/11/2026; RN-42): cualquier faltante se justifica; un
+// sobrante, desde este monto. La base repite la regla (cierres_caja_diferencia_justificada, 0034).
+const SOBRANTE_SIN_JUSTIFICAR = 5;
+const pideJustificacion = (diferencia) => diferencia < 0 || diferencia >= SOBRANTE_SIN_JUSTIFICAR;
 
 const CIERRE_SELECT = `
   SELECT cc.id, cc.cobrador_id, u.nombre AS cobrador, ${DAY('cc.fecha')} AS fecha, cc.cobros,
          cc.esperado_efectivo, cc.esperado_yape, cc.esperado_plin, cc.esperado_pos,
          cc.declarado_efectivo, cc.declarado_yape, cc.declarado_plin, cc.declarado_pos,
-         cc.diferencia, cc.observaciones, cc.tickets, ${TS('cc.cerrado_en')} AS cerrado_en
+         cc.diferencia, cc.observaciones, cc.justificacion, cc.tickets, ${TS('cc.cerrado_en')} AS cerrado_en,
+         (SELECT COALESCE(json_agg(json_build_object('id', e.id, 'tipo', e.tipo, 'monto', e.monto, 'recibido_por', ur.nombre,
+                   'recibido_en', ${TS('e.recibido_en')}, 'observaciones', e.observaciones) ORDER BY e.id), '[]'::json)
+          FROM entregas_caja e JOIN usuarios ur ON ur.id = e.recibido_por WHERE e.cierre_id = cc.id) AS entregas,
+         (SELECT json_build_object('declarado_efectivo', r.declarado_efectivo, 'declarado_yape', r.declarado_yape,
+                   'declarado_plin', r.declarado_plin, 'declarado_pos', r.declarado_pos, 'motivo', r.motivo,
+                   'rectificado_por', ux.nombre, 'rectificado_en', ${TS('r.rectificado_en')})
+          FROM cierres_caja_rectificaciones r JOIN usuarios ux ON ux.id = r.rectificado_por
+          WHERE r.cierre_id = cc.id ORDER BY r.id DESC LIMIT 1) AS rectificacion
   FROM cierres_caja cc JOIN usuarios u ON u.id = cc.cobrador_id`;
 
 function normalizarCierre(fila) {
   if (!fila) return null;
   const out = { ...fila, id: Number(fila.id), cobrador_id: Number(fila.cobrador_id), cobros: Number(fila.cobros) };
   for (const clave of Object.keys(out)) if (/^(esperado|declarado)_|^diferencia$/.test(clave)) out[clave] = Number(out[clave]);
+  out.entregas = (fila.entregas || []).map((entrega) => ({ ...entrega, id: Number(entrega.id), monto: Number(entrega.monto) }));
+  if (fila.rectificacion) {
+    out.rectificacion = { ...fila.rectificacion };
+    for (const metodo of METODOS_CAJA) out.rectificacion[`declarado_${metodo}`] = Number(fila.rectificacion[`declarado_${metodo}`]);
+  } else out.rectificacion = null;
+  // Lo que vale hoy: lo declarado al cerrar o, si hubo rectificación, lo de la última (0034).
+  const fuente = out.rectificacion || out;
+  out.vigente = Object.fromEntries(METODOS_CAJA.map((metodo) => [`declarado_${metodo}`, fuente[`declarado_${metodo}`]]));
+  out.vigente.diferencia = dinero(METODOS_CAJA.reduce((suma, metodo) => suma + fuente[`declarado_${metodo}`] - out[`esperado_${metodo}`], 0));
+  out.entregado = out.entregas.some((entrega) => entrega.tipo === 'cierre');
   return out;
 }
 
@@ -2593,6 +2615,7 @@ export async function cerrarCaja(_db, cobradorId, payload = {}, { audit = null }
     declarado[metodo] = dinero(valor);
   }
   const observaciones = cleanText(payload.observaciones, 500) || null;
+  const justificacion = cleanText(payload.justificacion, 500) || null;
 
   return withTransaction(async (client) => {
     // Un cobrador no cierra dos veces el mismo día; el bloqueo evita dos cierres simultáneos.
@@ -2601,13 +2624,17 @@ export async function cerrarCaja(_db, cobradorId, payload = {}, { audit = null }
       throw new ConflictError('La caja de ese día ya fue cerrada');
     }
     const resumen = await resumenCaja(client, cobradorId, dia);
+    const diferencia = dinero(METODOS_CAJA.reduce((suma, metodo) => suma + declarado[metodo], 0) - resumen.esperado_total);
+    if (pideJustificacion(diferencia) && (justificacion || '').length < 5) {
+      throw new ValidationError(`${diferencia < 0 ? `Faltan S/ ${Math.abs(diferencia).toFixed(2)}` : `Sobran S/ ${diferencia.toFixed(2)}`}: escriba la justificación de la diferencia (al menos 5 caracteres)`);
+    }
     const creado = await first(client, `
       INSERT INTO cierres_caja (cobrador_id, fecha, cobros, esperado_efectivo, esperado_yape, esperado_plin, esperado_pos,
-                                declarado_efectivo, declarado_yape, declarado_plin, declarado_pos, observaciones, tickets)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13::jsonb) RETURNING id`,
+                                declarado_efectivo, declarado_yape, declarado_plin, declarado_pos, observaciones, tickets, justificacion)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13::jsonb, $14) RETURNING id`,
     [Number(cobradorId), dia, resumen.cobros, resumen.esperado.efectivo, resumen.esperado.yape, resumen.esperado.plin, resumen.esperado.pos,
       declarado.efectivo, declarado.yape, declarado.plin, declarado.pos, observaciones,
-      resumen.tickets.series.length ? JSON.stringify(resumen.tickets) : null]);
+      resumen.tickets.series.length ? JSON.stringify(resumen.tickets) : null, justificacion]);
     const cierre = normalizarCierre(await first(client, `${CIERRE_SELECT} WHERE cc.id = $1`, [creado.id]));
     if (audit) {
       await appendAudit(client, {
@@ -2621,6 +2648,81 @@ export async function cerrarCaja(_db, cobradorId, payload = {}, { audit = null }
       });
     }
     return cierre;
+  });
+}
+
+// Entrega del dinero (RN-41 y RN-44, decisión del usuario del 15/11/2026): el super_admin registra que recibió
+// el efectivo de un cierre. Yape, Plin y POS no se entregan: llegan a la cuenta; su conciliación queda para
+// después. tipo 'cierre' = el efectivo declarado (una sola vez); 'complementaria' = cobros de ese día que
+// entraron después del cierre. Quien recibe no puede ser quien cerró esa caja: nadie se entrega a sí mismo.
+export async function registrarEntregaCaja(_db, cierreId, payload = {}, { usuarioId = null, audit = null } = {}) {
+  const tipo = payload.tipo === undefined || payload.tipo === null || payload.tipo === '' ? 'cierre' : String(payload.tipo);
+  if (!['cierre', 'complementaria'].includes(tipo)) throw new ValidationError('El tipo de entrega no es válido');
+  const monto = Number(payload.monto);
+  if (payload.monto === undefined || payload.monto === null || payload.monto === '' || !Number.isFinite(monto) || monto < 0) {
+    throw new ValidationError('Indique el monto recibido en efectivo');
+  }
+  const observaciones = cleanText(payload.observaciones, 500) || null;
+
+  return withTransaction(async (client) => {
+    const fila = await first(client, 'SELECT id, cobrador_id FROM cierres_caja WHERE id = $1 FOR UPDATE', [Number(cierreId)]);
+    if (!fila) throw new NotFoundError('Cierre de caja no encontrado');
+    if (Number(fila.cobrador_id) === Number(usuarioId)) throw new ConflictError('No puede registrar la entrega de su propia caja: debe recibirla otro super administrador');
+    const cierre = normalizarCierre(await first(client, `${CIERRE_SELECT} WHERE cc.id = $1`, [fila.id]));
+    if (tipo === 'cierre') {
+      if (cierre.entregas.some((entrega) => entrega.tipo === 'cierre')) throw new ConflictError('La entrega de ese cierre ya fue registrada');
+      if (dinero(monto) !== cierre.vigente.declarado_efectivo && !observaciones) {
+        throw new ValidationError(`El cobrador declaró S/ ${cierre.vigente.declarado_efectivo.toFixed(2)} en efectivo: si recibe otro monto, explique por qué en observaciones`);
+      }
+    } else {
+      const { posteriores_al_cierre: posteriores } = await resumenCaja(client, cierre.cobrador_id, cierre.fecha);
+      if (!posteriores?.cobros) throw new ConflictError('No hay cobros posteriores al cierre: no corresponde una entrega complementaria');
+      if (monto <= 0) throw new ValidationError('El monto de la entrega complementaria debe ser mayor que cero');
+    }
+    await client.query('INSERT INTO entregas_caja (cierre_id, tipo, monto, recibido_por, observaciones) VALUES ($1, $2, $3, $4, $5)',
+      [cierre.id, tipo, dinero(monto), Number(usuarioId), observaciones]);
+    const actualizado = normalizarCierre(await first(client, `${CIERRE_SELECT} WHERE cc.id = $1`, [cierre.id]));
+    if (audit) {
+      await appendAudit(client, {
+        ...audit, usuarioId: audit.usuarioId ?? usuarioId, entidad: 'entregas_caja', recursoId: cierre.id,
+        detalle: `Entrega ${tipo === 'cierre' ? 'del cierre' : 'complementaria'} de caja ${cierre.fecha} de ${cierre.cobrador}: recibido S/ ${dinero(monto).toFixed(2)} en efectivo`,
+        payloadPrevio: cierre, payloadNuevo: actualizado
+      });
+    }
+    return actualizado;
+  });
+}
+
+// Rectificación de un cierre (RN-43, decisión del usuario del 15/11/2026): el cierre no se edita. El super_admin
+// registra los montos declarados corregidos y el motivo; vale la última rectificación y el original se conserva.
+export async function rectificarCierreCaja(_db, cierreId, payload = {}, { usuarioId = null, audit = null } = {}) {
+  const motivo = cleanText(payload.motivo, 500) || '';
+  if (motivo.length < 5) throw new ValidationError('Indique el motivo de la rectificación (al menos 5 caracteres)');
+  const declarado = {};
+  for (const metodo of METODOS_CAJA) {
+    const valor = Number(payload.declarado?.[metodo] ?? payload[`declarado_${metodo}`] ?? NaN);
+    if (!Number.isFinite(valor) || valor < 0) throw new ValidationError(`Indique el monto corregido en ${metodo}`);
+    declarado[metodo] = dinero(valor);
+  }
+  return withTransaction(async (client) => {
+    const fila = await first(client, 'SELECT id FROM cierres_caja WHERE id = $1 FOR UPDATE', [Number(cierreId)]);
+    if (!fila) throw new NotFoundError('Cierre de caja no encontrado');
+    const previo = normalizarCierre(await first(client, `${CIERRE_SELECT} WHERE cc.id = $1`, [fila.id]));
+    if (METODOS_CAJA.every((metodo) => declarado[metodo] === previo.vigente[`declarado_${metodo}`])) {
+      throw new ConflictError('Los montos son los mismos que ya tiene el cierre: no hay nada que rectificar');
+    }
+    await client.query(`
+      INSERT INTO cierres_caja_rectificaciones (cierre_id, declarado_efectivo, declarado_yape, declarado_plin, declarado_pos, motivo, rectificado_por)
+      VALUES ($1, $2, $3, $4, $5, $6, $7)`, [fila.id, declarado.efectivo, declarado.yape, declarado.plin, declarado.pos, motivo, Number(usuarioId)]);
+    const actualizado = normalizarCierre(await first(client, `${CIERRE_SELECT} WHERE cc.id = $1`, [fila.id]));
+    if (audit) {
+      await appendAudit(client, {
+        ...audit, usuarioId: audit.usuarioId ?? usuarioId, entidad: 'cierres_caja', recursoId: fila.id,
+        detalle: `Rectificación del cierre de caja ${previo.fecha} de ${previo.cobrador}: diferencia de S/ ${previo.vigente.diferencia.toFixed(2)} a S/ ${actualizado.vigente.diferencia.toFixed(2)}. Motivo: ${motivo}`,
+        payloadPrevio: previo, payloadNuevo: actualizado
+      });
+    }
+    return actualizado;
   });
 }
 

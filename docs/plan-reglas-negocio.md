@@ -215,9 +215,9 @@ Cada etapa se puede aprobar y unir por separado. El orden va de lo más barato y
 
 ### Etapa 2. Caja y dinero
 
-- Constancia de entrega del dinero (RN-41) y entrega complementaria (RN-44).
-- Tope y justificación de diferencias (RN-42), rectificación de cierre (RN-43).
-- Conciliación de Yape, Plin y POS (RN-35).
+- Constancia de entrega del dinero (RN-41) y entrega complementaria (RN-44). **Hecho el 15/11/2026**: la registra el super administrador que recibe.
+- Tope y justificación de diferencias (RN-42), rectificación de cierre (RN-43). **Hecho el 15/11/2026**: todo faltante y sobrantes desde S/ 5.
+- Conciliación de Yape, Plin y POS (RN-35). **Pendiente**: se dejó para después (decisión del 15/11/2026).
 - Necesita las decisiones 1, 2 y 3. Pide migraciones nuevas y una pantalla para tesorería.
 
 ### Etapa 3. Deuda, anulaciones y reclamos
