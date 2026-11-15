@@ -15,8 +15,7 @@ Los términos que usa la Municipalidad de Salcedo son los mismos en la base de d
 | **Baja** | Retiro lógico del comerciante; no se borra, se conserva su historial | `comerciantes.fecha_baja` | `DELETE /comerciantes/:id` | `deactivateComerciante` | botón "Dar de baja" |
 | **Documento** | DNI (8 dígitos) o RUC (11 dígitos) | `comerciantes.dni_ruc` | `dni_ruc` | `validateDocument` | columna Documento |
 | **Rubro** | Giro del negocio: comida, ropa, zapatillas, otros | `rubros` (`codigo`: COMI, ROPA…) | `/api/v1/rubros` | `getRubros` | filtro y formulario |
-| **Zona** | Sector de la ciudad donde se cobra | `zonas` (`codigo`: MCEN, ZNOR…) | `/api/v1/zonas` | `getZonas`, `insertZona` | Zonas, mapa |
-| **Calle** | Vía dentro de una zona | `calles` | `/api/v1/calles` | `getCalles` | Zonas |
+| **Zona** | Área donde todos pagan el mismo precio por día (un solo tipo de vía); una feria con parte asfaltada y parte sin asfaltar son dos zonas | `zonas` (`codigo`: MCEN, ZNOR…) | `/api/v1/zonas` | `getZonas`, `insertZona` | Zonas, mapa |
 | **Puesto** | Espacio físico que ocupa el comerciante | `puestos.codigo_puesto` | `/api/v1/puestos-mapa` | `insertPuesto` | mapa |
 | **Puesto cobrado** | Puesto que el comerciante tuvo algún día del mes: la cuota mensual se paga por cada uno (desde 2026-11) | `puestos_tenencia` | `cantidad_puestos` | `puestosDelMes`, `COBRO_POR_PUESTO_DESDE` | Cobro rápido ("× N puestos") |
 | **Zona del día** | Zona donde el comerciante vende un día, si no es la de su puesto; ese día se cobra con su tarifa | `asistencias_feriales.zona_id` | `zona_id` (asistencia), `zona_dia` (cobro) | `marcarAsistencias`, `marcarDiaCobrado` | "Zona de hoy" (Cobro, asistencia), Observaciones |

@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { initializeDatabase, getDbStats, getOperationalDashboard, buildReportCsv, getComerciantePreferencias, updateComerciantePreferencias, insertZona, getZonas, insertCalle, getCalles, updateCalle, insertComerciante, getRiskDashboard, esperarRecalculoRiesgo, todayInLima, indicadoresPanel } from '../src/db.js';
+import { initializeDatabase, getDbStats, getOperationalDashboard, buildReportCsv, getComerciantePreferencias, updateComerciantePreferencias, insertZona, getZonas, insertComerciante, getRiskDashboard, esperarRecalculoRiesgo, todayInLima, indicadoresPanel } from '../src/db.js';
 
 test('initializeDatabase crea las tablas principales del modelo', async () => {
   const db = await initializeDatabase();
@@ -47,36 +47,6 @@ test('las preferencias del comerciante se guardan como clave/valor y solo cambia
 
   await assert.rejects(updateComerciantePreferencias(db, merchant.id, { 'clave rara; DROP': 1 }), /no es válida/);
   await assert.rejects(updateComerciantePreferencias(db, 999999, {}), { name: 'NotFoundError' });
-});
-
-test('las zonas y calles se gestionan con validación y conteo', async () => {
-  const db = await initializeDatabase();
-
-  const zone = await insertZona(db, {
-    nombre: 'Zona Este',
-    descripcion: 'Sector este del mercado'
-  });
-
-  const calle = await insertCalle(db, {
-    zona_id: zone.id,
-    nombre: 'Jr. Los Rosales',
-    descripcion: 'Calle principal',
-    estado: 'activo'
-  });
-
-  const zones = await getZonas(db);
-  const calles = await getCalles(db, { zona_id: zone.id });
-
-  assert.equal(zones.find((item) => Number(item.id) === Number(zone.id))?.total_calles, 1, 'la pantalla muestra cuántas calles tiene la zona');
-  assert.equal(calles[0].nombre, 'Jr. Los Rosales');
-  assert.equal(Number(calles[0].zona_id), Number(zone.id));
-
-  const updated = await updateCalle(db, calle.id, {
-    nombre: 'Jr. Los Rosales Sur',
-    estado: 'activo'
-  });
-
-  assert.equal(updated.nombre, 'Jr. Los Rosales Sur');
 });
 
 test('getOperationalDashboard produce KPIs reales y buildReportCsv exporta CSV auditables', async () => {
