@@ -1,0 +1,26 @@
+# SOLO PARA PROBAR en celulares desde una PC, con un túnel HTTPS gratuito de Cloudflare.
+# Se usa junto al archivo de producción:
+#
+#   docker compose --env-file .env.tunel -f docker-compose.prod.yml -f docker-compose.tunel.yml up -d --build
+#   cloudflared tunnel --url http://localhost:8080
+#
+# Diferencias con producción:
+# - La API corre en modo desarrollo: crea los usuarios y datos de demostración (admin@salcedo.gob.pe / admin123,
+#   cobrador@salcedo.gob.pe / cobro123). Esas claves son públicas: NUNCA cargar aquí el padrón real y cerrar el
+#   túnel al terminar.
+# - Caddy sirve HTTP en el puerto 80 para cualquier nombre (DOMAIN=:80 en .env.tunel); el HTTPS lo pone Cloudflare.
+# - La web llama a la API por el mismo origen (/api/v1), así funciona con cualquier dirección del túnel sin
+#   volver a compilar.
+# Pasos completos: docs/prueba-con-tunel.md
+
+services:
+  api:
+    env_file: !override .env.tunel
+    environment:
+      NODE_ENV: development
+      FRONTEND_URL: http://localhost
+
+  web:
+    build:
+      args:
+        VITE_API_URL: /
