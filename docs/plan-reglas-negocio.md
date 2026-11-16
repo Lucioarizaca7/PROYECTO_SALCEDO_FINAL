@@ -222,9 +222,9 @@ Cada etapa se puede aprobar y unir por separado. El orden va de lo más barato y
 
 ### Etapa 3. Deuda, anulaciones y reclamos
 
-- Plazo y doble aprobación de anulaciones (RN-38).
-- Avisos formales de deuda (RN-53), fraccionamiento y baja con resolución (RN-54).
-- Reclamo de un día marcado (RN-27).
+- Plazo y doble aprobación de anulaciones (RN-38). **Hecho el 15/11/2026**: directo solo el mismo día y con la caja abierta; después, la aprueba el otro super administrador.
+- Avisos formales de deuda (RN-53) y baja con resolución (RN-54). **Hecho el 15/11/2026**: aviso a los 30 días del día impago más antiguo; solo baja, sin fraccionamiento (**pendiente** por decisión).
+- Reclamo de un día marcado (RN-27). **Hecho el 15/11/2026**: hasta 7 días después, ante el super administrador.
 - Necesita las decisiones 4, 5, 6 y 7.
 
 ### Etapa 4. Simplificar el modelo

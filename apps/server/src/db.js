@@ -2028,7 +2028,10 @@ export async function calcularDeudaAcumulada(db, comercianteId, { hasta = curren
           saldo: Number(liquidacion.saldo || 0),
           vencida: mes < currentPeriod() && Number(liquidacion.saldo || 0) > 0,
           no_devengo: Boolean(liquidacion.no_devengo),
-          dias_asistidos: liquidacion.dias_asistidos ?? null
+          dias_asistidos: liquidacion.dias_asistidos ?? null,
+          monto_baja: Number(liquidacion.monto_baja || 0),
+          primer_dia_impago: Number(liquidacion.saldo || 0) > 0
+            ? primerDiaImpago(liquidacion.dias_cobrados || [], Number(liquidacion.monto_pagado || 0) + Number(liquidacion.monto_baja || 0)) : null
         });
       } catch (error) {
         if (!(error instanceof ValidationError)) throw error;
@@ -2048,6 +2051,8 @@ export async function calcularDeudaAcumulada(db, comercianteId, { hasta = curren
     meses_impagos: impagos.map((item) => item.periodo),
     // El mes más antiguo con saldo: es el que se cobra primero.
     periodo_mas_antiguo: impagos[0]?.periodo ?? null,
+    // El día cobrado sin pagar más antiguo: desde él se cuentan los 30 días del aviso de deuda (RN-53).
+    dia_impago_mas_antiguo: impagos.map((item) => item.primer_dia_impago).filter(Boolean).sort()[0] ?? null,
     deuda_vencida: suma(periodos.filter((item) => item.periodo < actual)),
     deuda_mes: suma(periodos.filter((item) => item.periodo === actual)),
     deuda_total: suma(periodos)
@@ -2059,6 +2064,7 @@ export async function calcularDeudaAcumulada(db, comercianteId, { hasta = curren
 async function liquidarPorAsistencia(db, { merchant, periodo, tarifa, puesto, asistencias }) {
   const metros = Number(puesto?.metros_cuadrados || 1);
   const puestosCobrados = [];
+  const diasCobrados = [];
   let tarifaUltimoDia = null;
   for (const item of asistencias) {
     // El precio vigente cada día: si en el mes entra un precio nuevo, los días de antes van con el anterior y
@@ -2072,6 +2078,7 @@ async function liquidarPorAsistencia(db, { merchant, periodo, tarifa, puesto, as
       tramo.dias += 1;
       porTarifa.set(tarifaDia.id, tramo);
       tarifaUltimoDia = tarifaDia;
+      diasCobrados.push({ fecha: dia, puesto_id: item.puesto_id, monto: dailyTariffAmount(tarifaDia) });
     }
     for (const tramo of porTarifa.values()) {
       const montoDia = dailyTariffAmount(tramo.tarifa);
@@ -2084,7 +2091,9 @@ async function liquidarPorAsistencia(db, { merchant, periodo, tarifa, puesto, as
   const montoDia = montos.size === 1 ? [...montos][0] : null;
   const montoTotal = Number(puestosCobrados.reduce((total, item) => total + item.monto_dia * item.dias, 0).toFixed(2));
   const montoPagado = await paidInPeriod(db, merchant.id, periodo);
-  const saldo = Number(Math.max(montoTotal - montoPagado, 0).toFixed(2));
+  // Lo dado de baja con resolución (RN-54, 0035) resta del saldo como lo pagado, pero no es dinero recaudado.
+  const montoBaja = await bajaEnPeriodo(db, merchant.id, periodo);
+  const saldo = Number(Math.max(montoTotal - montoPagado - montoBaja, 0).toFixed(2));
   return {
     comerciante: merchant,
     // La del último día cobrado: la que rige ahora si el mes trajo una tarifa nueva.
@@ -2096,11 +2105,25 @@ async function liquidarPorAsistencia(db, { merchant, periodo, tarifa, puesto, as
     monto_dia: montoDia,
     monto_total: montoTotal,
     monto_pagado: montoPagado,
+    monto_baja: montoBaja,
+    // Cada día cobrado con su precio, en orden: de aquí sale el día impago más antiguo (avisos de deuda, RN-53).
+    dias_cobrados: diasCobrados.sort((a, b) => a.fecha.localeCompare(b.fecha) || a.puesto_id - b.puesto_id),
     saldo,
     estado: saldo === 0 ? 'pagado' : 'pendiente',
     vencida: saldo > 0 && periodo < currentPeriod(),
     no_devengo: false
   };
+}
+
+// El primer día cobrado que lo pagado (o dado de baja) no alcanza a cubrir: los pagos cubren primero los días
+// más antiguos, igual que cubren primero el mes más antiguo (RN-51). null si todo está cubierto.
+export function primerDiaImpago(diasCobrados, cubierto) {
+  let resto = dinero(cubierto);
+  for (const dia of diasCobrados) {
+    if (resto >= dia.monto) { resto = dinero(resto - dia.monto); continue; }
+    return dia.fecha;
+  }
+  return null;
 }
 
 // Todos pagan solo por día cobrado (decisión del usuario, 13/11/2026), con el precio de la zona de cada día:
@@ -2737,9 +2760,12 @@ export async function getCierresCaja(db, { desde, hasta } = {}) {
 // Anula un cobro: deja de contar en la recaudación y en lo pagado del comerciante, pero no se borra.
 // Solo el administrador (lo controla la ruta); el motivo y quién lo anuló quedan en la fila y en la auditoría.
 // Si db ya es una conexión dentro de una transacción (revisión de observados) se reutiliza.
-export async function anularCobro(db, id, { motivo, usuarioId, audit = null }) {
+// Un cobro de otro día o de una caja ya cerrada no se anula aquí: queda pedido y lo aprueba el otro super_admin
+// (RN-38, 0035); entonces devuelve { pendiente_aprobacion: true, solicitud }. aprobada: true salta esa puerta
+// (la aprobación ya dada, o la revisión de un cobro observado, que es su propio control).
+export async function anularCobro(db, id, { motivo, usuarioId, audit = null, aprobada = false }) {
   if (typeof db?.release !== 'function') {
-    return withTransaction((client) => anularCobro(client, id, { motivo, usuarioId, audit }));
+    return withTransaction((client) => anularCobro(client, id, { motivo, usuarioId, audit, aprobada }));
   }
   const razon = String(motivo || '').trim();
   if (razon.length < 5) throw new ValidationError('Indique el motivo de la anulación (al menos 5 caracteres)');
@@ -2748,6 +2774,10 @@ export async function anularCobro(db, id, { motivo, usuarioId, audit = null }) {
   const previous = await first(db, 'SELECT * FROM transacciones WHERE id = $1 FOR UPDATE', [Number(id)]);
   if (!previous) throw new NotFoundError('Cobro no encontrado');
   if (previous.estado === 'anulado') throw new ConflictError('El cobro ya estaba anulado');
+  if (!aprobada) {
+    const porque = await porQuePideAprobacion(db, previous.id);
+    if (porque) return solicitarAnulacion(db, previous, { razon, usuarioId, audit, porque });
+  }
 
   const updated = await first(db, `
     UPDATE transacciones SET estado = 'anulado', anulado_en = now(), anulado_por = $2, motivo_anulacion = $3
@@ -2796,6 +2826,353 @@ export async function anularCobro(db, id, { motivo, usuarioId, audit = null }) {
     });
   }
   return result;
+}
+
+// ---------------------------------------------------------------------------
+// Anulación con segunda aprobación (RN-38; migrations/0035_anulaciones_avisos_bajas_y_reclamos.sql)
+// ---------------------------------------------------------------------------
+// Decisión del usuario, 15/11/2026: un super_admin anula solo un cobro de hoy cuya caja sigue abierta. Si el
+// cobro es de otro día, o el cobrador ya cerró la caja de ese día, la anulación queda pedida y la aprueba o la
+// rechaza el otro super_admin (titular y suplente, RN-61). Devuelve el porqué, o null si puede anular solo.
+async function porQuePideAprobacion(db, cobroId) {
+  const fila = await first(db, `
+    SELECT ${LOCAL('t.fecha_cobro_cliente')}::date <> $2::date AS otro_dia,
+           EXISTS (SELECT 1 FROM cierres_caja cc WHERE cc.cobrador_id = t.cobrador_id
+                   AND cc.fecha = ${LOCAL('t.fecha_cobro_cliente')}::date) AS caja_cerrada
+    FROM transacciones t WHERE t.id = $1`, [Number(cobroId), todayInLima()]);
+  if (fila.caja_cerrada) return 'la caja de ese día ya está cerrada';
+  if (fila.otro_dia) return 'el cobro no es de hoy';
+  return null;
+}
+
+const ANULACION_SELECT = `
+  SELECT s.id, s.transaccion_id, s.motivo, s.estado, s.resolucion, s.solicitado_por AS solicitado_por_id,
+         us.nombre AS solicitado_por, ${TS('s.solicitado_en')} AS solicitado_en,
+         ur.nombre AS resuelto_por, ${TS('s.resuelto_en')} AS resuelto_en,
+         t.monto, t.metodo_pago, t.estado AS estado_cobro, to_char(${LOCAL('t.fecha_cobro_cliente')}, 'YYYY-MM-DD') AS fecha_cobro,
+         cp.numero_correlativo AS comprobante, c.nombre AS comerciante, uc.nombre AS cobrador
+  FROM anulaciones_solicitadas s
+  JOIN transacciones t ON t.id = s.transaccion_id
+  JOIN comerciantes c ON c.id = t.comerciante_id
+  LEFT JOIN comprobantes cp ON cp.id = t.comprobante_id
+  LEFT JOIN usuarios uc ON uc.id = t.cobrador_id
+  JOIN usuarios us ON us.id = s.solicitado_por
+  LEFT JOIN usuarios ur ON ur.id = s.resuelto_por`;
+
+const normalizarAnulacion = (fila) => fila && {
+  ...fila, id: Number(fila.id), transaccion_id: Number(fila.transaccion_id), solicitado_por_id: Number(fila.solicitado_por_id), monto: Number(fila.monto)
+};
+
+// Deja pedida la anulación (dentro de la transacción de anularCobro, con el cobro bloqueado).
+async function solicitarAnulacion(db, cobro, { razon, usuarioId, audit, porque }) {
+  if (await first(db, `SELECT id FROM anulaciones_solicitadas WHERE transaccion_id = $1 AND estado = 'pendiente'`, [Number(cobro.id)])) {
+    throw new ConflictError('Ese cobro ya tiene una anulación pendiente de aprobación');
+  }
+  const creada = await first(db, 'INSERT INTO anulaciones_solicitadas (transaccion_id, motivo, solicitado_por) VALUES ($1, $2, $3) RETURNING id',
+    [Number(cobro.id), razon, Number(usuarioId)]);
+  const solicitud = normalizarAnulacion(await first(db, `${ANULACION_SELECT} WHERE s.id = $1`, [creada.id]));
+  if (audit) {
+    await appendAudit(db, {
+      ...audit, accion: 'SOLICITAR_ANULACION', usuarioId: audit.usuarioId ?? usuarioId, entidad: 'cobros', recursoId: Number(cobro.id),
+      detalle: `Anulación pedida del cobro ${cobro.id} por S/ ${Number(cobro.monto).toFixed(2)} (${porque}): ${razon}`,
+      payloadNuevo: solicitud
+    });
+  }
+  return { id: Number(cobro.id), estado: cobro.estado, pendiente_aprobacion: true, porque, solicitud };
+}
+
+export async function getAnulacionesSolicitadas(db, { estado = 'pendiente' } = {}) {
+  const filtro = ['pendiente', 'aprobada', 'rechazada'].includes(estado) ? estado : 'pendiente';
+  return (await rows(db, `${ANULACION_SELECT} WHERE s.estado = $1 ORDER BY s.id DESC LIMIT 200`, [filtro])).map(normalizarAnulacion);
+}
+
+// El otro super_admin aprueba (el cobro se anula con el motivo de quien la pidió) o rechaza (el cobro sigue válido).
+export async function resolverAnulacion(_db, id, { decision, resolucion, usuarioId, audit = null }) {
+  if (!['aprobar', 'rechazar'].includes(decision)) throw new ValidationError('La decisión debe ser "aprobar" o "rechazar"');
+  const nota = cleanText(resolucion, 300) || '';
+  if (decision === 'rechazar' && nota.length < 5) throw new ValidationError('Explique por qué rechaza la anulación (al menos 5 caracteres)');
+
+  return withTransaction(async (client) => {
+    const previa = await first(client, 'SELECT * FROM anulaciones_solicitadas WHERE id = $1 FOR UPDATE', [Number(id)]);
+    if (!previa) throw new NotFoundError('Solicitud de anulación no encontrada');
+    if (previa.estado !== 'pendiente') throw new ConflictError(`La solicitud ya fue resuelta (${previa.estado})`);
+    if (Number(previa.solicitado_por) === Number(usuarioId)) {
+      throw new ConflictError('No puede resolver una anulación que usted mismo pidió: debe hacerlo el otro super administrador');
+    }
+    const cobro = await first(client, 'SELECT id, estado FROM transacciones WHERE id = $1 FOR UPDATE', [Number(previa.transaccion_id)]);
+    let anulado = null;
+    // Si el cobro ya quedó anulado por otro camino (revisión de un observado), la solicitud solo se cierra.
+    if (decision === 'aprobar' && cobro.estado !== 'anulado') {
+      anulado = await anularCobro(client, cobro.id, { motivo: previa.motivo, usuarioId: Number(previa.solicitado_por), aprobada: true });
+    }
+    await client.query(`
+      UPDATE anulaciones_solicitadas SET estado = $2, resolucion = $3, resuelto_por = $4, resuelto_en = now() WHERE id = $1`,
+    [previa.id, decision === 'aprobar' ? 'aprobada' : 'rechazada', nota || null, Number(usuarioId)]);
+    const solicitud = normalizarAnulacion(await first(client, `${ANULACION_SELECT} WHERE s.id = $1`, [previa.id]));
+    if (audit) {
+      await appendAudit(client, {
+        ...audit, usuarioId: audit.usuarioId ?? usuarioId, entidad: 'cobros', recursoId: Number(cobro.id),
+        detalle: `Anulación del cobro ${cobro.id} por S/ ${solicitud.monto.toFixed(2)} ${decision === 'aprobar' ? 'aprobada' : 'rechazada'}; la pidió ${solicitud.solicitado_por}: ${previa.motivo}${nota ? `. Respuesta: ${nota}` : ''}`,
+        payloadPrevio: previa, payloadNuevo: { solicitud, anulado }
+      });
+    }
+    return { ...solicitud, anulado };
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Avisos de deuda y baja de deuda con resolución (RN-53 y RN-54; migración 0035)
+// ---------------------------------------------------------------------------
+
+// Un comerciante entra en la lista de avisos cuando su día cobrado sin pagar más antiguo tiene 30 días o más
+// (decisión del usuario, 15/11/2026). El sistema lista y registra el aviso; la suspensión la decide la municipalidad.
+export const DIAS_PARA_AVISO_DE_DEUDA = 30;
+
+const diasEntre = (desde, hasta) => Math.round((Date.parse(hasta) - Date.parse(desde)) / DIA_MS);
+
+// Deuda de un comerciante para el aviso: null si no debe nada o su deuda no llega a los 30 días.
+async function deudaParaAviso(db, comercianteId, hoy = todayInLima()) {
+  const deuda = await calcularDeudaAcumulada(db, comercianteId);
+  if (!deuda.dia_impago_mas_antiguo || deuda.deuda_total <= 0) return null;
+  const atraso = diasEntre(deuda.dia_impago_mas_antiguo, hoy);
+  if (atraso < DIAS_PARA_AVISO_DE_DEUDA) return null;
+  return { deuda_total: deuda.deuda_total, dia_impago: deuda.dia_impago_mas_antiguo, dias_de_atraso: atraso, meses_impagos: deuda.meses_impagos };
+}
+
+const AVISO_SELECT = `
+  SELECT a.id, a.comerciante_id, c.nombre AS comerciante, c.codigo AS comerciante_codigo, a.deuda, ${DAY('a.dia_impago')} AS dia_impago,
+         u.nombre AS emitido_por, ${TS('a.emitido_en')} AS emitido_en, a.observaciones
+  FROM avisos_deuda a JOIN comerciantes c ON c.id = a.comerciante_id JOIN usuarios u ON u.id = a.emitido_por`;
+
+const normalizarAviso = (fila) => fila && { ...fila, id: Number(fila.id), comerciante_id: Number(fila.comerciante_id), deuda: Number(fila.deuda) };
+
+// por_emitir: quienes hoy cumplen la regla y no tienen aviso por ese día impago. emitidos: los últimos avisos.
+// Solo se liquidan los comerciantes con algún día marcado hace 30 días o más: el resto no puede entrar.
+export async function getAvisosDeuda(db) {
+  const hoy = todayInLima();
+  const candidatos = await rows(db, `
+    SELECT c.id, c.nombre, c.codigo,
+           (SELECT p.codigo_puesto FROM puestos p WHERE p.comerciante_id = c.id AND p.estado NOT IN ('disponible', 'inactivo') ORDER BY p.id LIMIT 1) AS puesto
+    FROM comerciantes c
+    WHERE EXISTS (SELECT 1 FROM asistencias_feriales a WHERE a.comerciante_id = c.id AND a.asistio AND a.fecha <= $1::date - $2::int)
+    ORDER BY c.nombre, c.id`, [hoy, DIAS_PARA_AVISO_DE_DEUDA]);
+  const deudas = await enGrupos(db, candidatos, async (comerciante) => {
+    try {
+      return await deudaParaAviso(db, comerciante.id, hoy);
+    } catch (error) {
+      if (!(error instanceof ValidationError)) throw error;
+      return null;
+    }
+  });
+  const emitidos = (await rows(db, `${AVISO_SELECT} ORDER BY a.id DESC LIMIT 200`)).map(normalizarAviso);
+  const yaAvisado = new Set((await rows(db, `SELECT comerciante_id, ${DAY('dia_impago')} AS dia FROM avisos_deuda`)).map((fila) => `${fila.comerciante_id}|${fila.dia}`));
+  const porEmitir = candidatos
+    .map((comerciante, i) => deudas[i] && { comerciante_id: Number(comerciante.id), comerciante: comerciante.nombre, comerciante_codigo: comerciante.codigo, puesto: comerciante.puesto, ...deudas[i] })
+    .filter((fila) => fila && !yaAvisado.has(`${fila.comerciante_id}|${fila.dia_impago}`))
+    .sort((a, b) => b.dias_de_atraso - a.dias_de_atraso);
+  return { dias_para_aviso: DIAS_PARA_AVISO_DE_DEUDA, por_emitir: porEmitir, emitidos };
+}
+
+// Registra el aviso. La deuda se vuelve a calcular aquí: el cliente no decide a quién se avisa ni por cuánto.
+export async function emitirAvisoDeuda(_db, payload = {}, { usuarioId = null, audit = null } = {}) {
+  const comercianteId = Number(payload.comerciante_id);
+  if (!comercianteId) throw new ValidationError('Indique el comerciante');
+  const observaciones = cleanText(payload.observaciones, 500);
+  return withTransaction(async (client) => {
+    const comerciante = await first(client, 'SELECT id, nombre FROM comerciantes WHERE id = $1 FOR NO KEY UPDATE', [comercianteId]);
+    if (!comerciante) throw new NotFoundError('Comerciante no encontrado');
+    const deuda = await deudaParaAviso(client, comercianteId);
+    if (!deuda) throw new ConflictError(`${comerciante.nombre} no tiene deuda de ${DIAS_PARA_AVISO_DE_DEUDA} días o más: no corresponde un aviso`);
+    if (await first(client, 'SELECT id FROM avisos_deuda WHERE comerciante_id = $1 AND dia_impago = $2::date', [comercianteId, deuda.dia_impago])) {
+      throw new ConflictError(`Ya se emitió el aviso de ${comerciante.nombre} por la deuda desde el ${deuda.dia_impago}`);
+    }
+    const creado = await first(client, `
+      INSERT INTO avisos_deuda (comerciante_id, deuda, dia_impago, emitido_por, observaciones) VALUES ($1, $2, $3, $4, $5) RETURNING id`,
+    [comercianteId, deuda.deuda_total, deuda.dia_impago, Number(usuarioId), observaciones]);
+    const aviso = normalizarAviso(await first(client, `${AVISO_SELECT} WHERE a.id = $1`, [creado.id]));
+    if (audit) {
+      await appendAudit(client, {
+        ...audit, usuarioId: audit.usuarioId ?? usuarioId, entidad: 'avisos_deuda', recursoId: aviso.id,
+        detalle: `Aviso de deuda a ${comerciante.nombre}: S/ ${aviso.deuda.toFixed(2)}, impago desde el ${aviso.dia_impago} (${deuda.dias_de_atraso} días)`,
+        payloadNuevo: aviso
+      });
+    }
+    return { ...aviso, dias_de_atraso: deuda.dias_de_atraso };
+  });
+}
+
+// Lo dado de baja en un mes: la liquidación lo resta del saldo, igual que lo pagado, pero no es recaudación.
+async function bajaEnPeriodo(db, merchantId, periodo) {
+  const fila = await first(db, 'SELECT COALESCE(SUM(monto), 0) AS baja FROM deuda_bajas WHERE comerciante_id = $1 AND periodo = $2', [merchantId, periodo]);
+  return Number(fila.baja);
+}
+
+// Baja de deuda antigua (decisión del usuario, 15/11/2026): solo el super_admin, solo meses ya pasados y con el
+// número de la resolución. Da de baja el saldo completo de cada mes vencido hasta `hasta_periodo`. No hay
+// fraccionamiento. Los días cobrados no se borran: quedan en la liquidación junto a la baja.
+export async function darDeBajaDeuda(_db, payload = {}, { usuarioId = null, audit = null } = {}) {
+  const comercianteId = Number(payload.comerciante_id);
+  if (!comercianteId) throw new ValidationError('Indique el comerciante');
+  const resolucion = cleanText(payload.resolucion, 80) || '';
+  if (resolucion.length < 3) throw new ValidationError('Indique el número de la resolución que autoriza la baja');
+  const motivo = cleanText(payload.motivo, 500) || '';
+  if (motivo.length < 5) throw new ValidationError('Indique el motivo de la baja (al menos 5 caracteres)');
+  const actual = currentPeriod();
+  const hasta = String(payload.hasta_periodo || '').trim();
+  if (!PERIODO_RE.test(hasta)) throw new ValidationError('Indique hasta qué mes se da de baja (AAAA-MM)');
+  if (hasta >= actual) throw new ValidationError('Solo se da de baja deuda de meses ya pasados, no la del mes en curso');
+
+  return withTransaction(async (client) => {
+    const comerciante = await first(client, 'SELECT id, nombre FROM comerciantes WHERE id = $1 FOR NO KEY UPDATE', [comercianteId]);
+    if (!comerciante) throw new NotFoundError('Comerciante no encontrado');
+    const deuda = await calcularDeudaAcumulada(client, comercianteId);
+    const meses = deuda.periodos.filter((item) => item.periodo <= hasta && item.saldo > 0);
+    if (!meses.length) throw new ConflictError(`${comerciante.nombre} no tiene deuda hasta ${hasta}`);
+    for (const mes of meses) {
+      await client.query('INSERT INTO deuda_bajas (comerciante_id, periodo, monto, resolucion, motivo, registrado_por) VALUES ($1, $2, $3, $4, $5, $6)',
+        [comercianteId, mes.periodo, mes.saldo, resolucion, motivo, Number(usuarioId)]);
+    }
+    const resultado = {
+      comerciante_id: comercianteId, comerciante: comerciante.nombre, resolucion, motivo,
+      periodos: meses.map((mes) => ({ periodo: mes.periodo, monto: mes.saldo })),
+      total: dinero(meses.reduce((suma, mes) => suma + mes.saldo, 0))
+    };
+    if (audit) {
+      await appendAudit(client, {
+        ...audit, usuarioId: audit.usuarioId ?? usuarioId, entidad: 'deuda_bajas', recursoId: comercianteId,
+        detalle: `Baja de deuda de ${comerciante.nombre} por S/ ${resultado.total.toFixed(2)} (${meses.map((mes) => mes.periodo).join(', ')}), resolución ${resolucion}: ${motivo}`,
+        payloadPrevio: { deuda_total: deuda.deuda_total }, payloadNuevo: resultado
+      });
+    }
+    return resultado;
+  });
+}
+
+export async function getBajasDeuda(db) {
+  return (await rows(db, `
+    SELECT b.id, b.comerciante_id, c.nombre AS comerciante, c.codigo AS comerciante_codigo, b.periodo, b.monto, b.resolucion, b.motivo,
+           u.nombre AS registrado_por, ${TS('b.registrado_en')} AS registrado_en
+    FROM deuda_bajas b JOIN comerciantes c ON c.id = b.comerciante_id JOIN usuarios u ON u.id = b.registrado_por
+    ORDER BY b.id DESC LIMIT 300`)).map((fila) => ({ ...fila, id: Number(fila.id), comerciante_id: Number(fila.comerciante_id), monto: Number(fila.monto) }));
+}
+
+// ---------------------------------------------------------------------------
+// Reclamo de un día marcado (RN-27; migración 0035)
+// ---------------------------------------------------------------------------
+
+// El comerciante reclama hasta 7 días después del día marcado (decisión del usuario, 15/11/2026).
+export const DIAS_PARA_RECLAMAR = 7;
+const TIPOS_RECLAMO = { no_asistio: 'ese día no asistió', ya_pago: 'ya pagó ese día' };
+
+const RECLAMO_SELECT = `
+  SELECT r.id, r.comerciante_id, c.nombre AS comerciante, c.codigo AS comerciante_codigo, ${DAY('r.fecha')} AS fecha, r.tipo, r.detalle,
+         r.estado, r.resolucion, ur.nombre AS registrado_por, ${TS('r.registrado_en')} AS registrado_en,
+         ux.nombre AS resuelto_por, ${TS('r.resuelto_en')} AS resuelto_en
+  FROM reclamos_dia r JOIN comerciantes c ON c.id = r.comerciante_id JOIN usuarios ur ON ur.id = r.registrado_por
+  LEFT JOIN usuarios ux ON ux.id = r.resuelto_por`;
+
+const normalizarReclamo = (fila) => fila && { ...fila, id: Number(fila.id), comerciante_id: Number(fila.comerciante_id) };
+
+// Puestos del comerciante marcados como asistió ese día (la marca de la app manda sobre las del Excel, como en la liquidación).
+async function marcasDelDia(db, comercianteId, fecha) {
+  return rows(db, `
+    SELECT DISTINCT a.puesto_id FROM asistencias_feriales a
+    WHERE a.comerciante_id = $1 AND a.fecha = $2::date AND a.asistio
+      AND (a.sesion = '' OR NOT EXISTS (
+        SELECT 1 FROM asistencias_feriales app WHERE app.puesto_id = a.puesto_id AND app.fecha = a.fecha AND app.sesion = ''))`,
+  [Number(comercianteId), fecha]);
+}
+
+export async function getReclamos(db, { estado = null } = {}) {
+  const filtro = ['pendiente', 'procedente', 'no_procedente'].includes(estado) ? estado : null;
+  return (await rows(db, `${RECLAMO_SELECT} ${filtro ? 'WHERE r.estado = $1' : ''} ORDER BY (r.estado = 'pendiente') DESC, r.id DESC LIMIT 300`, filtro ? [filtro] : []))
+    .map(normalizarReclamo);
+}
+
+// Lo registra el super_admin en nombre del comerciante. Solo se reclama un día que el sistema le marcó.
+export async function registrarReclamo(_db, payload = {}, { usuarioId = null, audit = null } = {}) {
+  const comercianteId = Number(payload.comerciante_id);
+  if (!comercianteId) throw new ValidationError('Indique el comerciante');
+  const fecha = String(payload.fecha || '');
+  if (!FECHA_RE.test(fecha) || Number.isNaN(Date.parse(fecha))) throw new ValidationError('La fecha reclamada debe usar formato AAAA-MM-DD');
+  const tipo = String(payload.tipo || '');
+  if (!Object.hasOwn(TIPOS_RECLAMO, tipo)) throw new ValidationError('El tipo de reclamo no es válido');
+  const detalle = cleanText(payload.detalle, 500) || '';
+  if (detalle.length < 5) throw new ValidationError('Escriba lo que reclama el comerciante (al menos 5 caracteres)');
+  const hoy = todayInLima();
+  if (fecha > hoy) throw new ValidationError('No se reclama un día que todavía no llega');
+  if (diasEntre(fecha, hoy) > DIAS_PARA_RECLAMAR) {
+    throw new ValidationError(`El plazo para reclamar el ${fecha} ya venció: son ${DIAS_PARA_RECLAMAR} días desde el día marcado`);
+  }
+
+  return withTransaction(async (client) => {
+    const comerciante = await first(client, 'SELECT id, nombre FROM comerciantes WHERE id = $1 FOR NO KEY UPDATE', [comercianteId]);
+    if (!comerciante) throw new NotFoundError('Comerciante no encontrado');
+    if (!(await marcasDelDia(client, comercianteId, fecha)).length) {
+      throw new ConflictError(`${comerciante.nombre} no tiene un día cobrado el ${fecha}: no hay nada que reclamar`);
+    }
+    if (await first(client, `SELECT id FROM reclamos_dia WHERE comerciante_id = $1 AND fecha = $2::date AND estado = 'pendiente'`, [comercianteId, fecha])) {
+      throw new ConflictError(`Ya hay un reclamo pendiente de ${comerciante.nombre} por el ${fecha}`);
+    }
+    const creado = await first(client, `
+      INSERT INTO reclamos_dia (comerciante_id, fecha, tipo, detalle, registrado_por) VALUES ($1, $2, $3, $4, $5) RETURNING id`,
+    [comercianteId, fecha, tipo, detalle, Number(usuarioId)]);
+    const reclamo = normalizarReclamo(await first(client, `${RECLAMO_SELECT} WHERE r.id = $1`, [creado.id]));
+    if (audit) {
+      await appendAudit(client, {
+        ...audit, usuarioId: audit.usuarioId ?? usuarioId, entidad: 'reclamos_dia', recursoId: reclamo.id,
+        detalle: `Reclamo de ${comerciante.nombre} por el ${fecha} (${TIPOS_RECLAMO[tipo]}): ${detalle}`,
+        payloadNuevo: reclamo
+      });
+    }
+    return reclamo;
+  });
+}
+
+// Procedente y «no asistió»: el día deja de deberse. Se corrige la marca a falta («no salió») en cada puesto
+// marcado, con la misma regla que marcarAsistencias (la marca de la app manda). Si ese día tiene un cobro
+// confirmado, primero se anula el cobro (con sus propias reglas): un reclamo no devuelve dinero por su cuenta.
+// Procedente y «ya pagó»: el sistema no inventa un pago; la resolución dice qué se hizo.
+export async function resolverReclamo(_db, id, { decision, resolucion, usuarioId, audit = null }) {
+  if (!['procedente', 'no_procedente'].includes(decision)) throw new ValidationError('La decisión debe ser "procedente" o "no_procedente"');
+  const nota = cleanText(resolucion, 500) || '';
+  if (nota.length < 5) throw new ValidationError('Explique la decisión (al menos 5 caracteres)');
+
+  return withTransaction(async (client) => {
+    const previo = await first(client, `SELECT r.*, ${DAY('r.fecha')} AS dia FROM reclamos_dia r WHERE r.id = $1 FOR UPDATE OF r`, [Number(id)]);
+    if (!previo) throw new NotFoundError('Reclamo no encontrado');
+    if (previo.estado !== 'pendiente') throw new ConflictError(`El reclamo ya fue resuelto (${previo.estado})`);
+    let marcasCorregidas = 0;
+    if (decision === 'procedente' && previo.tipo === 'no_asistio') {
+      const cobro = await first(client, `
+        SELECT t.id FROM transacciones t
+        WHERE t.comerciante_id = $1 AND t.estado = 'confirmado' AND ${LOCAL('t.fecha_cobro_cliente')}::date = $2::date LIMIT 1`,
+      [Number(previo.comerciante_id), previo.dia]);
+      if (cobro) throw new ConflictError(`Ese día tiene un cobro confirmado (cobro ${cobro.id}): anule primero el cobro y luego resuelva el reclamo`);
+      for (const marca of await marcasDelDia(client, previo.comerciante_id, previo.dia)) {
+        await client.query(`
+          INSERT INTO asistencias_feriales (puesto_id, fecha, sesion, marca, fuente, registrado_por, motivo, observacion, comerciante_id)
+          VALUES ($1, $2::date, '', 'F', 'app', $3, 'no_salio', $4, $5)
+          ON CONFLICT (puesto_id, fecha, sesion) DO UPDATE
+            SET marca = 'F', fuente = 'app', registrado_por = EXCLUDED.registrado_por, registrado_en = now(),
+                motivo = 'no_salio', observacion = EXCLUDED.observacion`,
+        [Number(marca.puesto_id), previo.dia, Number(usuarioId), `Reclamo ${previo.id} procedente`, Number(previo.comerciante_id)]);
+        marcasCorregidas += 1;
+      }
+    }
+    await client.query('UPDATE reclamos_dia SET estado = $2, resolucion = $3, resuelto_por = $4, resuelto_en = now() WHERE id = $1',
+      [previo.id, decision, nota, Number(usuarioId)]);
+    const reclamo = normalizarReclamo(await first(client, `${RECLAMO_SELECT} WHERE r.id = $1`, [previo.id]));
+    if (audit) {
+      await appendAudit(client, {
+        ...audit, usuarioId: audit.usuarioId ?? usuarioId, entidad: 'reclamos_dia', recursoId: reclamo.id,
+        detalle: `Reclamo ${reclamo.id} de ${reclamo.comerciante} por el ${reclamo.fecha} ${decision === 'procedente' ? 'procedente' : 'no procedente'}: ${nota}${marcasCorregidas
+          ? `. El día dejó de deberse (${marcasCorregidas} marca(s) corregida(s) a «no salió»)` : ''}`,
+        payloadPrevio: previo, payloadNuevo: reclamo
+      });
+    }
+    return { ...reclamo, marcas_corregidas: marcasCorregidas };
+  });
 }
 
 /**
@@ -3355,7 +3732,7 @@ export async function resolveCobroObservado(_db, id, { decision, resolucion, usu
       UPDATE cobros_observados SET estado = $2, resolucion = $3, revisado_por = $4, revisado_en = now()
       WHERE id = $1 RETURNING id, transaccion_id, estado, resolucion`, [Number(id), decision, nota, Number(usuarioId)]);
     if (decision === 'anulado' && !yaAnulado) {
-      await anularCobro(client, previous.transaccion_id, { motivo: nota, usuarioId });
+      await anularCobro(client, previous.transaccion_id, { motivo: nota, usuarioId, aprobada: true });
     }
     if (audit) {
       await appendAudit(client, {

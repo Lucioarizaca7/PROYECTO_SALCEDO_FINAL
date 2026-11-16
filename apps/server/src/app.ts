@@ -18,6 +18,7 @@ import { router as sesionesRouter } from './routes/sesiones.js';
 import { router as cajaRouter } from './routes/caja.js';
 import { router as ticketsRouter } from './routes/tickets.js';
 import { router as usuariosRouter } from './routes/usuarios.js';
+import { router as deudaRouter } from './routes/deuda.js';
 
 export const app = express();
 
@@ -74,6 +75,7 @@ app.use(sesionesRouter);
 app.use(cajaRouter);
 app.use(ticketsRouter);
 app.use(usuariosRouter);
+app.use(deudaRouter);
 
 // Rutas de la API que no existen.
 app.use('/api', (_req, res) => {

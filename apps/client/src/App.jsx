@@ -24,6 +24,7 @@ import { SitiosPage } from './pages/SitiosPage';
 import { TarifasPage } from './pages/TarifasPage';
 import { TicketsPage } from './pages/TicketsPage';
 import { UsuariosPage } from './pages/UsuariosPage';
+import { DeudaPage } from './pages/DeudaPage';
 import { MiClavePage } from './pages/MiClavePage';
 import { VerificarPage } from './pages/VerificarPage';
 import { ZonasPage } from './pages/ZonasPage';
@@ -43,6 +44,7 @@ function pageFor(key, { user, refresh }) {
     case 'auditoria': return <AuditoriaPage />;
     case 'revision': return <ReviewPanel canResolve={user?.rol === 'super_admin'} onResolved={refresh} />;
     case 'usuarios': return <UsuariosPage />;
+    case 'deuda': return <DeudaPage />;
     case 'mi-clave': return <MiClavePage />;
     case 'dispositivos': return <DeviceSessions />;
     case 'ia': return <AnaliticaPage />;

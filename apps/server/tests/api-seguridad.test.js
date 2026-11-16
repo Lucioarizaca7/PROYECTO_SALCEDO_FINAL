@@ -72,8 +72,9 @@ test('toda ruta GET de la API exige token, salvo las públicas declaradas', asyn
   // 27 rutas GET al dividir index.ts en routers, más /cobros/tiempos, /asistencias, /parametros, /caja/resumen, /caja/cierres, /asistencias/observaciones y las dos
   // públicas del recibo (fase 3), /tickets/series, /tickets/lotes, /tickets/cobradores, /tickets/mios y
   // /comerciantes/plantilla-padron, /tickets/lotes/:id/tickets y /comprobantes/:id/recibo (12/11/2026). Si cambia,
-  // revise que las nuevas pidan token. /asistencias/otra-zona (15/11/2026).
-  assert.equal(routes.length, 43, `cambió el número de rutas GET: ${routes.length}`);
+  // revise que las nuevas pidan token. /asistencias/otra-zona (15/11/2026). /cobros/anulaciones, /deuda/avisos,
+  // /deuda/bajas y /reclamos (Etapa 3, 15/11/2026).
+  assert.equal(routes.length, 47, `cambió el número de rutas GET: ${routes.length}`);
 
   const open = [];
   for (const path of routes) {

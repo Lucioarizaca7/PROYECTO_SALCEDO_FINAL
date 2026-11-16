@@ -16,6 +16,7 @@ export const navItems = [
   { key: 'reportes', path: '/reportes', label: 'Reportes', grupo: 'control' },
   { key: 'auditoria', path: '/auditoria', label: 'Auditoría', grupo: 'control', roles: ['super_admin', 'auditor'] },
   { key: 'revision', path: '/revision', label: 'Revisión de cobros', grupo: 'control', roles: ['super_admin', 'auditor'] },
+  { key: 'deuda', path: '/deuda', label: 'Deuda y reclamos', grupo: 'control', roles: ['super_admin', 'auditor'] },
   { key: 'ia', path: '/analitica', label: 'Analítica de recaudación', grupo: 'control' }
 ];
 

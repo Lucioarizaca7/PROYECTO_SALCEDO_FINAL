@@ -41,6 +41,7 @@ Las reglas propuestas y las decisiones pendientes están en `docs/plan-reglas-ne
 | RN-24 | El cobrador marca hasta 3 días atrás. Más atrás, solo el super administrador. | Sistema | El servidor lo rechaza. Auditoría. | Liquidación |
 | RN-25 | «No salió» no genera deuda. «No vendió» y «se negó a pagar» sí la generan. | Cobrador | Motivo obligatorio y coherente con la marca. | Liquidación (Observación del cobrador) |
 | RN-26 | Antes de cerrar su caja, el cobrador ve los puestos que quedaron sin marcar en las zonas donde ese día ya marcó a otros, y los marca. | Cobrador | Lista «sin marcar hoy» en Cierre de caja. Avisa, no bloquea. | Caja |
+| RN-27 | El comerciante puede reclamar un día marcado hasta 7 días después. Lo registra y lo resuelve el super administrador. Si procede un «no asistió», ese día deja de deberse. | Super administrador | Registro de reclamos en «Deuda y reclamos». Auditoría. | Deuda, anulaciones y reclamos |
 
 ### Cobro y comprobantes
 
@@ -52,6 +53,7 @@ Las reglas propuestas y las decisiones pendientes están en `docs/plan-reglas-ne
 | RN-34 | Yape, Plin y POS exigen número de operación, único por método. | Cobrador | El sistema rechaza un número repetido. | Cobros |
 | RN-36 | Sin señal, el cobro se guarda en el celular y se envía después. Un conflicto queda observado, nunca se descarta. | Sistema | Revisión de cobros. | Cobros y Offline |
 | RN-37 | Un cobro no se borra: lo anula el super administrador con un motivo. | Super administrador | Auditoría. | Tickets preimpresos (anularCobro) |
+| RN-38 | Un super administrador anula solo un cobro de hoy cuya caja sigue abierta. Si el cobro es de otro día, o esa caja ya se cerró, uno pide la anulación y el otro super administrador la aprueba o la rechaza. | Super administrador titular y suplente | El sistema deja la anulación pendiente; nadie aprueba la que él mismo pidió. Auditoría. | Deuda, anulaciones y reclamos |
 
 ### Caja
 
@@ -70,6 +72,8 @@ Las reglas propuestas y las decisiones pendientes están en `docs/plan-reglas-ne
 | RN-50 | La deuda es la suma de los días cobrados sin pagar, desde el inicio de cobro. | Sistema | Una sola fórmula para todo el sistema. | Liquidación (Deuda acumulada) |
 | RN-51 | Un pago cancela primero el mes más antiguo. | Sistema | Automático. | Liquidación (Deuda acumulada) |
 | RN-52 | El eventual no acumula deuda. | Sistema | Automático. | Liquidación |
+| RN-53 | Quien debe un día cobrado desde hace 30 días o más recibe un aviso formal de deuda. La suspensión del puesto la decide la municipalidad, no el sistema. | Super administrador | Lista «avisos por emitir» y registro de cada aviso. | Deuda, anulaciones y reclamos |
+| RN-54 | La deuda de meses pasados se da de baja solo con resolución, registrando su número. No hay fraccionamiento. Los días cobrados no se borran. | Super administrador | Registro de bajas con número de resolución. Auditoría. | Deuda, anulaciones y reclamos |
 
 ### Control y auditoría
 
@@ -353,6 +357,20 @@ Antes pasar a un ferial a eventual borraba su deuda atrasada entera, y pasar un 
 - **Entrega del dinero** (RN-41 y RN-44, misma decisión): `registrarEntregaCaja`, `POST /caja/cierres/:id/entrega`, solo super_admin. Se entrega el **efectivo**; Yape, Plin y POS llegan a la cuenta. Tabla `entregas_caja`: tipo `cierre` (una sola por cierre, índice único) o `complementaria` (los cobros que entraron después del cierre; solo si los hay y con monto mayor que cero). Si el monto recibido no es el efectivo declarado vigente, las observaciones son obligatorias. **Quien recibe no puede ser quien cerró esa caja** (409): con titular y suplente, uno recibe la caja del otro. La pantalla muestra la constancia (`textoConstancia`, número `E-000012`).
 - **Rectificación** (RN-43, misma decisión): `rectificarCierreCaja`, `POST /caja/cierres/:id/rectificacion`, solo super_admin, con los cuatro montos corregidos y el motivo (5 a 500 caracteres). No toca `cierres_caja`: agrega una fila en `cierres_caja_rectificaciones` y vale la última. Cada cierre devuelve `vigente` (lo declarado y la diferencia que valen hoy), `rectificacion`, `entregas` y `entregado`. Rectificar con los mismos montos responde 409.
 - **Sin regla todavía:** la conciliación de Yape, Plin y POS con el estado de cuenta (el usuario la dejó para después, 15/11/2026). **Límites:** una entrega registrada no se anula ni se corrige; rectificar después de la entrega no cambia la entrega ya registrada.
+
+## Deuda, anulaciones y reclamos (migración 0035, `routes/deuda.ts` y `routes/cobros.ts`)
+
+Decisiones del usuario del 15/11/2026 (Etapa 3 del plan de reglas). Pantalla: «Deuda y reclamos» (`DeudaPage.jsx`, `useDeuda.js`), para super_admin y auditor; solo el super_admin escribe.
+
+- **Anulación con segunda aprobación** (RN-38): `anularCobro` anula directo solo si el cobro es de hoy (día de Lima de `fecha_cobro_cliente`) y el cobrador no cerró la caja de ese día (`porQuePideAprobacion`). Si no, crea una fila en `anulaciones_solicitadas` y la ruta responde **202** con `pendiente_aprobacion: true`; el cobro sigue confirmado. `resolverAnulacion` (`POST /cobros/anulaciones/:id/resolver`, decisión `aprobar` o `rechazar`): quien la pidió no la resuelve (409, y CHECK `anulaciones_otro_resuelve`); rechazar pide explicación. Al aprobar, el cobro se anula con el motivo y a nombre de quien lo pidió (`aprobada: true`). Una pendiente por cobro (índice único parcial). `GET /cobros/anulaciones?estado=`.
+  - **Excepción:** la revisión de un cobro observado (`resolveCobroObservado`) anula sin segunda aprobación: ese cobro nunca fue aceptado y su revisión ya es un control. (Interpretación de la implementación, pendiente de confirmar con el usuario.)
+  - **Límite:** si solo hay un super_admin activo, un cobro de otro día no se puede anular hasta que exista el segundo (RN-61).
+- **Aviso de deuda** (RN-53): `DIAS_PARA_AVISO_DE_DEUDA = 30`. El día impago más antiguo sale de la liquidación: `calcularLiquidacion` devuelve `dias_cobrados` (cada día con su precio) y `primerDiaImpago` aplica lo pagado a los días más antiguos primero; `calcularDeudaAcumulada` devuelve `dia_impago_mas_antiguo`. `getAvisosDeuda` (`GET /deuda/avisos`) lista `por_emitir` (cumplen la regla y no tienen aviso por ese día impago) y `emitidos`. `emitirAvisoDeuda` (`POST /deuda/avisos`) recalcula la deuda en el servidor; un aviso por comerciante y día impago (`avisos_deuda_uno_por_dia`). El texto del aviso lo arma el cliente (`lib/deuda.js`, `textoAviso`, número `A-000012`), sin DNI. El sistema no suspende a nadie.
+  - Si el comerciante paga una parte, el día impago más antiguo avanza; si el nuevo sigue con 30 días o más, vuelve a la lista. (Interpretación de la implementación.)
+- **Baja de deuda con resolución** (RN-54): `darDeBajaDeuda` (`POST /deuda/bajas`), solo super_admin, solo meses anteriores al actual, con `resolucion` (3 a 80 caracteres) y `motivo`. Da de baja el saldo completo de cada mes vencido hasta `hasta_periodo`: una fila por mes en `deuda_bajas`. La liquidación resta la baja como resta lo pagado (`bajaEnPeriodo`, campo `monto_baja`), pero no cuenta como recaudación ni borra los días cobrados. **No hay fraccionamiento** (se dejó para después). **Límite:** una baja no se revierte.
+- **Reclamo de un día marcado** (RN-27): `DIAS_PARA_RECLAMAR = 7` (también en la base: `reclamos_dentro_del_plazo`). `registrarReclamo` (`POST /reclamos`): lo registra el super_admin en nombre del comerciante; tipo `no_asistio` o `ya_pago`; solo sobre un día que el comerciante tiene marcado como asistió; uno pendiente por comerciante y día. `resolverReclamo` (`POST /reclamos/:id/resolver`, `procedente` o `no_procedente`, con explicación):
+  - procedente y `no_asistio`: cada puesto marcado ese día pasa a falta (`no_salio`, marca de la app, que manda sobre el Excel) y el día deja de deberse. Si ese día tiene un cobro confirmado responde 409: primero se anula el cobro (con RN-38). Un reclamo no devuelve dinero por su cuenta.
+  - procedente y `ya_pago`: el sistema no inventa un pago; la resolución dice qué se hizo.
 
 ## Recibo (12/11/2026)
 
