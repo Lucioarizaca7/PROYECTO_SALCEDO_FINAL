@@ -1,7 +1,7 @@
 // Tickets preimpresos: el administrador asigna, reasigna y devuelve lotes; el cobrador consulta los suyos y
 // anula los dañados. El cobro con ticket va por /cobros (campo tickets).
 import express from 'express';
-import { getSeriesTicket, getCobradoresTickets, getLotes, getTicketsDelLote, asignarLote, reasignarTickets, devolverTickets, ticketsDelCobrador, anularTickets } from '../db.js';
+import { getSeriesTicket, getCobradoresTickets, getLotes, getTicketsDelLote, asignarLote, reasignarTickets, devolverTickets, ticketsDelCobrador, anularTickets, anularDisponiblesDelLote } from '../db.js';
 import { requireAuth, requireRoles } from '../auth.js';
 import { staffOnly, auditContext } from '../http/comunes.js';
 import { pool as db } from '../pg.js';
@@ -42,6 +42,12 @@ router.post('/api/v1/tickets/lotes/:id/reasignar', requireAuth, requireRoles(['s
 router.post('/api/v1/tickets/lotes/:id/devolver', requireAuth, requireRoles(['super_admin']), async (req, res) => {
   const data = await devolverTickets(db, Number(req.params.id), req.body || {}, { usuarioId: req.user.id, audit: auditContext(req, 'DEVOLVER_TICKETS') });
   return res.json({ data, message: `${data.devueltos} tickets devueltos` });
+});
+
+// Talonario perdido o robado (RN-33): anula de una vez los tickets disponibles del lote.
+router.post('/api/v1/tickets/lotes/:id/anular-disponibles', requireAuth, requireRoles(['super_admin']), async (req, res) => {
+  const data = await anularDisponiblesDelLote(db, Number(req.params.id), req.body || {}, { usuarioId: req.user.id, audit: auditContext(req, 'ANULAR_LOTE_PERDIDO') });
+  return res.json({ data, message: `${data.anulados} tickets anulados` });
 });
 
 // Los tickets disponibles del cobrador que inició sesión (también vienen en el paquete de jornada).

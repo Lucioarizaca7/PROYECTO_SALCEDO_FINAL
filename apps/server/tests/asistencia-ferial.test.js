@@ -16,7 +16,7 @@ let documento = 20777000000;
 async function zonaConPrecioDiario(db, monto) {
   const nombre = `zona feria ${process.pid} ${Date.now()} ${Math.random().toString(16).slice(2, 6)}`;
   const zonaId = (await db.query('INSERT INTO zonas (nombre) VALUES ($1) RETURNING id', [nombre])).rows[0].id;
-  await insertTarifa(db, { zona_id: zonaId, monto_fijo: monto, vigencia_inicio: '2026-01-01' }, { permitirInicioPasado: true });
+  await insertTarifa(db, { zona_id: zonaId, monto_fijo: monto, norma: 'OM 001-2026 (prueba)', vigencia_inicio: '2026-01-01' }, { permitirInicioPasado: true });
   return zonaId;
 }
 

@@ -74,6 +74,7 @@ Roles: `super_admin`, `cobrador`, `auditor`, `comerciante`. `staffOnly` = los tr
 | Parámetros | `GET /parametros`, `PUT /parametros/inicio_cobro` | super_admin |
 | Caja (`routes/caja.ts`) | `GET /caja/resumen`, `POST /caja/cierre`, `GET /caja/cierres`, `POST /caja/cierres/:id/entrega`, `POST /caja/cierres/:id/rectificacion` | cobrador ve solo la suya; cierres: super_admin, auditor; entrega y rectificación: super_admin |
 | Deuda y reclamos (`routes/deuda.ts`) | `GET/POST /deuda/avisos`, `GET/POST /deuda/bajas`, `GET/POST /reclamos`, `POST /reclamos/:id/resolver`; en `routes/cobros.ts`: `GET /cobros/anulaciones`, `POST /cobros/anulaciones/:id/resolver` | consulta: super_admin, auditor; escribe: super_admin |
+| Etapa 4 (rutas nuevas en módulos existentes) | `PUT /usuarios/:id/zonas`, `GET /asistencias/fuera-de-asignacion`, `POST /tickets/lotes/:id/anular-disponibles` | zonas y talonario: super_admin; reporte: super_admin, auditor |
 | Tickets (`routes/tickets.ts`) | `GET /tickets/series`, `/tickets/lotes`, `/tickets/cobradores`, `/tickets/mios`; `POST /tickets/lotes`, `/tickets/lotes/:id/reasignar`, `/tickets/lotes/:id/devolver`, `/tickets/anulaciones` | lotes: solo super_admin (auditor consulta); mios y anulaciones: cobrador, super_admin |
 | Recibo | `GET /comprobantes/:id/pdf` y `GET /comprobantes/:id/recibo` (el recibo oficial con QR para reenviarlo por WhatsApp; el cobrador solo los suyos), `GET /portal/recibos/:token/pdf` (enlace firmado de 30 min), `GET /publico/verificar/:token` (QR) | `src/reciboPdf.js` |
 | Jornada | `GET /jornada/paquete` | cobrador |
@@ -120,3 +121,4 @@ Para ver los roles exactos de una ruta: `grep -rn "'/api/v1/<ruta>" apps/server/
 - **0033:** `transacciones.zona_cobro_id` pasa a ser la zona del día del cobro (la de la marca de ese día); corrige los cobros existentes.
 - **0034:** `cierres_caja.justificacion` (obligatoria con faltante o sobrante de S/ 5 o más), `entregas_caja` y `cierres_caja_rectificaciones`.
 - **0035:** `anulaciones_solicitadas` (segunda aprobación), `avisos_deuda`, `deuda_bajas` (baja con resolución) y `reclamos_dia`.
+- **0036:** `tarifas.norma`, `cobrador_zonas`, `asistencias_feriales.fuera_de_asignacion` y la zona del comerciante atada a su puesto principal (triggers).

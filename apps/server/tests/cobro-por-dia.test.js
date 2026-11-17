@@ -113,7 +113,7 @@ test('una zona sin precio: sin días no debe nada; un día marcado avisa que fal
   await assert.rejects(() => calcularLiquidacion(db, comerciante.id, PERIODO), (error) => error.sinTarifa && /no tiene precio por día/.test(error.message));
 
   // El super_admin le pone precio y el día marcado se cobra con él.
-  await insertTarifa(db, { zona_id: sinPrecio.id, monto_fijo: 5, vigencia_inicio: '2026-09-01' }, { permitirInicioPasado: true });
+  await insertTarifa(db, { zona_id: sinPrecio.id, monto_fijo: 5, norma: 'OM 001-2026 (prueba)', vigencia_inicio: '2026-09-01' }, { permitirInicioPasado: true });
   assert.equal((await calcularLiquidacion(db, comerciante.id, PERIODO)).monto_total, 5);
 });
 

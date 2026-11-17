@@ -1,6 +1,6 @@
 // Tarifas, liquidación y saldo del comerciante.
 import express from 'express';
-import { getTarifas, insertTarifa, updateTarifa, calcularLiquidacion, calcularDeudaAcumulada, getParametros, setInicioCobro, seriesDelComerciante } from '../db.js';
+import { getTarifas, insertTarifa, updateTarifa, calcularLiquidacion, calcularDeudaAcumulada, getParametros, setInicioCobro, seriesDelComerciante, puestosDelDia } from '../db.js';
 import { requireAuth, requireRoles, auditMutation } from '../auth.js';
 import { staffOnly, rowById, resolveComercianteParam } from '../http/comunes.js';
 import { pool as db } from '../pg.js';
@@ -54,7 +54,9 @@ async function liquidacionConDeuda(req) {
     ...liquidacion,
     deuda_acumulada: await calcularDeudaAcumulada(db, comercianteId),
     // Series de ticket del periodo (un ticket por puesto y día cobrado); vacía = el cobro no lleva ticket.
-    series_cobro: await seriesDelComerciante(db, liquidacion.comerciante, liquidacion.periodo)
+    series_cobro: await seriesDelComerciante(db, liquidacion.comerciante, liquidacion.periodo),
+    // Sus puestos y si ya tiene marca de hoy: sin marca, el cobrador elige al cobrar cuáles abrieron (RN-22).
+    puestos_del_dia: await puestosDelDia(db, comercianteId)
   };
 }
 

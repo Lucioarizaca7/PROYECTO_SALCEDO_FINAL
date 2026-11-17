@@ -39,7 +39,7 @@ export function TarifasPage() {
               <div className="panel-title">{tarifas.editingId ? 'Editar precio' : zonaDelFormulario?.precio_dia != null ? `Cambiar precio de ${zonaDelFormulario.nombre}` : 'Poner precio'}</div>
               <div className="panel-subtitle">
                 {tarifas.yaRige
-                  ? `Rige desde el ${form.vigencia_inicio}: solo se puede cerrar. Para otro monto, ponga un precio nuevo; este se cierra solo.`
+                  ? `Rige desde el ${form.vigencia_inicio}: solo se puede cerrar o escribir su norma. Para otro monto, ponga un precio nuevo; este se cierra solo.`
                   : 'Rige desde el día que elija (hoy o después). Los días anteriores se siguen cobrando con el precio que tenían.'}
               </div>
             </div>
@@ -60,6 +60,11 @@ export function TarifasPage() {
             <label>
               <span>Desde</span>
               <input disabled={tarifas.yaRige} required type="date" min={tarifas.yaRige ? undefined : hoyEnLima()} value={form.vigencia_inicio} onChange={(event) => setForm({ ...form, vigencia_inicio: event.target.value })} />
+            </label>
+            {/* RN-15: todo precio nuevo lleva la norma que lo respalda; la de uno anterior se puede escribir después. */}
+            <label>
+              <span>Ordenanza o resolución</span>
+              <input required={!tarifas.editingId} minLength={3} maxLength={120} placeholder="Ej.: OM 012-2026-MDS" aria-label="Ordenanza o resolución que respalda el precio" value={form.norma} onChange={(event) => setForm({ ...form, norma: event.target.value })} />
             </label>
             {tarifas.editingId && (
               <label>
@@ -105,13 +110,14 @@ export function TarifasPage() {
       <div className="table-card">
         <div className="panel-heading"><div><div className="panel-title">Historial de precios</div><div className="panel-subtitle">Cada cambio de precio cierra el anterior el día previo.</div></div></div>
         <table>
-          <thead><tr><th>Zona</th><th>Precio por día</th><th>Vigencia</th><th>Estado</th>{tarifas.puedeEditar && <th>Acción</th>}</tr></thead>
+          <thead><tr><th>Zona</th><th>Precio por día</th><th>Vigencia</th><th>Norma</th><th>Estado</th>{tarifas.puedeEditar && <th>Acción</th>}</tr></thead>
           <tbody>
             {historial.map((item) => (
               <tr key={item.id}>
                 <td>{item.zona || `Zona ${item.zona_id}`}</td>
                 <td>{soles(item.monto_fijo)}</td>
                 <td>{item.vigencia_inicio}{item.vigencia_fin ? ` a ${item.vigencia_fin}` : ' en adelante'}</td>
+                <td>{item.norma || <span className="status pending">Sin norma</span>}</td>
                 <td><span className={`status ${item.estado ? 'paid' : 'neutral'}`}>{item.estado ? 'Activo' : 'Inactivo'}</span></td>
                 {tarifas.puedeEditar && <td>{item.estado ? <button className="table-action" type="button" onClick={() => tarifas.edit(item)}>Editar</button> : null}</td>}
               </tr>

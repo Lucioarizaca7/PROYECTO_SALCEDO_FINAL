@@ -19,6 +19,8 @@ Las reglas propuestas y las decisiones pendientes están en `docs/plan-reglas-ne
 | RN-02 | Un comerciante sin DNI se registra como pendiente de regularización y paga igual. | Super administrador | Lista de pendientes en Comerciantes. | Importación del padrón |
 | RN-03 | Un comerciante no se borra: se da de baja. La baja anula su carnet y da de baja sus puestos. | Super administrador | Auditoría. | Liquidación (Baja) |
 | RN-04 | Un puesto pertenece a una zona. Solo el super administrador cambia la zona habitual de un puesto. | Super administrador | El servidor rechaza el cambio de otro rol. | Puestos |
+| RN-05 | Un puesto sin zona confirmada no tiene precio propio: para marcarlo o cobrarlo, el cobrador elige la zona donde vende ese día. | Cobrador | En línea el sistema no deja marcar ni cobrar sin la zona del día. Sin señal, el cobro queda observado. | Modelo simplificado (Etapa 4) |
+| RN-06 | El comerciante tiene una sola zona: la de su puesto principal. Solo se edita a mano la de quien no tiene puesto. | Sistema | La base la actualiza sola cuando cambia el puesto. | Modelo simplificado (Etapa 4) |
 
 ### Zonas y precios
 
@@ -29,6 +31,7 @@ Las reglas propuestas y las decisiones pendientes están en `docs/plan-reglas-ne
 | RN-12 | La zona nace con su precio. El tipo de vía lo sugiere: S/ 3 asfaltada, S/ 2 sin asfaltar. | Super administrador | El formulario lo propone; se puede cambiar. | Liquidación |
 | RN-13 | Solo el super administrador fija o cambia un precio. | Super administrador | El servidor rechaza a otros roles. Auditoría. | Liquidación |
 | RN-14 | Un precio nuevo rige desde hoy o después, nunca hacia atrás. Los días anteriores conservan su precio. | Sistema | El servidor rechaza una fecha pasada. | Liquidación |
+| RN-15 | Cada precio nuevo lleva la norma que lo respalda (número de ordenanza o resolución). | Super administrador | El sistema no guarda un precio nuevo sin la norma. | Modelo simplificado (Etapa 4) |
 | RN-16 | Una zona sin precio no puede cobrar en línea. Sin señal, el cobro queda observado. | Sistema | Aviso en Tarifas. | Liquidación |
 
 ### Día cobrado
@@ -37,6 +40,7 @@ Las reglas propuestas y las decisiones pendientes están en `docs/plan-reglas-ne
 |---|---|---|---|---|
 | RN-20 | Se debe solo el día que el cobrador marcó o cobró. Sin día cobrado no hay deuda. | Cobrador | Marca de asistencia o cobro. | Liquidación |
 | RN-21 | Cada puesto marcado paga su día. Dos puestos el mismo día son dos pagos. | Cobrador | Detalle por puesto en la liquidación. | Liquidación (Varios puestos) |
+| RN-22 | Al cobrar a un comerciante con varios puestos, el cobrador marca cuáles abrieron ese día. Cada puesto marcado paga su día. | Cobrador | Pantalla de cobro; el servidor marca la asistencia de cada puesto con el cobro. | Modelo simplificado (Etapa 4) |
 | RN-23 | Si el comerciante vende ese día en otra zona, el cobrador elige la zona del día y se cobra ese precio. | Cobrador | Queda en Observaciones. | Liquidación (Zona del día) |
 | RN-24 | El cobrador marca hasta 3 días atrás. Más atrás, solo el super administrador. | Sistema | El servidor lo rechaza. Auditoría. | Liquidación |
 | RN-25 | «No salió» no genera deuda. «No vendió» y «se negó a pagar» sí la generan. | Cobrador | Motivo obligatorio y coherente con la marca. | Liquidación (Observación del cobrador) |
@@ -50,6 +54,7 @@ Las reglas propuestas y las decisiones pendientes están en `docs/plan-reglas-ne
 | RN-30 | Todo cobro genera un recibo con número correlativo. | Sistema | Automático. | Cobros |
 | RN-31 | Por cada puesto y día cobrado se entrega un ticket preimpreso del valor de ese día. | Cobrador | La suma de los tickets debe ser igual al monto. | Tickets preimpresos |
 | RN-32 | Los talonarios los asigna solo el super administrador. | Super administrador | Lotes con rango único. | Tickets preimpresos |
+| RN-33 | Un talonario perdido o robado se reporta el mismo día y el super administrador anula de una vez sus tickets disponibles, con motivo. | Cobrador y super administrador | Botón «Perdido o robado» en Tickets. Auditoría. | Modelo simplificado (Etapa 4) |
 | RN-34 | Yape, Plin y POS exigen número de operación, único por método. | Cobrador | El sistema rechaza un número repetido. | Cobros |
 | RN-36 | Sin señal, el cobro se guarda en el celular y se envía después. Un conflicto queda observado, nunca se descarta. | Sistema | Revisión de cobros. | Cobros y Offline |
 | RN-37 | Un cobro no se borra: lo anula el super administrador con un motivo. | Super administrador | Auditoría. | Tickets preimpresos (anularCobro) |
@@ -83,6 +88,7 @@ Las reglas propuestas y las decisiones pendientes están en `docs/plan-reglas-ne
 | RN-61 | Hay dos super administradores: titular y suplente. Cada mes uno revisa lo que hizo el otro. | Gerencia | Memorando y auditoría. | Super administrador titular y suplente |
 | RN-62 | Los reportes por zona cuentan cada cobro en la zona donde se vendió ese día. | Sistema | Automático. | Cobros (Reportes) |
 | RN-63 | Cada mes se revisa el reporte «cobros en otra zona» por cobrador. | Super administrador | Reporte en Reportes, para super administrador y auditor. | Cobros (Reportes) |
+| RN-64 | Cada cobrador tiene zonas asignadas. Cobrar fuera de ellas no se impide, pero queda señalado. Sin zonas asignadas, cobra en todas. | Super administrador | Asignación en Usuarios. Reporte «marcas fuera de las zonas asignadas». | Modelo simplificado (Etapa 4) |
 
 ---
 
@@ -371,6 +377,18 @@ Decisiones del usuario del 15/11/2026 (Etapa 3 del plan de reglas). Pantalla: «
 - **Reclamo de un día marcado** (RN-27): `DIAS_PARA_RECLAMAR = 7` (también en la base: `reclamos_dentro_del_plazo`). `registrarReclamo` (`POST /reclamos`): lo registra el super_admin en nombre del comerciante; tipo `no_asistio` o `ya_pago`; solo sobre un día que el comerciante tiene marcado como asistió; uno pendiente por comerciante y día. `resolverReclamo` (`POST /reclamos/:id/resolver`, `procedente` o `no_procedente`, con explicación):
   - procedente y `no_asistio`: cada puesto marcado ese día pasa a falta (`no_salio`, marca de la app, que manda sobre el Excel) y el día deja de deberse. Si ese día tiene un cobro confirmado responde 409: primero se anula el cobro (con RN-38). Un reclamo no devuelve dinero por su cuenta.
   - procedente y `ya_pago`: el sistema no inventa un pago; la resolución dice qué se hizo.
+
+## Modelo simplificado (Etapa 4, migración 0036)
+
+Decisiones del usuario del 15/11/2026.
+
+- **Norma del precio** (RN-15): `tarifas.norma` (3 a 120 caracteres). `insertTarifa` e `insertZona` con `precio_dia` la exigen (`normaDelPrecio`); la base lo repite con `tarifas_con_norma` (los precios activos creados desde la 0036). Los precios anteriores quedan sin norma; `updateTarifa` deja escribirla o corregirla siempre, porque no cambia lo que se cobra. Las semillas de demostración usan «Datos de demostración».
+- **Zonas por cobrador** (RN-64): tabla `cobrador_zonas`; `asignarZonasCobrador` (`PUT /usuarios/:id/zonas`, solo super_admin) reemplaza la lista; `GET /usuarios` devuelve `zonas_asignadas`. **Solo avisa**: la marca hecha en una zona no asignada se guarda con `asistencias_feriales.fuera_de_asignacion = true` (`senalarFueraDeAsignacion`, en `marcarAsistencias` y en la marca que pone el cobro). Un cobrador sin zonas asignadas cobra en todas. El dato queda en la marca: cambiar la asignación después no cambia lo ya marcado. Reporte: `getMarcasFueraDeAsignacion` (`GET /asistencias/fuera-de-asignacion`, super_admin y auditor). **Límite:** un cobro sobre un día que otro ya marcó no se señala (la señal va en la marca).
+- **Talonario perdido** (RN-33): `anularDisponiblesDelLote` (`POST /tickets/lotes/:id/anular-disponibles`, solo super_admin, con motivo). Anula todos los tickets disponibles del lote y lo cierra; los usados no se tocan. El aviso «el mismo día» es una regla de trabajo: el sistema no la mide.
+- **Puestos del día al cobrar** (RN-22): el cobro acepta `puestos_dia` (ids). `marcarDiaCobrado` marca cada puesto de la lista que no tenga marca de la app ese día (no pisa un «no salió»). Sin la lista, como antes: solo el puesto principal y solo si nadie marcó el día. En línea, un puesto ajeno o dado de baja rechaza el cobro; sin señal se ignora. La liquidación y `/liquidaciones/:id` devuelven `puestos_del_dia` (`puestosDelDia`: puestos y `marcado_hoy`); el paquete de jornada trae `puestos` por comerciante. Cliente: `lib/cobroDelDia.js` (`puestosParaElegir`, `requeridosConPuestos`, `montoDePuestos`); el selector solo aparece con dos o más puestos y sin marca de hoy.
+- **Puesto sin zona confirmada** (RN-05): con `puestos.zona_por_regularizar` no nulo, `marcarAsistencias` rechaza «asistió» sin `zona_id` (una falta no necesita precio) y `registrarCobro` en línea rechaza el cobro que marcaría ese puesto sin `zona_dia`. Sin señal el cobro entra con la zona provisional y queda observado. Las marcas anteriores a la 0036 no cambian; al confirmar la zona se corrigen como antes (0019).
+- **Zona única del comerciante** (RN-06): `comerciantes.zona_id` es la zona del puesto principal (`zona_del_puesto_principal`, el de menor id en uso). Dos triggers la mantienen: `trg_puesto_mueve_al_comerciante` (al cambiar zona, titular o estado de un puesto) y `trg_comerciantes_a_zona_de_puesto` (al guardar el comerciante). `updateComerciante(..., { zonaDelPuesto: true })` (la ruta) responde 400 si se intenta otra zona; la importación del padrón no lo pide y la base acomoda la zona. Quien no tiene puesto conserva una zona editable. El cambio rige desde ese día (0025) y el código del comerciante se vuelve a armar; el código anterior sigue sirviendo para buscarlo.
+- **Tipos de comerciante** (RN-07): se mantienen ferial, permanente y eventual (decisión del 15/11/2026). No se unieron.
 
 ## Recibo (12/11/2026)
 

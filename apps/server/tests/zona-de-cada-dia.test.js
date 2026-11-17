@@ -83,9 +83,11 @@ test('un mes con cambio de zona cobra cada tramo con su tarifa y una marca atras
 test('una zona por regularizar es provisional: asignarla corrige también lo pasado', async () => {
   const { db, asfaltada, sinAsfaltar } = await preparar();
   const { titular, puesto } = await puestoConTitular(db, asfaltada);
-  await db.query(`UPDATE puestos SET zona_por_regularizar = '' WHERE id = $1`, [puesto.id]);
+  // Marcas de antes de la RN-05 (0036): hoy un puesto sin zona confirmada pide la zona del día al marcarlo.
   await marcar(db, puesto, ['2026-09-06', '2026-09-13']);
+  await db.query(`UPDATE puestos SET zona_por_regularizar = '' WHERE id = $1`, [puesto.id]);
   assert.equal((await calcularLiquidacion(db, titular.id, PERIODO)).monto_total, 6);
+  await assert.rejects(() => marcar(db, puesto, ['2026-09-20']), /no tiene zona confirmada/);
 
   await updatePuesto(db, puesto.id, { zona_id: sinAsfaltar.id });
 

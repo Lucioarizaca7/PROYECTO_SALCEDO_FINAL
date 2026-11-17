@@ -76,6 +76,7 @@ export function TicketsPage() {
                           {tickets.cobradores.filter((cobrador) => cobrador.id !== lote.cobrador_id).map((cobrador) => <option key={cobrador.id} value={cobrador.id}>{cobrador.nombre}</option>)}
                         </select>
                         <button className="secondary-button compact" type="button" onClick={() => tickets.devolver(lote)}>Devolver</button>
+                        <button className="secondary-button compact" type="button" onClick={() => tickets.anularPerdido(lote)}>Perdido o robado</button>
                       </>
                     )}
                   </td>

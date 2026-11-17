@@ -46,7 +46,7 @@ test('un precio nuevo de la zona desde el día 1 del mes no borra lo ya pagado',
   await cobrar(merchant.id, 100);
   assert.equal((await calcularLiquidacion(pool, merchant.id)).monto_pagado, 100);
 
-  await insertTarifa(pool, { zona_id: zona.id, monto_fijo: 20, vigencia_inicio: `${currentPeriod()}-01` }, { permitirInicioPasado: true });
+  await insertTarifa(pool, { zona_id: zona.id, monto_fijo: 20, norma: 'OM 001-2026 (prueba)', vigencia_inicio: `${currentPeriod()}-01` }, { permitirInicioPasado: true });
 
   const despues = await calcularLiquidacion(pool, merchant.id);
   assert.equal(Number(despues.tarifa.monto_fijo), 20, 'se aplica el precio nuevo');

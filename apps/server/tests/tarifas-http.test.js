@@ -40,7 +40,7 @@ test('crear una tarifa avisa del cierre de la anterior, lo audita y un cruce res
   const token = login.body.token;
 
   const zona = await pool.query('INSERT INTO zonas (nombre) VALUES ($1) RETURNING id', [`Zona http ${process.pid} ${Date.now()}`]);
-  const tarifa = (extra) => api('/tarifas', { method: 'POST', token, body: { zona_id: zona.rows[0].id, monto_fijo: 10, ...extra } });
+  const tarifa = (extra) => api('/tarifas', { method: 'POST', token, body: { zona_id: zona.rows[0].id, monto_fijo: 10, norma: 'OM 001-2026 (prueba)', ...extra } });
 
   // Solo hay precio por día de una zona (0032): una cuota mensual por rubro responde 400 en español.
   const mensual = await api('/tarifas', { method: 'POST', token, body: { rubro_id: 1, monto_fijo: 90, unidad_medida: 'mensual', vigencia_inicio: '2031-01-01' } });

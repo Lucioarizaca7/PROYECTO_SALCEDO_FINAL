@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useSisrec } from '../app/SisrecContext';
+import { faltaZonaDelDia, montoDePuestos, puestosParaElegir, requeridosConPuestos } from '../lib/cobroDelDia';
 import { formatPEN } from '../lib/formato';
 import { createReceiptHash } from '../features/payments/recibo';
 import { enviarReciboOficial } from '../features/payments/reciboOficial';
@@ -71,11 +72,27 @@ export function usePagos() {
     if (zonaMarcada.id !== null && String(zonaMarcada.id) === String(merchant?.id)) setZonaDia(zonaMarcada.zona);
   }, [zonaMarcada, merchant?.id]);
 
+  // Puestos del día (RN-22, decisión del usuario del 15/11/2026): con dos o más puestos y sin marca de hoy, el
+  // cobrador elige cuáles abrieron; el cobro marca cada uno y cada uno paga su día. Empiezan todos elegidos.
+  const puestosDia = puestosParaElegir(balance?.puestos_del_dia, muestraZonaDia);
+  const [puestosElegidos, setPuestosElegidos] = useState([]);
+  useEffect(() => {
+    setPuestosElegidos((balance?.puestos_del_dia?.puestos || []).map((puesto) => Number(puesto.id)));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [merchant?.id, balance?.puestos_del_dia]);
+  const alternarPuesto = (id) => setPuestosElegidos((actual) => (actual.includes(Number(id)) ? actual.filter((otro) => otro !== Number(id)) : [...actual, Number(id)]));
+  const precioDePuesto = (puesto) => montoDiaEnZona(tarifasDia, puesto.zona_id) ?? (zonas.find((zona) => String(zona.id) === String(puesto.zona_id))?.precio_dia ?? null);
+  // RN-05: un puesto sin zona confirmada pide la zona de hoy.
+  const faltaZona = faltaZonaDelDia(balance?.puestos_del_dia, { elegidos: puestosDia.length ? puestosElegidos : null, zonaDia, cobraHoy: muestraZonaDia });
+
   useEffect(() => {
     const serieZona = zonaElegida ? serieDeValor(tickets.estado, montoDiaEnZona(tarifasDia, zonaElegida.id) ?? zonaElegida.precio_dia) : null;
-    setRequeridos(serieZona ? requeridosEnZona(balance?.series_cobro, serieZona) : requeridosPorDefecto(balance?.series_cobro));
+    const base = serieZona ? requeridosEnZona(balance?.series_cobro, serieZona) : requeridosPorDefecto(balance?.series_cobro);
+    setRequeridos(requeridosConPuestos(base, {
+      puestos: puestosDia, elegidos: puestosElegidos, serieZona, serieDePuesto: (puesto) => serieDeValor(tickets.estado, precioDePuesto(puesto))
+    }));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [balance?.series_cobro, zonaDia]);
+  }, [balance?.series_cobro, zonaDia, puestosElegidos, puestosDia.length]);
   const usaTickets = requeridos.length > 0 && requeridos.some((item) => tickets.estado.series[item.serie]);
   const entrega = usaTickets ? proximosTickets(tickets.estado, requeridos.filter((item) => item.cantidad > 0)) : null;
   const montoTickets = usaTickets ? montoDeRequeridos(requeridos) : null;
@@ -93,6 +110,14 @@ export function usePagos() {
     if (montoDia !== null) setForm((current) => ({ ...current, monto: String(Number((montoDia * puestosHoy).toFixed(2))) }));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [zonaDia, usaTickets]);
+  // Sin tickets y con varios puestos: lo adeudado más lo que valen hoy los puestos elegidos.
+  useEffect(() => {
+    if (!puestosDia.length || usaTickets) return;
+    const precioZona = zonaElegida ? (montoDiaEnZona(tarifasDia, zonaElegida.id) ?? (zonaElegida.precio_dia == null ? null : Number(zonaElegida.precio_dia))) : null;
+    const hoy = montoDePuestos({ puestos: puestosDia, elegidos: puestosElegidos, precioDePuesto, precioZona });
+    if (hoy !== null) setForm((current) => ({ ...current, monto: String(Number((Number(balance?.saldo || 0) + hoy).toFixed(2))) }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [puestosElegidos, puestosDia.length, zonaDia, usaTickets]);
   const cambiarTickets = (serie, delta) => setRequeridos((current) => current.map((item) => (
     item.serie === serie ? { ...item, cantidad: Math.max(0, Math.min(60, item.cantidad + delta)) } : item
   )));
@@ -216,7 +241,11 @@ export function usePagos() {
     const guardado = await storeFor('jornada').get(CLAVE_ASISTENCIAS).catch(() => null);
     const marca = estadoDelDia(guardado, hoyEnLima()).marcas[String(registro.puestoFerialId)];
     if (!marca) return;
-    setBalance((actual) => (actual && actual.series_cobro ? { ...actual, series_cobro: seriesConMarcaDeHoy(actual.series_cobro, marca) } : actual));
+    setBalance((actual) => (actual && actual.series_cobro ? {
+      ...actual, series_cobro: seriesConMarcaDeHoy(actual.series_cobro, marca),
+      // Ya tiene marca de hoy en este celular: no se eligen puestos al cobrar, manda la marca.
+      puestos_del_dia: actual.puestos_del_dia ? { ...actual.puestos_del_dia, marcado_hoy: true } : actual.puestos_del_dia
+    } : actual));
     if (marca.asistio && marca.zonaId) setZonaMarcada({ id: registro.id, zona: String(marca.zonaId) });
   };
 
@@ -340,6 +369,8 @@ export function usePagos() {
       return setMessage(`No te quedan tickets suficientes: faltan ${entrega.faltan.map((item) => `${item.faltan} de la serie ${item.serie}`).join(' y ')}. Pide un lote a la oficina.`);
     }
     if (usaTickets && !entrega.tickets.length) return setMessage('Indica cuántos tickets entregas.');
+    if (puestosDia.length && !puestosElegidos.length) return setMessage('Marca al menos un puesto que abrió hoy.');
+    if (faltaZona) return setMessage('Este puesto no tiene zona confirmada: elige la zona de hoy antes de cobrar.');
     const ticketsEntregados = usaTickets ? entrega.tickets : [];
 
     const fechaCobro = new Date().toISOString();
@@ -357,6 +388,8 @@ export function usePagos() {
       tickets: ticketsEntregados.length ? ticketsEntregados : undefined,
       // La zona del día: la marca de asistencia del cobro va en esa zona (o corrige la de hoy).
       zona_dia: muestraZonaDia && zonaDia ? Number(zonaDia) : undefined,
+      // Los puestos que abrieron hoy (RN-22): el cobro marca cada uno.
+      puestos_dia: puestosDia.length ? puestosDia.filter((puesto) => puestosElegidos.includes(Number(puesto.id))).map((puesto) => Number(puesto.id)) : undefined,
       // El mismo hash viaja en línea y, si la red falla, en la cola: el servidor nunca lo registra dos veces.
       hash_transaccion: await crearHashCobro({ cobradorId: user?.id, comercianteId: form.comercianteId, monto: form.monto, fechaCobro, salt: `${Date.now()}-${Math.random()}` })
     };
@@ -499,6 +532,7 @@ export function usePagos() {
     findMerchant, scanQr, applySuggestion, submit, elegirPeriodo,
     tickets, usaTickets, requeridos, entrega, cambiarTickets, anularTicket,
     zonas, zonaDia, setZonaDia, muestraZonaDia,
+    puestosDia, puestosElegidos, alternarPuesto, faltaZona,
     // Quien paga por día cobrado se puede cobrar en el mes en curso aunque el día no esté marcado: el cobro lo
     // marca y el servidor valida el monto (12/11/2026). Antes "Confirmar" quedaba deshabilitado con saldo 0.
     cobraHoy: muestraZonaDia

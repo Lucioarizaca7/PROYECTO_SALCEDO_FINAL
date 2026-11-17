@@ -189,8 +189,8 @@ export async function seedFeriaZapatillas(_db, plan, sourceFile, userId = 1) {
       await c.query(`INSERT INTO zonas (nombre, descripcion, tipo_via) SELECT $1::text, $2::text, 'sin_asfaltar'
         WHERE NOT EXISTS (SELECT 1 FROM zonas WHERE LOWER(nombre) = LOWER($1::text))`, [block.sheet, `Sector ferial ${block.sheet}`]);
       // Precio por día del sector (13/11/2026): S/ 2 sin asfaltar, si el super_admin aún no le puso uno.
-      await c.query(`INSERT INTO tarifas (zona_id, tipo_tarifa, monto_fijo, monto_variable, unidad_medida, vigencia_inicio)
-        SELECT z.id, 'fija', 2, 0, 'dia', '2026-01-01' FROM zonas z
+      await c.query(`INSERT INTO tarifas (zona_id, tipo_tarifa, monto_fijo, monto_variable, unidad_medida, vigencia_inicio, norma)
+        SELECT z.id, 'fija', 2, 0, 'dia', '2026-01-01', 'Datos de demostración' FROM zonas z
         WHERE LOWER(z.nombre) = LOWER($1::text) AND NOT EXISTS (SELECT 1 FROM tarifas t WHERE t.zona_id = z.id AND t.activo)`, [block.sheet]);
     }
 

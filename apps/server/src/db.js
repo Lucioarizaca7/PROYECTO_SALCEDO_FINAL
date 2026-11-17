@@ -135,8 +135,8 @@ async function seedDemoData() {
 
     for (const [nombre, , , precio] of zonas) {
       await client.query(
-        `INSERT INTO tarifas (zona_id, tipo_tarifa, monto_fijo, monto_variable, unidad_medida, vigencia_inicio)
-         SELECT $1, 'fija', $2, 0, 'dia', '2026-01-01'
+        `INSERT INTO tarifas (zona_id, tipo_tarifa, monto_fijo, monto_variable, unidad_medida, vigencia_inicio, norma)
+         SELECT $1, 'fija', $2, 0, 'dia', '2026-01-01', 'Datos de demostración'
          WHERE NOT EXISTS (SELECT 1 FROM tarifas WHERE zona_id = $1 AND activo)`,
         [await zonaId(nombre), precio]
       );
@@ -217,7 +217,8 @@ export const MIN_CLAVE = 10;
 
 const USUARIO_SELECT = `
   SELECT u.id, u.nombre, u.email, r.codigo AS rol, u.activo, u.creado_en,
-         (SELECT max(s.ultimo_uso_en) FROM sesiones_dispositivo s WHERE s.usuario_id = u.id) AS ultimo_ingreso
+         (SELECT max(s.ultimo_uso_en) FROM sesiones_dispositivo s WHERE s.usuario_id = u.id) AS ultimo_ingreso,
+         (SELECT COALESCE(json_agg(cz.zona_id ORDER BY cz.zona_id), '[]'::json) FROM cobrador_zonas cz WHERE cz.cobrador_id = u.id) AS zonas_asignadas
   FROM usuarios u JOIN roles r ON r.id = u.rol_id`;
 
 const usuarioFila = (row) => row && { ...row, id: Number(row.id) };
@@ -1094,6 +1095,7 @@ export async function insertZona(db, payload) {
   const conPrecio = !vacio(payload.precio_dia);
   const precio = conPrecio ? Number(Number(payload.precio_dia).toFixed(2)) : null;
   if (conPrecio && (!Number.isFinite(precio) || precio <= 0)) throw new ValidationError('El precio por día debe ser mayor que cero');
+  const norma = conPrecio ? normaDelPrecio(payload.norma) : null;
 
   const duplicate = await first(db, 'SELECT id FROM zonas WHERE lower(btrim(nombre)) = lower(btrim($1))', [nombre]);
   if (duplicate) throw new ConflictError('Ya existe una zona con ese nombre');
@@ -1104,9 +1106,9 @@ export async function insertZona(db, payload) {
     if (!conPrecio) return zona;
     const tarifa = validateTariff({ zona_id: zona.id, monto_fijo: precio, vigencia_inicio: todayInLima() });
     await client.query(`
-      INSERT INTO tarifas (rubro_id, zona_id, tipo_via, tipo_tarifa, monto_fijo, monto_variable, unidad_medida, vigencia_inicio, vigencia_fin, activo, version)
-      VALUES (NULL, $1, NULL, $2, $3, 0, $4, $5, NULL, TRUE, 1)`,
-    [tarifa.zonaId, tarifa.tipoTarifa, tarifa.montoFijo, tarifa.unidadMedida, tarifa.vigenciaInicio]);
+      INSERT INTO tarifas (rubro_id, zona_id, tipo_via, tipo_tarifa, monto_fijo, monto_variable, unidad_medida, vigencia_inicio, vigencia_fin, activo, version, norma)
+      VALUES (NULL, $1, NULL, $2, $3, 0, $4, $5, NULL, TRUE, 1, $6)`,
+    [tarifa.zonaId, tarifa.tipoTarifa, tarifa.montoFijo, tarifa.unidadMedida, tarifa.vigenciaInicio, norma]);
     return { ...zona, precio_dia: tarifa.montoFijo.toFixed(2), precio_desde: tarifa.vigenciaInicio };
   };
   return db === pool ? withTransaction(crear) : crear(db);
@@ -1316,7 +1318,7 @@ export async function insertComerciante(db, payload, { documentoTemporal = false
   };
 }
 
-export async function updateComerciante(db, id, payload) {
+export async function updateComerciante(db, id, payload, { zonaDelPuesto = false } = {}) {
   const current = await findComerciante(db, id);
   if (!current) throw new NotFoundError('Comerciante no encontrado');
 
@@ -1339,6 +1341,17 @@ export async function updateComerciante(db, id, payload) {
   if (!nombre || !rubroId || !zonaId) throw new ValidationError('Nombre, rubro y zona son obligatorios');
   if (!TIPOS_COMERCIANTE.includes(tipoComerciante)) throw new ValidationError('Tipo de comerciante no válido');
   if (!ESTADOS_COMERCIANTE.includes(estado)) throw new ValidationError('Estado de comerciante no válido');
+  // RN-06 (decisión del usuario, 15/11/2026): la zona de quien tiene puesto es la de su puesto principal; la base
+  // la sigue sola (trigger de la 0036). zonaDelPuesto: la pantalla avisa en vez de ignorar el cambio en silencio.
+  // La importación del padrón no lo pide: actualiza al comerciante antes que a su puesto y la base lo acomoda.
+  if (zonaDelPuesto && zonaId !== Number(current.zona_id)) {
+    const principal = await first(db, `
+      SELECT p.zona_id, z.nombre FROM puestos p JOIN zonas z ON z.id = p.zona_id
+      WHERE p.comerciante_id = $1 AND p.estado NOT IN ('disponible', 'inactivo') ORDER BY p.id LIMIT 1`, [Number(id)]);
+    if (principal && Number(principal.zona_id) !== zonaId) {
+      throw new ValidationError(`La zona del comerciante es la de su puesto principal (${principal.nombre}): para cambiarla, cambie la zona del puesto`);
+    }
+  }
 
   await ensureUniqueActiveDocument(db, dniRuc, Number(id));
   // El documento es único en la base aunque su dueño esté dado de baja: antes el UPDATE chocaba con el UNIQUE y la
@@ -1639,7 +1652,7 @@ export async function deactivatePuesto(db, id) {
 const TARIFA_SELECT = `
   SELECT t.id, t.rubro_id, COALESCE(r.nombre, 'Todos los rubros') AS rubro, t.zona_id, zt.nombre AS zona, t.tipo_via, t.tipo_tarifa,
          t.monto_fijo, t.monto_variable, t.unidad_medida, ${DAY('t.vigencia_inicio')} AS vigencia_inicio, ${DAY('t.vigencia_fin')} AS vigencia_fin,
-         CASE WHEN t.activo THEN 1 ELSE 0 END AS estado, t.version
+         CASE WHEN t.activo THEN 1 ELSE 0 END AS estado, t.version, t.norma
   FROM tarifas t LEFT JOIN rubros r ON r.id = t.rubro_id LEFT JOIN zonas zt ON zt.id = t.zona_id`;
 
 // Historial de precios por día de las zonas; las tarifas del cobro anterior (por rubro, mensuales) salen inactivas.
@@ -1656,6 +1669,14 @@ async function findTarifa(db, id) {
 // super_admin y se cobra por cada día cobrado. Ya no hay tarifas por rubro, por tipo de vía, mensuales ni por m²:
 // se rechazan con un mensaje claro en vez de guardarse sin efecto.
 const vacio = (value) => value === undefined || value === null || value === '';
+
+// La ordenanza o resolución que respalda un precio (RN-15, decisión del usuario del 15/11/2026): obligatoria en
+// todo precio nuevo. La base lo repite (tarifas_con_norma, 0036); los precios anteriores pueden no tenerla.
+function normaDelPrecio(valor) {
+  const norma = cleanText(valor, 120) || '';
+  if (norma.length < 3) throw new ValidationError('Indique la ordenanza o resolución que respalda el precio');
+  return norma;
+}
 
 function validateTariff(payload) {
   const zonaId = vacio(payload.zona_id) ? null : Number(payload.zona_id);
@@ -1706,6 +1727,7 @@ function errorCruceTarifa({ vigencia_inicio: inicio, vigencia_fin: fin }) {
 // historia; la API nunca lo pasa.
 export async function insertTarifa(db, payload, { permitirInicioPasado = false } = {}) {
   const tariff = validateTariff({ ...payload, version: payload.version ?? 1 });
+  const norma = normaDelPrecio(payload.norma);
   if (!permitirInicioPasado && tariff.vigenciaInicio < todayInLima()) {
     throw new ValidationError(`Un precio nuevo no puede empezar antes de hoy (${todayInLima()}): cambiaría lo que ya se cobró`);
   }
@@ -1722,9 +1744,9 @@ export async function insertTarifa(db, payload, { permitirInicioPasado = false }
     [tariff.vigenciaInicio, cruces.map((otra) => otra.id)]) : { rows: [] };
 
     const created = await first(client, `
-      INSERT INTO tarifas (rubro_id, zona_id, tipo_via, tipo_tarifa, monto_fijo, monto_variable, unidad_medida, vigencia_inicio, vigencia_fin, activo, version)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, TRUE, $10) RETURNING id`,
-    [tariff.rubroId, tariff.zonaId, tariff.tipoVia, tariff.tipoTarifa, tariff.montoFijo, tariff.montoVariable, tariff.unidadMedida, tariff.vigenciaInicio, tariff.vigenciaFin, tariff.version]);
+      INSERT INTO tarifas (rubro_id, zona_id, tipo_via, tipo_tarifa, monto_fijo, monto_variable, unidad_medida, vigencia_inicio, vigencia_fin, activo, version, norma)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, TRUE, $10, $11) RETURNING id`,
+    [tariff.rubroId, tariff.zonaId, tariff.tipoVia, tariff.tipoTarifa, tariff.montoFijo, tariff.montoVariable, tariff.unidadMedida, tariff.vigenciaInicio, tariff.vigenciaFin, tariff.version, norma]);
     return { id: created.id, cerradas: cierre.rows };
   });
   // Va en la respuesta para que la auditoría de la ruta registre también el cierre de la anterior.
@@ -1792,10 +1814,12 @@ export async function updateTarifa(db, id, payload) {
   const updated = await db.query(`
     UPDATE tarifas
     SET rubro_id = $1, zona_id = $2, tipo_tarifa = $3, monto_fijo = $4, monto_variable = $5, unidad_medida = $6,
-        vigencia_inicio = $7, vigencia_fin = $8, version = $9, tipo_via = $12
+        vigencia_inicio = $7, vigencia_fin = $8, version = $9, tipo_via = $12, norma = $13
     WHERE id = $10 AND version = $11`,
   [tariff.rubroId, tariff.zonaId, tariff.tipoTarifa, tariff.montoFijo, tariff.montoVariable, tariff.unidadMedida,
-    tariff.vigenciaInicio, tariff.vigenciaFin, tariff.version, Number(id), current.version, tariff.tipoVia]);
+    tariff.vigenciaInicio, tariff.vigenciaFin, tariff.version, Number(id), current.version, tariff.tipoVia,
+    // La norma se puede escribir o corregir siempre: no cambia lo que se cobra.
+    payload.norma === undefined ? current.norma : normaDelPrecio(payload.norma)]);
   if (!updated.rowCount) throw new ConflictError('La tarifa fue actualizada por otro usuario; recargue la versión antes de continuar');
 
   return findTarifa(db, id);
@@ -2288,7 +2312,8 @@ export async function getAsistencias(db, { fecha } = {}) {
   const data = await rows(db, `
     SELECT p.id AS puesto_id, p.codigo_puesto, p.estado AS estado_puesto, c.id AS comerciante_id, c.nombre AS comerciante,
            c.codigo AS comerciante_codigo, c.tipo_comerciante, c.rubro_id, c.zona_id, z.nombre AS zona,
-           a.marca, a.asistio, a.motivo, a.observacion, ${TS('a.registrado_en')} AS registrado_en, u.nombre AS registrado_por
+           a.marca, a.asistio, a.motivo, a.observacion, ${TS('a.registrado_en')} AS registrado_en, u.nombre AS registrado_por,
+           (p.zona_por_regularizar IS NOT NULL) AS zona_por_confirmar
     FROM puestos p
     JOIN comerciantes c ON c.id = p.comerciante_id
     LEFT JOIN zonas z ON z.id = p.zona_id
@@ -2373,13 +2398,19 @@ export async function marcarAsistencias(_db, marcas, { usuarioId = null, audit =
         const zonaDia = await zonaDelDia(client, marca?.zona_id ?? marca?.zonaId);
 
         const puesto = await first(client, `
-          SELECT p.id, p.estado AS estado_puesto, p.zona_id AS zona_puesto, c.id AS comerciante_id, c.nombre, c.estado, c.tipo_comerciante, c.rubro_id, c.zona_id
+          SELECT p.id, p.estado AS estado_puesto, p.zona_id AS zona_puesto, p.zona_por_regularizar, p.codigo_puesto, c.id AS comerciante_id, c.nombre, c.estado, c.tipo_comerciante, c.rubro_id, c.zona_id
           FROM puestos p JOIN comerciantes c ON c.id = p.comerciante_id WHERE p.id = $1`, [puestoId]);
         if (!puesto) throw new NotFoundError(`El puesto ${puestoId} no existe o no tiene titular`);
         if (puesto.estado === 'inactivo') throw new ValidationError(`${puesto.nombre} está dado de baja: no se registra su asistencia`);
         if (puesto.estado_puesto === 'inactivo') throw new ValidationError(`El puesto ${puestoId} está dado de baja: no se registra asistencia`);
         if (!(await cobraPorAsistencia(client, puesto, fecha.slice(0, 7)))) {
           throw new ValidationError(`El puesto ${puestoId} es de un comerciante eventual: se le cobra el día en que se le encuentra, sin marcar asistencia`);
+        }
+
+        // RN-05 (decisión del usuario, 15/11/2026): un puesto sin zona confirmada no tiene precio propio. Para marcarlo
+        // como presente hay que decir en qué zona vende ese día; una falta no necesita precio.
+        if (asistio && puesto.zona_por_regularizar !== null && !zonaDia) {
+          throw new ValidationError(`El puesto ${puesto.codigo_puesto || puestoId} no tiene zona confirmada: elija la zona donde vende ese día`);
         }
 
         // Corregir una marca no cambia de quién es: el titular queda el de la primera marca de ese día.
@@ -2402,12 +2433,15 @@ export async function marcarAsistencias(_db, marcas, { usuarioId = null, audit =
         rechazadas.push({ puesto_id: puestoId || null, fecha, error: error.message });
       }
     }
+    // RN-64: la marca hecha en una zona que el cobrador no tiene asignada queda señalada (no se impide).
+    const fuera = new Set(await senalarFueraDeAsignacion(client, guardadas.map((marca) => marca.id)));
+    for (const marca of guardadas) marca.fuera_de_asignacion = fuera.has(marca.id);
     if (audit && guardadas.length) {
       await appendAudit(client, {
         ...audit,
         usuarioId: audit.usuarioId ?? usuarioId,
         entidad: 'asistencias_feriales',
-        detalle: `${guardadas.length} marca(s) de asistencia: ${guardadas.filter((g) => g.asistio).length} asistió, ${guardadas.filter((g) => !g.asistio).length} faltó, ${guardadas.filter((g) => g.motivo || g.observacion).length} con observación${guardadas.some((g) => g.en_otra_zona) ? `, ${guardadas.filter((g) => g.en_otra_zona).length} en otra zona` : ''}${rechazadas.length ? `; ${rechazadas.length} rechazada(s)` : ''}`,
+        detalle: `${guardadas.length} marca(s) de asistencia: ${guardadas.filter((g) => g.asistio).length} asistió, ${guardadas.filter((g) => !g.asistio).length} faltó, ${guardadas.filter((g) => g.motivo || g.observacion).length} con observación${guardadas.some((g) => g.en_otra_zona) ? `, ${guardadas.filter((g) => g.en_otra_zona).length} en otra zona` : ''}${fuera.size ? `, ${fuera.size} fuera de las zonas asignadas al cobrador` : ''}${rechazadas.length ? `; ${rechazadas.length} rechazada(s)` : ''}`,
         recursoId: guardadas[0]?.id ?? null,
         payloadNuevo: guardadas
       });
@@ -3175,6 +3209,132 @@ export async function resolverReclamo(_db, id, { decision, resolucion, usuarioId
   });
 }
 
+// ---------------------------------------------------------------------------
+// Etapa 4 del plan de reglas (migrations/0036_norma_del_precio_zonas_del_cobrador_y_zona_unica.sql)
+// ---------------------------------------------------------------------------
+
+// Zonas asignadas a un cobrador (RN-64, decisión del usuario del 15/11/2026). Reemplaza la lista completa. Un
+// cobrador sin zonas asignadas cobra en todas. Cobrar fuera de las asignadas no se impide: la marca queda
+// señalada (asistencias_feriales.fuera_de_asignacion) y sale en getMarcasFueraDeAsignacion.
+export async function asignarZonasCobrador(_db, usuarioId, zonaIds, { asignadoPor = null, audit = null } = {}) {
+  if (!Array.isArray(zonaIds)) throw new ValidationError('Envíe la lista de zonas del cobrador');
+  const zonas = [...new Set(zonaIds.map(Number))];
+  if (zonas.some((id) => !Number.isInteger(id) || id <= 0)) throw new ValidationError('Una de las zonas no es válida');
+  return withTransaction(async (client) => {
+    const usuario = await first(client, 'SELECT u.id, u.nombre, r.codigo AS rol FROM usuarios u JOIN roles r ON r.id = u.rol_id WHERE u.id = $1 FOR UPDATE OF u', [Number(usuarioId)]);
+    if (!usuario) throw new NotFoundError('Usuario no encontrado');
+    if (usuario.rol !== 'cobrador') throw new ValidationError('Solo a un cobrador se le asignan zonas');
+    const existentes = await rows(client, 'SELECT id, nombre FROM zonas WHERE id = ANY($1::int[]) ORDER BY nombre', [zonas]);
+    if (existentes.length !== zonas.length) throw new ValidationError('Una de las zonas no existe');
+    const previas = (await rows(client, 'SELECT zona_id FROM cobrador_zonas WHERE cobrador_id = $1 ORDER BY zona_id', [usuario.id])).map((fila) => Number(fila.zona_id));
+    await client.query('DELETE FROM cobrador_zonas WHERE cobrador_id = $1 AND NOT (zona_id = ANY($2::int[]))', [usuario.id, zonas]);
+    await client.query(`
+      INSERT INTO cobrador_zonas (cobrador_id, zona_id, asignado_por)
+      SELECT $1, zona, $3 FROM unnest($2::int[]) AS zona ON CONFLICT DO NOTHING`, [usuario.id, zonas, Number(asignadoPor)]);
+    if (audit) {
+      await appendAudit(client, {
+        ...audit, usuarioId: audit.usuarioId ?? asignadoPor, entidad: 'cobrador_zonas', recursoId: Number(usuario.id),
+        detalle: `Zonas de ${usuario.nombre}: ${existentes.length ? existentes.map((zona) => zona.nombre).join(', ') : 'todas (sin asignación)'}`,
+        payloadPrevio: { zonas: previas }, payloadNuevo: { zonas: [...zonas].sort((a, b) => a - b) }
+      });
+    }
+    return getUsuario(client, usuario.id);
+  });
+}
+
+// Deja en cada marca si su zona estaba fuera de las asignadas a quien la registró. Se guarda en la marca: la
+// asignación cambia con el tiempo y lo ya marcado no debe cambiar con ella.
+async function senalarFueraDeAsignacion(db, marcaIds) {
+  if (!marcaIds.length) return [];
+  return (await rows(db, `
+    UPDATE asistencias_feriales a
+    SET fuera_de_asignacion = (EXISTS (SELECT 1 FROM cobrador_zonas cz WHERE cz.cobrador_id = a.registrado_por)
+      AND NOT EXISTS (SELECT 1 FROM cobrador_zonas cz WHERE cz.cobrador_id = a.registrado_por AND cz.zona_id = a.zona_id))
+    WHERE a.id = ANY($1::bigint[]) RETURNING a.id, a.fuera_de_asignacion`, [marcaIds.map(Number)]))
+    .filter((fila) => fila.fuera_de_asignacion).map((fila) => Number(fila.id));
+}
+
+// Reporte de RN-64, entre dos fechas (por omisión, del día 1 del mes a hoy): por cobrador, cuántas marcas hizo
+// y cuántas en una zona que no tenía asignada, con el detalle.
+export async function getMarcasFueraDeAsignacion(db, { desde, hasta } = {}) {
+  const hoy = todayInLima();
+  const inicio = FECHA_RE.test(String(desde || '')) ? desde : `${hoy.slice(0, 7)}-01`;
+  const fin = FECHA_RE.test(String(hasta || '')) ? hasta : hoy;
+  const cobradores = await rows(db, `
+    SELECT u.id AS cobrador_id, u.nombre AS cobrador, COUNT(*)::int AS marcas,
+           COUNT(*) FILTER (WHERE a.fuera_de_asignacion)::int AS fuera,
+           (SELECT COALESCE(json_agg(z.nombre ORDER BY z.nombre), '[]'::json) FROM cobrador_zonas cz JOIN zonas z ON z.id = cz.zona_id
+             WHERE cz.cobrador_id = u.id) AS zonas_asignadas
+    FROM asistencias_feriales a JOIN usuarios u ON u.id = a.registrado_por
+    WHERE a.sesion = '' AND a.fecha BETWEEN $1::date AND $2::date
+    GROUP BY u.id, u.nombre HAVING COUNT(*) FILTER (WHERE a.fuera_de_asignacion) > 0
+    ORDER BY fuera DESC, u.nombre`, [inicio, fin]);
+  const detalle = await rows(db, `
+    SELECT a.registrado_por AS cobrador_id, ${DAY('a.fecha')} AS fecha, c.nombre AS comerciante, p.codigo_puesto AS puesto, z.nombre AS zona, a.asistio
+    FROM asistencias_feriales a JOIN comerciantes c ON c.id = a.comerciante_id JOIN puestos p ON p.id = a.puesto_id
+    LEFT JOIN zonas z ON z.id = a.zona_id
+    WHERE a.sesion = '' AND a.fuera_de_asignacion AND a.fecha BETWEEN $1::date AND $2::date
+    ORDER BY a.fecha DESC, c.nombre LIMIT 500`, [inicio, fin]);
+  return {
+    desde: inicio, hasta: fin,
+    cobradores: cobradores.map((fila) => ({
+      ...fila, cobrador_id: Number(fila.cobrador_id),
+      porcentaje: fila.marcas ? Number(((fila.fuera / fila.marcas) * 100).toFixed(1)) : 0,
+      detalle: detalle.filter((item) => Number(item.cobrador_id) === Number(fila.cobrador_id)).map(({ cobrador_id: _id, ...item }) => item)
+    }))
+  };
+}
+
+// Talonario perdido o robado (RN-33): el super_admin anula de una vez todos los tickets disponibles del lote, con
+// motivo. Los usados no se tocan (ya son cobros); los anulados no vuelven a estar disponibles.
+export async function anularDisponiblesDelLote(_db, loteId, payload = {}, { usuarioId = null, audit = null } = {}) {
+  const motivo = cleanText(payload.motivo, 300) || '';
+  if (motivo.length < 5) throw new ValidationError('Indique el motivo (pérdida, robo…), con al menos 5 caracteres');
+  return withTransaction(async (client) => {
+    const lote = await first(client, 'SELECT id, serie, cobrador_id FROM ticket_lotes WHERE id = $1 FOR UPDATE', [Number(loteId)]);
+    if (!lote) throw new NotFoundError('Lote no encontrado');
+    const anulados = await rows(client, `
+      UPDATE tickets SET estado = 'anulado', motivo = $2, baja_en = now(), registrado_por = $3
+      WHERE lote_id = $1 AND estado = 'disponible' RETURNING numero`, [lote.id, motivo, Number(usuarioId)]);
+    if (!anulados.length) throw new ConflictError('Ese lote no tiene tickets disponibles que anular');
+    await cerrarLotesAgotados(client, [lote.id]);
+    const numeros = anulados.map((fila) => Number(fila.numero)).sort((a, b) => a - b);
+    const resultado = { lote_id: Number(lote.id), serie: lote.serie, anulados: numeros.length, desde: numeros[0], hasta: numeros[numeros.length - 1], motivo };
+    if (audit) {
+      await appendAudit(client, {
+        ...audit, usuarioId: audit.usuarioId ?? usuarioId, entidad: 'tickets', recursoId: Number(lote.id),
+        detalle: `Lote ${lote.id}: ${numeros.length} tickets disponibles anulados, del ${textoTicket(lote.serie, numeros[0])} al ${textoTicket(lote.serie, numeros[numeros.length - 1])}. Motivo: ${motivo}`,
+        payloadNuevo: resultado
+      });
+    }
+    return resultado;
+  });
+}
+
+// Puestos del comerciante que el cobro puede marcar hoy (RN-22) y si ya tiene una marca de hoy: con marca, mandan
+// las marcas; sin marca, el cobrador elige en la pantalla de cobro qué puestos abrieron.
+// zona_por_confirmar: el puesto no tiene zona confirmada y pide la zona del día (RN-05).
+const PUESTOS_PARA_COBRAR_SQL = `
+  SELECT p.id, p.codigo_puesto AS codigo, p.zona_id, z.nombre AS zona, (p.zona_por_regularizar IS NOT NULL) AS zona_por_confirmar
+  FROM puestos p LEFT JOIN zonas z ON z.id = p.zona_id
+  WHERE p.comerciante_id = $1 AND p.estado <> 'inactivo' ORDER BY p.id`;
+
+export async function puestosDelDia(db, comercianteId, dia = todayInLima()) {
+  const puestos = await rows(db, PUESTOS_PARA_COBRAR_SQL, [Number(comercianteId)]);
+  const marcado = await first(db, `SELECT 1 AS ok FROM asistencias_feriales WHERE comerciante_id = $1 AND fecha = $2::date AND sesion = '' LIMIT 1`, [Number(comercianteId), dia]);
+  return {
+    puestos: puestos.map((puesto) => ({ ...puesto, id: Number(puesto.id), zona_id: puesto.zona_id === null ? null : Number(puesto.zona_id) })),
+    marcado_hoy: Boolean(marcado)
+  };
+}
+
+// La lista de puestos que llega con el cobro: ids enteros positivos, sin repetir; null si no vino.
+function parsePuestosDia(valor) {
+  if (!Array.isArray(valor) || !valor.length) return null;
+  const ids = [...new Set(valor.map(Number))].filter((id) => Number.isInteger(id) && id > 0);
+  return ids.length ? ids.slice(0, 50) : null;
+}
+
 /**
  * Encuentra al comerciante por lo que la gente tiene a mano: su código actual (COM-0004-…), un código
  * anterior impreso en un QR o recibo (CM-004 o un COM-… previo), el correlativo (0004, CM-004) o el DNI/RUC.
@@ -3378,7 +3538,14 @@ export async function registrarCobro(db, payload, { audit = null, allowExcess = 
   } catch (error) {
     if (!allowExcess) throw error;
   }
-  if (!fechaDudosa) await marcarDiaCobrado(db, comercianteId, cobradorId, todayInLima(clientDate), payload.periodo, zonaDia);
+  const marcaDelCobro = fechaDudosa ? { sinZonaConfirmada: false }
+    : await marcarDiaCobrado(db, comercianteId, cobradorId, todayInLima(clientDate), payload.periodo, zonaDia,
+      { puestosDia: parsePuestosDia(payload.puestos_dia ?? payload.puestosDia), estricto: !allowExcess });
+  // RN-05: en línea no se cobra un puesto sin zona confirmada sin decir dónde vende hoy. Sin señal el dinero ya se
+  // recibió: el cobro entra con la zona provisional y queda observado (más abajo).
+  if (marcaDelCobro.sinZonaConfirmada && !allowExcess) {
+    throw new ValidationError('El puesto no tiene zona confirmada: elija la zona donde vende hoy antes de cobrar');
+  }
   // Sin señal el dinero ya se recibió: un comerciante sin tarifa vigente no rechaza el cobro, lo deja observado
   // (migración 0024). En línea se sigue rechazando.
   let liquidation;
@@ -3419,6 +3586,10 @@ export async function registrarCobro(db, payload, { audit = null, allowExcess = 
   }
   if (fechaDudosa) {
     observacion = observacion ? `${observacion}. Fecha fuera de rango: ${fechaDudosa}` : `Cobro offline con fecha fuera de rango: ${fechaDudosa}`;
+  }
+  if (marcaDelCobro.sinZonaConfirmada) {
+    const aviso = 'Puesto sin zona confirmada y cobro sin zona del día: se usó la zona provisional. Confirme la zona del puesto';
+    observacion = observacion ? `${observacion}. ${aviso}` : `Cobro offline observado. ${aviso}`;
   }
 
   const collector = await first(db, 'SELECT id FROM usuarios WHERE id = $1', [cobradorId]);
@@ -3512,10 +3683,23 @@ export async function registrarCobro(db, payload, { audit = null, allowExcess = 
 // antes que la marca no termina en revisión, y en línea no hace falta marcar antes de cobrar.
 // No pisa una marca de la app (si dice "no salió", el cobro queda observado) y no marca nada cuando se
 // paga un mes anterior. Va dentro de la transacción del cobro: si el cobro se rechaza, la marca no queda.
-async function marcarDiaCobrado(db, comercianteId, cobradorId, dia, periodo, zonaDia = null) {
-  if (periodo && periodo !== dia.slice(0, 7)) return;
+// puestosDia (RN-22, decisión del usuario del 15/11/2026): los puestos que el cobrador dijo que abrieron hoy. El
+// cobro marca cada uno que todavía no tenga marca de la app (no pisa un "no salió"). Sin la lista, como antes: solo
+// el puesto principal y solo si nadie marcó el día. estricto: en línea un puesto ajeno o dado de baja rechaza el
+// cobro; sin señal se ignora, porque el dinero ya se recibió.
+// Devuelve sinZonaConfirmada: marcó un puesto sin zona confirmada y sin zona del día (RN-05).
+async function marcarDiaCobrado(db, comercianteId, cobradorId, dia, periodo, zonaDia = null, { puestosDia = null, estricto = true } = {}) {
+  const nada = { sinZonaConfirmada: false };
+  if (periodo && periodo !== dia.slice(0, 7)) return nada;
   const merchant = await findComerciante(db, comercianteId);
-  if (!merchant || !(await cobraPorAsistencia(db, merchant, dia.slice(0, 7)))) return;
+  if (!merchant || !(await cobraPorAsistencia(db, merchant, dia.slice(0, 7)))) return nada;
+  let elegidos = null;
+  if (puestosDia) {
+    elegidos = (await rows(db, `SELECT id FROM puestos WHERE comerciante_id = $1 AND estado <> 'inactivo' AND id = ANY($2::bigint[])`, [comercianteId, puestosDia]))
+      .map((fila) => Number(fila.id));
+    if (estricto && elegidos.length !== puestosDia.length) throw new ValidationError('Uno de los puestos elegidos no es de ese comerciante o está dado de baja');
+    if (!elegidos.length) elegidos = null;
+  }
   const marcado = await first(db, `
     SELECT 1 AS ok FROM asistencias_feriales a
     WHERE a.comerciante_id = $1 AND a.fecha = $2::date AND a.sesion = '' LIMIT 1`, [comercianteId, dia]);
@@ -3532,13 +3716,19 @@ async function marcarDiaCobrado(db, comercianteId, cobradorId, dia, periodo, zon
         WHERE comerciante_id = $1 AND ${LOCAL('fecha_cobro_cliente')}::date = $2::date AND estado = 'confirmado'
           AND zona_cobro_id IS DISTINCT FROM $3`, [comercianteId, dia, zonaDia]);
     }
-    return;
+    if (!elegidos) return nada;
   }
-  await db.query(`
+  const nuevas = await rows(db, `
     INSERT INTO asistencias_feriales (puesto_id, fecha, sesion, marca, fuente, registrado_por, zona_id)
     SELECT p.id, $2::date, '', 'P', 'cobro', $3, $4 FROM puestos p
-    WHERE p.comerciante_id = $1 AND p.estado <> 'inactivo' ORDER BY p.id LIMIT 1
-    ON CONFLICT (puesto_id, fecha, sesion) DO NOTHING`, [comercianteId, dia, cobradorId, zonaDia]);
+    WHERE p.comerciante_id = $1 AND p.estado <> 'inactivo' AND ($5::bigint[] IS NULL OR p.id = ANY($5::bigint[]))
+    ORDER BY p.id LIMIT $6
+    ON CONFLICT (puesto_id, fecha, sesion) DO NOTHING RETURNING id, puesto_id`,
+  [comercianteId, dia, cobradorId, zonaDia, elegidos, elegidos ? elegidos.length : 1]);
+  await senalarFueraDeAsignacion(db, nuevas.map((fila) => fila.id));
+  if (zonaDia || !nuevas.length) return nada;
+  const sinZona = await first(db, 'SELECT 1 AS ok FROM puestos WHERE id = ANY($1::bigint[]) AND zona_por_regularizar IS NOT NULL LIMIT 1', [nuevas.map((fila) => Number(fila.puesto_id))]);
+  return { sinZonaConfirmada: Boolean(sinZona) };
 }
 
 async function logSyncQueue({ deviceId, hash, payload, estado, error }) {
@@ -4307,6 +4497,10 @@ export async function getJornadaPackage(db, { periodo = currentPeriod() } = {}) 
            c.zona_id, z.nombre AS zona,
            (SELECT p.codigo_puesto FROM puestos p
              WHERE p.comerciante_id = c.id AND p.estado NOT IN ('disponible', 'inactivo') ORDER BY p.id LIMIT 1) AS codigo_puesto,
+           -- Sus puestos: en la pantalla de cobro el cobrador elige cuáles abrieron hoy (RN-22). zona_por_confirmar: pide la zona del día (RN-05).
+           (SELECT COALESCE(json_agg(json_build_object('id', p.id, 'codigo', p.codigo_puesto, 'zona_id', p.zona_id,
+                     'zona_por_confirmar', p.zona_por_regularizar IS NOT NULL) ORDER BY p.id), '[]'::json)
+             FROM puestos p WHERE p.comerciante_id = c.id AND p.estado <> 'inactivo') AS puestos,
            -- Puesto donde el cobrador marca la asistencia (también el que conserva como ausente). Todos menos el
            -- eventual pagan por día marcado (13/11/2026).
            CASE WHEN c.tipo_comerciante <> 'eventual' THEN (SELECT p.id FROM puestos p

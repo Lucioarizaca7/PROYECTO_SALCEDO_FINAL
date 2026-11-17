@@ -67,7 +67,10 @@ export function useUsuarios() {
     return enviar(`${apiBase}/usuarios/${usuario.id}/estado`, 'PATCH', { activo: activar }, 'No se pudo cambiar el estado');
   };
 
+  // Zonas asignadas a un cobrador (RN-64): lista vacía = cobra en todas.
+  const asignarZonas = (usuario, zonas) => enviar(`${apiBase}/usuarios/${usuario.id}/zonas`, 'PUT', { zonas }, 'No se pudieron guardar las zonas');
+
   const cambiarClave = (usuario, password) => enviar(`${apiBase}/usuarios/${usuario.id}/clave`, 'PUT', { password }, 'No se pudo cambiar la clave');
 
-  return { usuarios, formulario, setFormulario, message, error, ocupado, crear, cambiarEstado, cambiarClave };
+  return { usuarios, formulario, setFormulario, message, error, ocupado, crear, cambiarEstado, cambiarClave, asignarZonas };
 }

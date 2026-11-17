@@ -1,9 +1,9 @@
 // Usuarios del personal (pantalla Usuarios): solo el super_admin los ve, crea, desactiva o les pone clave nueva.
 // La clave nunca vuelve en la respuesta, así que tampoco llega a la auditoría (que guarda la respuesta).
 import express from 'express';
-import { getUsuarios, getUsuario, createUser, cambiarEstadoUsuario, cambiarClaveUsuario, cambiarMiClave } from '../db.js';
+import { getUsuarios, getUsuario, createUser, cambiarEstadoUsuario, cambiarClaveUsuario, cambiarMiClave, asignarZonasCobrador } from '../db.js';
 import { requireAuth, requireRoles, auditMutation, markSessionRevoked } from '../auth.js';
-import { loginLimiter } from '../http/comunes.js';
+import { loginLimiter, auditContext } from '../http/comunes.js';
 import { pool as db } from '../pg.js';
 
 export const router = express.Router();
@@ -25,6 +25,12 @@ router.post('/api/v1/usuarios',
     res.status(201).json({ data: await getUsuario(db, creado.id), message: `Usuario ${creado.email} creado` });
   }
 );
+
+// Zonas asignadas a un cobrador (RN-64). Sin zonas cobra en todas; fuera de las suyas, la marca queda señalada.
+router.put('/api/v1/usuarios/:id/zonas', ...soloSuperAdmin, async (req, res) => {
+  const data = await asignarZonasCobrador(db, Number(req.params.id), req.body?.zonas, { asignadoPor: req.user.id, audit: auditContext(req, 'ASIGNAR_ZONAS_COBRADOR') });
+  res.json({ data, message: data.zonas_asignadas.length ? `Zonas de ${data.nombre} actualizadas` : `${data.nombre} queda sin zonas asignadas: cobra en todas` });
+});
 
 router.patch('/api/v1/usuarios/:id/estado',
   ...soloSuperAdmin,

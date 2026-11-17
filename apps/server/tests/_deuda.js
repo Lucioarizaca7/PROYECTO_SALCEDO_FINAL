@@ -6,6 +6,9 @@
  */
 import { currentPeriod, insertComerciante, insertPuesto, insertTarifa, insertZona, todayInLima } from '../src/db.js';
 
+/** Todo precio nuevo lleva su norma (RN-15, migración 0036): la de las pruebas. */
+export const NORMA_DE_PRUEBA = 'OM 001-2026 (prueba)';
+
 let secuencia = 0;
 const unico = () => `${process.pid}-${++secuencia}-${Date.now() % 1e6}`;
 
@@ -16,7 +19,7 @@ export function dniDePrueba() {
 
 /** Pone a la zona un precio por día vigente desde `desde` (por omisión, desde siempre). */
 export async function precioDeZona(db, zonaId, precio, desde = '2020-01-01') {
-  return insertTarifa(db, { zona_id: zonaId, monto_fijo: precio, vigencia_inicio: desde }, { permitirInicioPasado: true });
+  return insertTarifa(db, { zona_id: zonaId, monto_fijo: precio, vigencia_inicio: desde, norma: NORMA_DE_PRUEBA }, { permitirInicioPasado: true });
 }
 
 /**

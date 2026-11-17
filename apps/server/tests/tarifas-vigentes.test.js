@@ -17,7 +17,7 @@ async function preparar() {
   const zona = await insertZona(db, { nombre: `Zona vigente ${process.pid}-${correlativo += 1}-${Date.now()}` });
   return { db, zonaId: zona.id };
 }
-const tarifa = (db, zonaId, extra) => insertTarifa(db, { zona_id: zonaId, monto_fijo: 10, vigencia_inicio: '2026-01-01', ...extra }, { permitirInicioPasado: true });
+const tarifa = (db, zonaId, extra) => insertTarifa(db, { zona_id: zonaId, monto_fijo: 10, norma: 'OM 001-2026 (prueba)', vigencia_inicio: '2026-01-01', ...extra }, { permitirInicioPasado: true });
 const ayer = todayInLima(new Date(Date.now() - 24 * 60 * 60 * 1000));
 
 test('el monto de un precio que ya rige no se edita; reenviar los mismos datos sí pasa', async () => {

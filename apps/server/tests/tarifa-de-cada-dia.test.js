@@ -34,7 +34,7 @@ test('una tarifa nueva desde hoy cobra desde hoy; los días anteriores siguen co
   assert.equal((await calcularLiquidacion(pool, comerciante.id)).monto_total, 6, 'dos días a S/ 3');
 
   // Precio nuevo de la zona: S/ 4 desde hoy. Cierra el anterior ayer.
-  await insertTarifa(pool, { zona_id: zona.id, monto_fijo: 4, vigencia_inicio: hoy });
+  await insertTarifa(pool, { zona_id: zona.id, monto_fijo: 4, norma: 'OM 001-2026 (prueba)', vigencia_inicio: hoy });
 
   const liquidacion = await calcularLiquidacion(pool, comerciante.id);
   assert.deepEqual(liquidacion.puestos_cobrados.map((item) => [item.dias, item.monto_dia]).sort(), [[1, 3], [1, 4]]);
@@ -44,7 +44,7 @@ test('una tarifa nueva desde hoy cobra desde hoy; los días anteriores siguen co
 
 test('una tarifa nueva no empieza antes de hoy, ni una futura se mueve al pasado', async () => {
   const zona = await insertZona(pool, { nombre: `Zona fechas ${process.pid}` });
-  const base = { zona_id: zona.id, monto_fijo: 10 };
+  const base = { zona_id: zona.id, monto_fijo: 10, norma: 'OM 001-2026 (prueba)' };
   await assert.rejects(insertTarifa(pool, { ...base, vigencia_inicio: '2026-01-01' }), /no puede empezar antes de hoy/);
 
   const futura = await insertTarifa(pool, { ...base, vigencia_inicio: '2031-01-01' });

@@ -14,7 +14,7 @@ export const precioSugerido = (zona) => (zona?.precio_dia != null ? String(Numbe
   : zona?.tipo_via === 'asfaltada' ? '3' : zona?.tipo_via === 'sin_asfaltar' ? '2' : '');
 
 // Un precio nuevo empieza hoy por omisión: con una fecha pasada cambiaría la deuda de días ya cobrados.
-const nuevoPrecio = (zona = null) => ({ zona_id: zona ? String(zona.id) : '', monto_fijo: precioSugerido(zona), vigencia_inicio: hoyEnLima(), vigencia_fin: '' });
+const nuevoPrecio = (zona = null) => ({ zona_id: zona ? String(zona.id) : '', monto_fijo: precioSugerido(zona), vigencia_inicio: hoyEnLima(), vigencia_fin: '', norma: '' });
 
 // Página Tarifas: el precio por día de cada zona (cobro solo por día cobrado, 13/11/2026). Crear un precio
 // cierra el anterior de esa zona el día previo; el servidor rechaza la edición si otro usuario la cambió antes.
@@ -67,7 +67,7 @@ export function useTarifas() {
     setEditingId(item.id);
     setEditingVersion(item.version);
     setYaRige(tarifaYaRige(item));
-    setForm({ zona_id: String(item.zona_id), monto_fijo: String(Number(item.monto_fijo)), vigencia_inicio: item.vigencia_inicio, vigencia_fin: item.vigencia_fin || '' });
+    setForm({ zona_id: String(item.zona_id), monto_fijo: String(Number(item.monto_fijo)), vigencia_inicio: item.vigencia_inicio, vigencia_fin: item.vigencia_fin || '', norma: item.norma || '' });
     setMessage('');
     setShowForm(true);
   };
