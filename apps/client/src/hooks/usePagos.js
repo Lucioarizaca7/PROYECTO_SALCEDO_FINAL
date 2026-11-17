@@ -27,7 +27,7 @@ export function usePagos() {
   const { user, cobros, jornada, offlineQueue, refresh, isOnline, catalogos, tariffRecords } = useSisrec();
   const location = useLocation();
   const navigate = useNavigate();
-  const [form, setForm] = useState({ search: '', comercianteId: '', periodo: periodoEnLima(), monto: '', metodo_pago: 'efectivo', codigo_operacion: '', observaciones: '' });
+  const [form, setForm] = useState({ search: '', comercianteId: '', periodo: periodoEnLima(), monto: '', observaciones: '' });
   const [merchant, setMerchant] = useState(null);
   const [balance, setBalance] = useState(null);
   const [suggestion, setSuggestion] = useState(NO_SUGGESTION);
@@ -150,7 +150,7 @@ export function usePagos() {
       const lastMethod = String(preferences.ultimo_metodo_pago || 'efectivo');
       setSuggestion({
         suggestedAmount: Number(preferences.monto_sugerido || lastAmount),
-        preferredMethod: String(preferences.metodo_pago_preferido || lastMethod),
+        preferredMethod: 'efectivo',
         lastLabel: lastDate ? `Último cobro: ${formatPEN(lastAmount)} con ${lastMethod.toUpperCase()} (${new Date(lastDate).toLocaleDateString('es-PE', { day: 'numeric', month: 'short' })})` : 'Sin historial previo',
         lastPayment: { monto: lastAmount, metodo_pago: lastMethod, fecha_cobro: lastDate }
       });
@@ -198,8 +198,8 @@ export function usePagos() {
     setMerchant(found);
     setBalance(balanceData.data);
     setSuggestion(next);
-    // El código de operación y la nota son de cada cobro: no se heredan del comerciante anterior.
-    setForm((current) => ({ ...current, comercianteId: String(found.id), periodo, monto: String(Math.min(next.suggestedAmount || balanceData.data.saldo, balanceData.data.saldo) || ''), metodo_pago: next.preferredMethod || current.metodo_pago, codigo_operacion: '', observaciones: '' }));
+    // La nota es de cada cobro: no se hereda del comerciante anterior.
+    setForm((current) => ({ ...current, comercianteId: String(found.id), periodo, monto: String(Math.min(next.suggestedAmount || balanceData.data.saldo, balanceData.data.saldo) || ''), observaciones: '' }));
   };
 
   // El cobrador elige a qué mes impago aplicar el cobro.
@@ -228,7 +228,7 @@ export function usePagos() {
     setMerchant(offlineMerchant);
     setBalance(offlineBalance);
     setSuggestion(buildExpressSuggestion(offlineMerchant, offlineBalance, []));
-    setForm((current) => ({ ...current, comercianteId: String(offlineMerchant.id), periodo: offlineBalance.periodo || current.periodo, monto: offlineBalance.saldo > 0 ? String(offlineBalance.saldo) : '', codigo_operacion: '', observaciones: '' }));
+    setForm((current) => ({ ...current, comercianteId: String(offlineMerchant.id), periodo: offlineBalance.periodo || current.periodo, monto: offlineBalance.saldo > 0 ? String(offlineBalance.saldo) : '', observaciones: '' }));
     aplicarMarcaDeHoy(localMerchant);
     return offlineBalance;
   };
@@ -318,7 +318,7 @@ export function usePagos() {
     navigate(location.pathname, { replace: true, state: null });
     setMerchant(cobrarPuesto);
     setBalance(null);
-    setForm((current) => ({ ...current, search: cobrarPuesto.nombre || '', comercianteId: String(cobrarPuesto.id), monto: String(cobrarPuesto.saldo || ''), codigo_operacion: '', observaciones: '' }));
+    setForm((current) => ({ ...current, search: cobrarPuesto.nombre || '', comercianteId: String(cobrarPuesto.id), monto: String(cobrarPuesto.saldo || ''), observaciones: '' }));
     // Sin señal, o con el servidor sin responder (12/11/2026: antes un 5xx dejaba solo un mensaje de error), el saldo
     // sale del padrón del celular; antes quedaba vacío y no se podía confirmar el cobro.
     const desdeElPadron = (motivo) => jornada.porId(cobrarPuesto.id).then((registro) => {
@@ -358,8 +358,7 @@ export function usePagos() {
   const applySuggestion = () => setForm((current) => ({
     ...current,
     // Con tickets el monto es lo que valen los tickets a entregar.
-    monto: usaTickets ? String(montoTickets) : String(suggestion.suggestedAmount || balance?.saldo || 0),
-    metodo_pago: suggestion.preferredMethod || current.metodo_pago
+    monto: usaTickets ? String(montoTickets) : String(suggestion.suggestedAmount || balance?.saldo || 0)
   }));
 
   const submit = async (event) => {
@@ -376,12 +375,11 @@ export function usePagos() {
     const fechaCobro = new Date().toISOString();
     const payload = {
       ...form,
-      // El número de operación existe solo en Yape, Plin o POS. En efectivo no se envía aunque quede escrito.
-      codigo_operacion: form.metodo_pago === 'efectivo' ? undefined : String(form.codigo_operacion || '').trim(),
       observaciones: String(form.observaciones || '').trim() || undefined,
       comerciante_id: form.comercianteId,
       cobrador_id: user?.id || 2,
-      metodo_pago: form.metodo_pago,
+      // Solo se cobra en efectivo (RN-34, 17/11/2026): el servidor rechaza cualquier otro medio.
+      metodo_pago: 'efectivo',
       fecha_cobro: fechaCobro,
       periodo: form.periodo || periodoEnLima(),
       inicio_atencion: inicioAtencion.current || undefined,
@@ -419,7 +417,7 @@ export function usePagos() {
         periodo_aplicado: payload.periodo,
         tickets: ticketsEntregados.map((ticket) => ({ ...ticket, texto: textoTicket(ticket.serie, ticket.numero) }))
       });
-      setForm((current) => ({ ...current, monto: '', codigo_operacion: '', observaciones: '' }));
+      setForm((current) => ({ ...current, monto: '', observaciones: '' }));
       empezarAtencion();
       setMessage(`${reason} el cobro quedó guardado en el celular y se enviará al volver la señal. ${ticketsEntregados.length ? `Entrega ${ticketsEntregados.map((ticket) => textoTicket(ticket.serie, ticket.numero)).join(', ')}.` : 'Entrega el recibo provisional.'}`);
     };
@@ -464,9 +462,9 @@ export function usePagos() {
 
       await saveMerchantPreferences(String(form.comercianteId), {
         monto_sugerido: Number(form.monto || 0),
-        metodo_pago_preferido: form.metodo_pago,
+        metodo_pago_preferido: 'efectivo',
         ultimo_monto: Number(form.monto || 0),
-        ultimo_metodo_pago: form.metodo_pago,
+        ultimo_metodo_pago: 'efectivo',
         ultimo_cobro_fecha: new Date().toISOString(),
         total_cobros: (cobros.filter((item) => Number(item.comerciante_id ?? item.comercianteId ?? 0) === Number(form.comercianteId)).length || 0) + 1
       });
@@ -490,7 +488,7 @@ export function usePagos() {
         hash_idempotencia: hashIdempotencia
       });
       setBalance((current) => current ? { ...current, saldo: data.data.saldo_restante } : current);
-      setForm((current) => ({ ...current, monto: '', codigo_operacion: '', observaciones: '' }));
+      setForm((current) => ({ ...current, monto: '', observaciones: '' }));
       empezarAtencion();
       await refresh();
     } catch (paymentError) {

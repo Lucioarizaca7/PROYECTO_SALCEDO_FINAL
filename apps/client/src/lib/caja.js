@@ -7,6 +7,13 @@ export const SOBRANTE_SIN_JUSTIFICAR = 5;
 /** Cualquier faltante se justifica; un sobrante, desde S/ 5. diferencia = declarado − esperado. */
 export const pideJustificacion = (diferencia) => Number(diferencia) < 0 || Number(diferencia) >= SOBRANTE_SIN_JUSTIFICAR;
 
+/**
+ * Medios de pago que muestra la caja (RN-34, 17/11/2026: solo se cobra en efectivo). Yape, Plin y POS aparecen
+ * solo si ese día tienen algún monto: cierres anteriores al cambio o un cobro sin señal que entró observado.
+ * montos: listas de montos por medio, p. ej. [esperado.yape, declarado.yape].
+ */
+export const mediosDeCaja = (metodos, montosDe) => metodos.filter(({ key }) => key === 'efectivo' || montosDe(key).some((monto) => Number(monto) > 0));
+
 /** Número de constancia de una entrega: E-000012. */
 export const numeroConstancia = (entregaId) => `E-${String(entregaId).padStart(6, '0')}`;
 

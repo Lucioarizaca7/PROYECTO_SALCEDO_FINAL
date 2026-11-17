@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useSisrec } from '../app/SisrecContext';
 import { METODOS_CAJA, useCaja } from '../hooks/useCaja';
-import { textoConstancia } from '../lib/caja';
+import { mediosDeCaja, textoConstancia } from '../lib/caja';
 import { formatPEN } from '../lib/formato';
 
 const textoDiferencia = (valor) => (valor === 0 ? 'Cuadra' : valor > 0 ? `Sobran ${formatPEN(valor)}` : `Faltan ${formatPEN(Math.abs(valor))}`);
@@ -96,6 +96,9 @@ function EntregasDelCierre({ cierre }) {
   ));
 }
 
+// Efectivo siempre; Yape, Plin y POS solo si ese cierre los tiene (historia o un cobro sin señal observado).
+const mediosDelCierre = (cierre) => mediosDeCaja(METODOS_CAJA, (key) => [cierre[`esperado_${key}`], cierre[`declarado_${key}`], cierre.vigente?.[`declarado_${key}`]]);
+
 // Lo que hace el super administrador con un cierre: recibir el efectivo (RN-41), recibir lo que entró después
 // del cierre (RN-44) y rectificar un error (RN-43). El cierre original nunca se edita.
 function GestionCierre({ cierre, caja, onCerrar }) {
@@ -103,6 +106,7 @@ function GestionCierre({ cierre, caja, onCerrar }) {
   const [entrega, setEntrega] = useState({ tipo: cierre.entregado ? 'complementaria' : 'cierre', monto: cierre.entregado ? '' : String(vigente.declarado_efectivo), observaciones: '' });
   const [rectificacion, setRectificacion] = useState({ ...Object.fromEntries(METODOS_CAJA.map(({ key }) => [key, String(vigente[`declarado_${key}`])])), motivo: '' });
   const propia = cierre.cobrador_id === caja.usuarioId;
+  const medios = mediosDelCierre(cierre);
 
   const enviarEntrega = async (event) => {
     event.preventDefault();
@@ -148,7 +152,7 @@ function GestionCierre({ cierre, caja, onCerrar }) {
         <div className="panel-title">Rectificar el cierre</div>
         <p className="panel-subtitle">El cierre original se conserva. Escriba los montos correctos y el motivo.</p>
         <div className="merchant-form-grid">
-          {METODOS_CAJA.map(({ key, label }) => (
+          {medios.map(({ key, label }) => (
             <label key={key}>
               <span>{label}: esperado {formatPEN(cierre[`esperado_${key}`])}</span>
               <input type="number" min="0" step="0.01" inputMode="decimal" required aria-label={`${label} corregido`} value={rectificacion[key]} onChange={(event) => setRectificacion({ ...rectificacion, [key]: event.target.value })} />
@@ -170,7 +174,7 @@ function CierreHecho({ cierre, posteriores }) {
         <table>
           <thead><tr><th>Método</th><th>Esperado</th><th>Declarado</th></tr></thead>
           <tbody>
-            {METODOS_CAJA.map(({ key, label }) => (
+            {mediosDelCierre(cierre).map(({ key, label }) => (
               <tr key={key}><td>{label}</td><td>{formatPEN(cierre[`esperado_${key}`])}</td><td>{formatPEN(cierre[`declarado_${key}`])}</td></tr>
             ))}
           </tbody>
@@ -221,7 +225,7 @@ export function CajaPage() {
               <strong>{formatPEN(resumen.esperado_total)}</strong>
             </div>
             <div className="merchant-form-grid">
-              {METODOS_CAJA.map(({ key, label }) => (
+              {mediosDeCaja(METODOS_CAJA, (key) => [resumen.esperado[key]]).map(({ key, label }) => (
                 <label key={key}>
                   <span>{label}: esperado {formatPEN(resumen.esperado[key])}</span>
                   <input type="number" min="0" step="0.01" inputMode="decimal" placeholder={`Lo que tengo en ${label}`} value={declarado[key]} onChange={(event) => setDeclarado({ ...declarado, [key]: event.target.value })} />

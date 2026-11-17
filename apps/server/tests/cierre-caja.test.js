@@ -5,7 +5,7 @@ import test, { after, before } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { startServer } from '../src/index.ts';
-import { closeDatabase, calcularLiquidacion, getComerciantes, registrarCobro, todayInLima } from '../src/db.js';
+import { closeDatabase, calcularLiquidacion, getComerciantes, registrarCobro, syncOfflineCobro, todayInLima } from '../src/db.js';
 import { pool } from '../src/pg.js';
 import { comercianteConDeuda } from './_deuda.js';
 
@@ -56,7 +56,12 @@ test('el cobrador cierra su caja: lo esperado lo calcula el servidor y se ve la 
   });
   await cobrar(3, 'efectivo');
   await cobrar(2, 'efectivo');
-  await cobrar(1.5, 'yape', { codigo_operacion: `YP-CAJA-${process.pid}` });
+  // Un Yape ya solo entra sin señal y queda observado (RN-34): el cierre lo sigue contando en su columna.
+  const yape = await syncOfflineCobro(pool, {
+    comerciante_id: merchant.id, cobrador_id: cobrador.id, monto: 1.5, metodo_pago: 'yape', periodo,
+    fecha_cobro: `${dia}T15:00:00Z`, codigo_operacion: `YP-CAJA-${process.pid}`, hash_transaccion: `yape-caja-${process.pid}`
+  });
+  assert.equal(yape.status, 'OBSERVED');
 
   const resumen = await api(`/caja/resumen?fecha=${dia}`, { token: cobrador.token });
   assert.equal(resumen.status, 200, resumen.body?.message);

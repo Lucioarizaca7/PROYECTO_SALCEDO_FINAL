@@ -54,7 +54,7 @@ Son situaciones reales que hoy no tienen regla escrita. El sistema no hace nada,
 | F2 | **Faltante o sobrante de caja.** Qué se hace cuando lo declarado no coincide. | La diferencia queda guardada. No hay tope, aviso, responsable ni seguimiento. |
 | F3 | **Cierre mal hecho.** Cómo se corrige un cierre con un error. | Un cobrador cierra una sola vez por día. No existe reapertura ni corrección. |
 | F4 | **Cobros que llegan después del cierre** (sincronizados tarde). | El sistema los muestra aparte. No hay regla sobre quién los revisa ni cómo se entregan. |
-| F5 | **Yape, Plin y POS.** Quién comprueba que el pago llegó a la cuenta municipal. | Solo se exige el número de operación y que no se repita. Nadie lo concilia con el banco. |
+| F5 | **Yape, Plin y POS.** Quién comprueba que el pago llegó a la cuenta municipal. | Solo se exige el número de operación y que no se repita. Nadie lo concilia con el banco. **Resuelto el 17/11/2026: se quitó el cobro digital.** |
 | F6 | **Deuda antigua.** Fraccionamiento, tope, condonación, prescripción. | La deuda se acumula sin límite desde el inicio de cobro. |
 | F7 | **Consecuencia de no pagar.** Qué pasa con quien acumula deuda o se niega a pagar. | «Se negó a pagar» genera deuda y sale en reportes. No hay aviso formal ni suspensión. |
 | F8 | **Reclamo del comerciante.** «Ese día no vine» o «ya pagué». | No hay flujo de reclamo. Solo el super administrador puede corregir, sin plazo definido. |
@@ -73,12 +73,12 @@ Son situaciones reales que hoy no tienen regla escrita. El sistema no hace nada,
 | C1 | Metraje «obligatorio sin tipo de vía» frente a «siempre opcional». | Corregido hoy. |
 | C2 | Se seguía nombrando la «tarifa mensual», que ya no existe. | Corregido hoy. |
 | C3 | «Solo el super administrador cambia la zona» frente a «el cobrador elige la zona del día». | Aclarado hoy: zona habitual frente a zona del día. |
-| C4 | Los reportes por zona usaban la zona del comerciante, no la del día. | Corregido, pendiente de unir (migración 0033). |
-| C5 | **Dos zonas por comerciante:** la suya y la de su puesto. La suya ya solo sirve para su código. | Pendiente. |
-| C6 | **Tipo de comerciante:** ferial y permanente pagan exactamente igual. Solo el eventual se distingue. | Pendiente. |
-| C7 | **Puesto sin zona confirmada:** el padrón lo pone en «la primera zona» y paga ese precio. | Pendiente. |
-| C8 | **«Paga por cada puesto»** frente a «el cobro marca solo el puesto principal». | Pendiente. |
-| C9 | Un mensaje de tickets todavía dice «no cobra por día cobrado con tipo de vía». | Pendiente (texto). |
+| C4 | Los reportes por zona usaban la zona del comerciante, no la del día. | Corregido (migración 0033). |
+| C5 | **Dos zonas por comerciante:** la suya y la de su puesto. La suya ya solo sirve para su código. | Corregido el 16/11/2026 (RN-06). |
+| C6 | **Tipo de comerciante:** ferial y permanente pagan exactamente igual. Solo el eventual se distingue. | Se mantienen los tres (decisión del 15/11/2026). |
+| C7 | **Puesto sin zona confirmada:** el padrón lo pone en «la primera zona» y paga ese precio. | Corregido el 16/11/2026 (RN-05). |
+| C8 | **«Paga por cada puesto»** frente a «el cobro marca solo el puesto principal». | Corregido el 16/11/2026 (RN-22). |
+| C9 | Un mensaje de tickets todavía dice «no cobra por día cobrado con tipo de vía». | Corregido: el mensaje ya no existe. |
 
 ---
 
@@ -136,8 +136,8 @@ Cada regla tiene un número, una frase clara, un responsable y la forma de contr
 | RN-31 | Por cada puesto y día cobrado se entrega un ticket preimpreso del valor de ese día. | Cobrador | La suma de los tickets debe ser igual al monto. | Vigente |
 | RN-32 | Los talonarios los asigna solo el super administrador. | Super administrador | Lotes con rango único. | Vigente |
 | RN-33 | Un talonario perdido o robado se reporta el mismo día y sus tickets disponibles se anulan en bloque. | Cobrador y super administrador | Anulación por lote con motivo. | Propuesta (F12) |
-| RN-34 | Yape, Plin y POS exigen número de operación, único por método. | Cobrador | El sistema rechaza un número repetido. | Vigente |
-| RN-35 | Cada pago por Yape, Plin o POS se concilia con el estado de la cuenta municipal. | Tesorería | Marca «conciliado» por cobro. Reporte de no conciliados. | Propuesta (F5) |
+| RN-34 | Solo se cobra en efectivo. No se acepta Yape, Plin ni POS. | Cobrador | El sistema rechaza cualquier otro medio. Un cobro digital guardado sin señal antes del cambio entra y queda observado. | Vigente (17/11/2026) |
+| RN-35 | Cada pago por Yape, Plin o POS se concilia con el estado de la cuenta municipal. | Tesorería | Marca «conciliado» por cobro. Reporte de no conciliados. | Retirada (17/11/2026): ya no hay cobro digital |
 | RN-36 | Sin señal, el cobro se guarda en el celular y se envía después. Un conflicto queda observado, nunca se descarta. | Sistema | Revisión de cobros. | Vigente |
 | RN-37 | Un cobro no se borra: lo anula el super administrador con un motivo. | Super administrador | Auditoría. | Vigente |
 | RN-38 | La anulación tiene plazo. Fuera de plazo, o si la caja de ese día ya se entregó, necesita una segunda aprobación. | Super administrador titular y suplente | Plazo y doble firma. | Decisión (F9) |
@@ -183,7 +183,7 @@ Son valores o criterios de la municipalidad. No los puedo inventar. Para cada un
 |---|---|---|
 | 1 | ¿A quién entrega el cobrador el dinero y con qué documento? | Registrar en el sistema quién recibe y el monto; la constancia se imprime o se envía por WhatsApp. |
 | 2 | ¿Desde qué diferencia de caja se exige justificación? | Cualquier faltante, y sobrantes de S/ 5 o más. |
-| 3 | ¿Quién concilia Yape, Plin y POS, y cada cuánto? | Tesorería, una vez por semana, con el estado de cuenta. |
+| 3 | ¿Quién concilia Yape, Plin y POS, y cada cuánto? | Ya no aplica: desde el 17/11/2026 solo se cobra en efectivo. |
 | 4 | ¿Hasta cuántos días después se puede anular un cobro sin segunda aprobación? | El mismo día o hasta el cierre de caja. Después, con el visto bueno del suplente. |
 | 5 | ¿Qué pasa con quien acumula deuda? ¿Desde cuánto se le avisa? | Aviso formal al mes de deuda. La suspensión del puesto la decide la municipalidad, no el sistema. |
 | 6 | ¿Se permite fraccionar o dar de baja deuda antigua? ¿Con qué documento? | Solo con resolución, registrando su número. |
@@ -217,7 +217,7 @@ Cada etapa se puede aprobar y unir por separado. El orden va de lo más barato y
 
 - Constancia de entrega del dinero (RN-41) y entrega complementaria (RN-44). **Hecho el 15/11/2026**: la registra el super administrador que recibe.
 - Tope y justificación de diferencias (RN-42), rectificación de cierre (RN-43). **Hecho el 15/11/2026**: todo faltante y sobrantes desde S/ 5.
-- Conciliación de Yape, Plin y POS (RN-35). **Pendiente**: se dejó para después (decisión del 15/11/2026).
+- Conciliación de Yape, Plin y POS (RN-35). **Retirada el 17/11/2026**: se quitó el cobro digital y solo se cobra en efectivo (RN-34). El POS de la municipalidad no está activado y figura a nombre de una persona de la gestión anterior.
 - Necesita las decisiones 1, 2 y 3. Pide migraciones nuevas y una pantalla para tesorería.
 
 ### Etapa 3. Deuda, anulaciones y reclamos

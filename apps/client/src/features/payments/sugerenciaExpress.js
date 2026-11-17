@@ -63,7 +63,7 @@ export function buildExpressSuggestion(merchant, balance, history = []) {
 
   const result = {
     suggestedAmount: candidateAmount > 0 ? Number(candidateAmount.toFixed(2)) : Number((baseAmount || 0).toFixed(2)),
-    preferredMethod: methodLabel || 'efectivo',
+    preferredMethod: 'efectivo',   // solo se cobra en efectivo (RN-34); el historial conserva su medio de pago
     lastLabel: `Último cobro: S/ ${Number(latest.monto || 0).toFixed(2)} con ${methodLabel.toUpperCase()} (${diffDays === 0 ? 'hoy' : diffDays === 1 ? 'ayer' : `hace ${diffDays} días`})`,
     lastPayment: latest
   };
