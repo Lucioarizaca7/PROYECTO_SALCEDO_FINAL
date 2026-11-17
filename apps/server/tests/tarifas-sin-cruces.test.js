@@ -18,7 +18,7 @@ async function preparar() {
   return { db, zonaId: zona.id };
 }
 
-const tarifa = (db, zonaId, extra) => insertTarifa(db, { zona_id: zonaId, monto_fijo: 10, vigencia_inicio: '2026-01-01', ...extra }, { permitirInicioPasado: true });
+const tarifa = (db, zonaId, extra) => insertTarifa(db, { zona_id: zonaId, monto_fijo: 10, norma: 'OM 001-2026 (prueba)', vigencia_inicio: '2026-01-01', ...extra }, { permitirInicioPasado: true });
 
 test('un precio que empieza después cierra el anterior y los meses pasados no cambian', async () => {
   const { db, zonaId } = await preparar();
@@ -83,14 +83,22 @@ test('la base rechaza un cruce aunque entre por otro camino, y una tarifa activa
   const { db, zonaId } = await preparar();
   await tarifa(db, zonaId, {});
   await assert.rejects(
-    () => db.query(`INSERT INTO tarifas (zona_id, tipo_tarifa, monto_fijo, unidad_medida, vigencia_inicio) VALUES ($1, 'fija', 5, 'dia', '2026-06-01')`, [zonaId]),
+    () => db.query(`INSERT INTO tarifas (zona_id, tipo_tarifa, monto_fijo, unidad_medida, vigencia_inicio, norma) VALUES ($1, 'fija', 5, 'dia', '2026-06-01', 'OM de prueba')`, [zonaId]),
     (error) => error.code === '23P01'
+  );
+  // Un precio nuevo que rige lleva su norma (RN-15, 0036).
+  await assert.rejects(
+    async () => {
+      const otra = (await db.query(`INSERT INTO zonas (nombre) VALUES ($1) RETURNING id`, [`Zona sin norma ${process.pid}-${Date.now()}`])).rows[0].id;
+      return db.query(`INSERT INTO tarifas (zona_id, tipo_tarifa, monto_fijo, unidad_medida, vigencia_inicio) VALUES ($1, 'fija', 5, 'dia', '2031-06-01')`, [otra]);
+    },
+    (error) => error.code === '23514' && error.constraint === 'tarifas_con_norma'
   );
   // Una inactiva no compite con nadie.
   await db.query(`INSERT INTO tarifas (zona_id, tipo_tarifa, monto_fijo, unidad_medida, vigencia_inicio, activo) VALUES ($1, 'fija', 5, 'dia', '2026-06-01', FALSE)`, [zonaId]);
   // Una cuota mensual por rubro ya no entra activa (0032).
   await assert.rejects(
-    () => db.query(`INSERT INTO tarifas (rubro_id, tipo_tarifa, monto_fijo, unidad_medida, vigencia_inicio) VALUES (1, 'fija', 90, 'mensual', '2031-01-01')`),
+    () => db.query(`INSERT INTO tarifas (rubro_id, tipo_tarifa, monto_fijo, unidad_medida, vigencia_inicio, norma) VALUES (1, 'fija', 90, 'mensual', '2031-01-01', 'OM de prueba')`),
     (error) => error.code === '23514' && error.constraint === 'tarifas_precio_de_zona'
   );
 });

@@ -25,8 +25,31 @@ function ClaveNueva({ usuario, ocupado, onGuardar, onCancelar }) {
   );
 }
 
+// Zonas donde cobra un cobrador (RN-64). Sin ninguna marcada cobra en todas; fuera de las suyas no se le impide,
+// pero la marca queda señalada y sale en Reportes.
+function ZonasDelCobrador({ usuario, zonas, ocupado, onGuardar, onCancelar }) {
+  const [elegidas, setElegidas] = useState(() => new Set((usuario.zonas_asignadas || []).map(Number)));
+  const alternar = (id) => setElegidas((actual) => { const nuevo = new Set(actual); if (nuevo.has(id)) nuevo.delete(id); else nuevo.add(id); return nuevo; });
+  const guardar = async (event) => {
+    event.preventDefault();
+    if (await onGuardar(usuario, [...elegidas])) onCancelar();
+  };
+  return (
+    <form className="usuario-clave" onSubmit={guardar}>
+      {zonas.map((zona) => (
+        <label key={zona.id}><input type="checkbox" checked={elegidas.has(Number(zona.id))} onChange={() => alternar(Number(zona.id))} /> {zona.nombre}</label>
+      ))}
+      <span className="usuario-clave-aviso">{elegidas.size ? `${elegidas.size} zona(s)` : 'Sin marcar: cobra en todas'}</span>
+      <button type="submit" className="table-action" disabled={ocupado}>Guardar zonas</button>
+      <button type="button" className="table-action" onClick={onCancelar}>Cancelar</button>
+    </form>
+  );
+}
+
 export function UsuariosPage() {
-  const { user } = useSisrec();
+  const { user, catalogos } = useSisrec();
+  const [zonasDe, setZonasDe] = useState(null);
+  const nombreZona = (id) => catalogos.zonas.find((zona) => Number(zona.id) === Number(id))?.nombre || `Zona ${id}`;
   const usuarios = useUsuarios();
   const { formulario, setFormulario } = usuarios;
   const [claveDe, setClaveDe] = useState(null);
@@ -80,15 +103,18 @@ export function UsuariosPage() {
                 <tr key={usuario.id} className={usuario.activo ? '' : 'usuario-inactivo'}>
                   <td>{usuario.nombre}{esUsted && <span className="usuario-usted"> (usted)</span>}</td>
                   <td>{usuario.email}</td>
-                  <td>{formatRole(usuario.rol)}</td>
+                  <td>{formatRole(usuario.rol)}{usuario.rol === 'cobrador' && <><br /><small>{usuario.zonas_asignadas?.length ? usuario.zonas_asignadas.map(nombreZona).join(', ') : 'Todas las zonas'}</small></>}</td>
                   <td><span className={`status ${usuario.activo ? 'paid' : 'danger'}`}>{usuario.activo ? 'Activo' : 'Desactivado'}</span></td>
                   <td>{fechaHoraEnLima(usuario.ultimo_ingreso) || 'Nunca'}</td>
                   <td>
-                    {claveDe === usuario.id ? (
+                    {zonasDe === usuario.id ? (
+                      <ZonasDelCobrador usuario={usuario} zonas={catalogos.zonas} ocupado={usuarios.ocupado} onGuardar={usuarios.asignarZonas} onCancelar={() => setZonasDe(null)} />
+                    ) : claveDe === usuario.id ? (
                       <ClaveNueva usuario={usuario} ocupado={usuarios.ocupado} onGuardar={usuarios.cambiarClave} onCancelar={() => setClaveDe(null)} />
                     ) : (
                       <>
                         <button type="button" className="table-action" onClick={() => setClaveDe(usuario.id)}>Clave nueva</button>
+                        {usuario.rol === 'cobrador' && <button type="button" className="table-action" onClick={() => setZonasDe(usuario.id)}>Zonas</button>}
                         {!esUsted && (
                           <button type="button" className={`table-action ${usuario.activo ? 'peligro' : ''}`} disabled={usuarios.ocupado} onClick={() => usuarios.cambiarEstado(usuario)}>
                             {usuario.activo ? 'Desactivar' : 'Activar'}

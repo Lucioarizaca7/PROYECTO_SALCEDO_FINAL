@@ -24,6 +24,8 @@ Versión del 14/11/2026. Este documento resume, sin términos técnicos, las reg
 | RN-02 | Un comerciante sin DNI se registra como pendiente de regularización y paga igual. | Super administrador | Lista de pendientes en Comerciantes. |
 | RN-03 | Un comerciante no se borra: se da de baja. La baja anula su carnet y da de baja sus puestos. | Super administrador | Auditoría. |
 | RN-04 | Un puesto pertenece a una zona. Solo el super administrador cambia la zona habitual de un puesto. | Super administrador | El servidor rechaza el cambio de otro rol. |
+| RN-05 | Un puesto sin zona confirmada no tiene precio propio: para marcarlo o cobrarlo, el cobrador elige la zona donde vende ese día. | Cobrador | En línea el sistema no deja marcar ni cobrar sin la zona del día. Sin señal, el cobro queda observado. |
+| RN-06 | El comerciante tiene una sola zona: la de su puesto principal. Solo se edita a mano la de quien no tiene puesto. | Sistema | La base la actualiza sola cuando cambia el puesto. |
 
 ## Zonas y precios
 
@@ -34,6 +36,7 @@ Versión del 14/11/2026. Este documento resume, sin términos técnicos, las reg
 | RN-12 | La zona nace con su precio. El tipo de vía lo sugiere: S/ 3 asfaltada, S/ 2 sin asfaltar. | Super administrador | El formulario lo propone; se puede cambiar. |
 | RN-13 | Solo el super administrador fija o cambia un precio. | Super administrador | El servidor rechaza a otros roles. Auditoría. |
 | RN-14 | Un precio nuevo rige desde hoy o después, nunca hacia atrás. Los días anteriores conservan su precio. | Sistema | El servidor rechaza una fecha pasada. |
+| RN-15 | Cada precio nuevo lleva la norma que lo respalda (número de ordenanza o resolución). | Super administrador | El sistema no guarda un precio nuevo sin la norma. |
 | RN-16 | Una zona sin precio no puede cobrar en línea. Sin señal, el cobro queda observado. | Sistema | Aviso en Tarifas. |
 
 ## Día cobrado
@@ -42,6 +45,7 @@ Versión del 14/11/2026. Este documento resume, sin términos técnicos, las reg
 |---|---|---|---|
 | RN-20 | Se debe solo el día que el cobrador marcó o cobró. Sin día cobrado no hay deuda. | Cobrador | Marca de asistencia o cobro. |
 | RN-21 | Cada puesto marcado paga su día. Dos puestos el mismo día son dos pagos. | Cobrador | Detalle por puesto en la liquidación. |
+| RN-22 | Al cobrar a un comerciante con varios puestos, el cobrador marca cuáles abrieron ese día. Cada puesto marcado paga su día. | Cobrador | Pantalla de cobro; el servidor marca la asistencia de cada puesto con el cobro. |
 | RN-23 | Si el comerciante vende ese día en otra zona, el cobrador elige la zona del día y se cobra ese precio. | Cobrador | Queda en Observaciones. |
 | RN-24 | El cobrador marca hasta 3 días atrás. Más atrás, solo el super administrador. | Sistema | El servidor lo rechaza. Auditoría. |
 | RN-25 | «No salió» no genera deuda. «No vendió» y «se negó a pagar» sí la generan. | Cobrador | Motivo obligatorio y coherente con la marca. |
@@ -55,6 +59,7 @@ Versión del 14/11/2026. Este documento resume, sin términos técnicos, las reg
 | RN-30 | Todo cobro genera un recibo con número correlativo. | Sistema | Automático. |
 | RN-31 | Por cada puesto y día cobrado se entrega un ticket preimpreso del valor de ese día. | Cobrador | La suma de los tickets debe ser igual al monto. |
 | RN-32 | Los talonarios los asigna solo el super administrador. | Super administrador | Lotes con rango único. |
+| RN-33 | Un talonario perdido o robado se reporta el mismo día y el super administrador anula de una vez sus tickets disponibles, con motivo. | Cobrador y super administrador | Botón «Perdido o robado» en Tickets. Auditoría. |
 | RN-34 | Yape, Plin y POS exigen número de operación, único por método. | Cobrador | El sistema rechaza un número repetido. |
 | RN-36 | Sin señal, el cobro se guarda en el celular y se envía después. Un conflicto queda observado, nunca se descarta. | Sistema | Revisión de cobros. |
 | RN-37 | Un cobro no se borra: lo anula el super administrador con un motivo. | Super administrador | Auditoría. |
@@ -88,6 +93,7 @@ Versión del 14/11/2026. Este documento resume, sin términos técnicos, las reg
 | RN-61 | Hay dos super administradores: titular y suplente. Cada mes uno revisa lo que hizo el otro. | Gerencia | Memorando y auditoría. |
 | RN-62 | Los reportes por zona cuentan cada cobro en la zona donde se vendió ese día. | Sistema | Automático. |
 | RN-63 | Cada mes se revisa el reporte «cobros en otra zona» por cobrador. | Super administrador | Reporte en Reportes, para super administrador y auditor. |
+| RN-64 | Cada cobrador tiene zonas asignadas. Cobrar fuera de ellas no se impide, pero queda señalado. Sin zonas asignadas, cobra en todas. | Super administrador | Asignación en Usuarios. Reporte «marcas fuera de las zonas asignadas». |
 
 ## Quién hace qué
 

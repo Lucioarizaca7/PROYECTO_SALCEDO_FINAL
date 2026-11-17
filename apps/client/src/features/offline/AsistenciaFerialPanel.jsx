@@ -62,8 +62,8 @@ export function AsistenciaFerialPanel({ isOnline, jornada }) {
                   <select className="zona-del-dia-select" aria-label={`Zona de hoy de ${ferial.nombresRazonSocial}`}
                     value={String(marca?.zonaId ?? '')}
                     onChange={(event) => asistencia.marcar(ferial.puestoFerialId, true, undefined, event.target.value ? Number(event.target.value) : null)}>
-                    <option value="">Zona de hoy: la de su puesto</option>
-                    {asistencia.zonas.filter((zona) => String(zona.id) !== String(ferial.zonaPuestoId)).map((zona) => (
+                    <option value="">{ferial.zonaPorConfirmar ? 'Zona sin confirmar: elige la de hoy' : 'Zona de hoy: la de su puesto'}</option>
+                    {asistencia.zonas.filter((zona) => ferial.zonaPorConfirmar || String(zona.id) !== String(ferial.zonaPuestoId)).map((zona) => (
                       <option key={zona.id} value={zona.id}>Hoy en {zona.nombre}{zona.precio_dia == null ? ' (sin precio)' : ` (S/ ${Number(zona.precio_dia).toFixed(2)})`}</option>
                     ))}
                   </select>

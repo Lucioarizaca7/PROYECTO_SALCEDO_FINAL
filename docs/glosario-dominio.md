@@ -54,6 +54,9 @@ Los términos que usa la Municipalidad de Salcedo son los mismos en la base de d
 | **Aviso de deuda** | Aviso formal a quien debe un día cobrado desde hace 30 días o más | `avisos_deuda` | `/api/v1/deuda/avisos` | `getAvisosDeuda`, `emitirAvisoDeuda` | Deuda y reclamos |
 | **Baja de deuda** | Deuda de meses pasados que deja de cobrarse por una resolución; los días cobrados se conservan | `deuda_bajas` | `/api/v1/deuda/bajas` | `darDeBajaDeuda` | Deuda y reclamos |
 | **Reclamo** | Reclamo del comerciante sobre un día marcado («no asistí», «ya pagué»), hasta 7 días después | `reclamos_dia` | `/api/v1/reclamos` | `registrarReclamo`, `resolverReclamo` | Deuda y reclamos |
+| **Norma del precio** | Ordenanza o resolución que respalda el precio por día de una zona | `tarifas.norma` | `/api/v1/tarifas` | `insertTarifa` | Tarifas |
+| **Zonas asignadas** | Zonas donde cobra un cobrador; fuera de ellas la marca queda señalada | `cobrador_zonas` | `/api/v1/usuarios/:id/zonas` | `asignarZonasCobrador` | Usuarios, Reportes |
+| **Puestos del día** | Puestos de un comerciante que abrieron el día del cobro; cada uno paga su día | `asistencias_feriales` | `/api/v1/cobros` (`puestos_dia`) | `marcarDiaCobrado`, `puestosDelDia` | Pagos y cobros |
 | **Tiempo de atención** | Segundos entre abrir al comerciante y registrar el cobro | `transacciones.inicio_atencion` | `/api/v1/cobros/tiempos` | `getTiemposCobro` | Analítica |
 | **Verificación de recibo** | QR del recibo que comprueba que es auténtico | — (firma HMAC) | `/api/v1/publico/verificar/:token` | `verificarRecibo` | `/verificar/:token` |
 | **Cobrador** | Usuario que cobra en campo | `usuarios` con rol `cobrador` | — | `requireRoles(['cobrador'])` | — |

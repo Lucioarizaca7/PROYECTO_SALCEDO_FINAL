@@ -80,6 +80,12 @@ export function useTickets() {
     if (motivo !== null) await ejecutar(() => enviar(`${apiBase}/tickets/lotes/${lote.id}/devolver`, { ...rango, motivo }));
   };
 
+  // Talonario perdido o robado (RN-33): anula de una vez todos los tickets disponibles del lote.
+  const anularPerdido = async (lote) => {
+    const motivo = window.prompt(`Lote ${lote.id}: se anularán sus ${lote.disponibles} tickets disponibles y no se podrán volver a usar. Motivo (pérdida, robo, número de denuncia):`);
+    if (motivo !== null) await ejecutar(() => enviar(`${apiBase}/tickets/lotes/${lote.id}/anular-disponibles`, { motivo }));
+  };
+
   // Detalle de un lote: cada ticket usado, anulado o devuelto con su motivo (lo ven el administrador y el auditor).
   const [detalle, setDetalle] = useState(null);
   const verDetalle = async (lote) => {
@@ -93,5 +99,5 @@ export function useTickets() {
     }
   };
 
-  return { puedeEditar, lotes, cobradores, series, nuevo, setNuevo, message, asignar, reasignar, devolver, detalle, verDetalle, cerrarDetalle: () => setDetalle(null) };
+  return { puedeEditar, lotes, cobradores, series, nuevo, setNuevo, message, asignar, reasignar, devolver, anularPerdido, detalle, verDetalle, cerrarDetalle: () => setDetalle(null) };
 }

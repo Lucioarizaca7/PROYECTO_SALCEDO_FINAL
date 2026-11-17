@@ -1,11 +1,17 @@
 // Puestos y mapa de sitios.
 import express from 'express';
-import { getPuestos, insertPuesto, updatePuesto, liberarPuesto, deactivatePuesto, getAsistencias, marcarAsistencias, getObservacionesCobro, getCobrosEnOtraZona } from '../db.js';
+import { getPuestos, insertPuesto, updatePuesto, liberarPuesto, deactivatePuesto, getAsistencias, marcarAsistencias, getObservacionesCobro, getCobrosEnOtraZona, getMarcasFueraDeAsignacion } from '../db.js';
 import { requireAuth, requireRoles, auditMutation } from '../auth.js';
 import { staffOnly, rowById, auditContext } from '../http/comunes.js';
 import { pool as db } from '../pg.js';
 
 export const router = express.Router();
+
+// Aviso al cobrador (RN-64): la marca se guarda igual, pero queda señalada para la oficina.
+const fueraDeZona = (marcas: { fuera_de_asignacion?: boolean }[]) => {
+  const fuera = marcas.filter((marca) => marca.fuera_de_asignacion).length;
+  return fuera ? `. ${fuera} en una zona que no tiene asignada: queda registrado` : '';
+};
 
 // La marca "zona por regularizar" solo la pone la importación del padrón (migrations/0018); por la API no se escribe.
 const sinMarcaDelPadron = (body) => {
@@ -135,16 +141,21 @@ router.get('/api/v1/asistencias/otra-zona', requireAuth, requireRoles(['super_ad
 // Una marca ({ puesto_id, fecha?, asistio, motivo?, observacion? }) o varias ({ marcas: [...] }, p. ej. las guardadas sin señal).
 // Reenviar la misma marca no duplica nada.
 // Un lote ({ marcas }) responde marca por marca: las inválidas vuelven en `rechazadas` sin frenar a las demás.
+// Marcas hechas en una zona que el cobrador no tenía asignada (RN-64): control sobre el trabajo del cobrador.
+router.get('/api/v1/asistencias/fuera-de-asignacion', requireAuth, requireRoles(['super_admin', 'auditor']), async (req, res) => {
+  return res.json({ data: await getMarcasFueraDeAsignacion(db, { desde: req.query.desde, hasta: req.query.hasta }) });
+});
+
 router.post('/api/v1/asistencias', requireAuth, requireRoles(['super_admin', 'cobrador']), async (req, res) => {
   const opciones = { usuarioId: req.user.id, rol: req.user.rol, audit: auditContext(req, 'MARCAR_ASISTENCIA_FERIAL') };
   if (!Array.isArray(req.body?.marcas)) {
     const data = await marcarAsistencias(db, [req.body || {}], opciones);
-    return res.status(201).json({ data, message: `${data.length} marca(s) de asistencia guardadas` });
+    return res.status(201).json({ data, message: `${data.length} marca(s) de asistencia guardadas${fueraDeZona(data)}` });
   }
   const { guardadas, rechazadas } = await marcarAsistencias(db, req.body.marcas, { ...opciones, parcial: true });
   return res.status(201).json({
     data: guardadas,
     rechazadas,
-    message: `${guardadas.length} marca(s) de asistencia guardadas${rechazadas.length ? `, ${rechazadas.length} rechazada(s): ${rechazadas[0].error}` : ''}`
+    message: `${guardadas.length} marca(s) de asistencia guardadas${fueraDeZona(guardadas)}${rechazadas.length ? `, ${rechazadas.length} rechazada(s): ${rechazadas[0].error}` : ''}`
   });
 });

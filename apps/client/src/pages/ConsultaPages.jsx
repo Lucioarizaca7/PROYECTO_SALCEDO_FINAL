@@ -63,6 +63,7 @@ export function ReportesPage() {
       </div>
       <ObservacionesCobro />
       {['super_admin', 'auditor'].includes(user?.rol) && <CobrosEnOtraZona />}
+      {['super_admin', 'auditor'].includes(user?.rol) && <MarcasFueraDeAsignacion />}
     </section>
   );
 }
@@ -71,6 +72,53 @@ export function ReportesPage() {
 // zona más barata el día vale menos; aquí se ve cuánto usa cada uno esa opción y cuánto dinero mueve.
 const soles = (valor) => `S/ ${Math.abs(Number(valor)).toFixed(2)}`;
 const textoDiferenciaZona = (valor) => (valor > 0 ? `${soles(valor)} menos` : valor < 0 ? `${soles(valor)} más` : 'Sin diferencia');
+
+// Marcas en una zona que el cobrador no tenía asignada (RN-64): no se le impide, pero queda señalado.
+function MarcasFueraDeAsignacion() {
+  const hoy = hoyEnLima();
+  const [filtro, setFiltro] = useState({ desde: `${hoy.slice(0, 7)}-01`, hasta: hoy });
+  const [data, setData] = useState({ cobradores: [] });
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    const controller = new AbortController();
+    authFetch(`${apiBase}/asistencias/fuera-de-asignacion?${new URLSearchParams(filtro)}`, { signal: controller.signal })
+      .then(async (response) => {
+        const body = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(body.message || 'No se pudo cargar el reporte de zonas asignadas');
+        setError('');
+        setData(body.data || { cobradores: [] });
+      })
+      .catch((cause) => { if (!controller.signal.aborted) setError(cause.message); });
+    return () => controller.abort();
+  }, [filtro.desde, filtro.hasta]);
+
+  return (
+    <div className="table-card">
+      <div className="panel-heading">
+        <div><div className="panel-title">Marcas fuera de las zonas asignadas, por cobrador</div><div className="panel-subtitle">Días que un cobrador marcó o cobró en una zona que no tenía asignada. Las zonas se asignan en Usuarios.</div></div>
+        <div className="report-actions">
+          <input type="date" aria-label="Fuera de zona: desde" value={filtro.desde} max={filtro.hasta} onChange={(event) => setFiltro({ ...filtro, desde: event.target.value })} />
+          <input type="date" aria-label="Fuera de zona: hasta" value={filtro.hasta} min={filtro.desde} onChange={(event) => setFiltro({ ...filtro, hasta: event.target.value })} />
+        </div>
+      </div>
+      {error && <div className="form-error">{error}</div>}
+      <table>
+        <thead><tr><th>Cobrador</th><th>Zonas asignadas hoy</th><th>Marcas</th><th>Fuera de sus zonas</th><th>Detalle</th></tr></thead>
+        <tbody>
+          {data.cobradores.map((fila) => (
+            <tr key={fila.cobrador_id}>
+              <td>{fila.cobrador}</td><td>{fila.zonas_asignadas.join(', ') || 'Todas'}</td><td>{fila.marcas}</td>
+              <td><span className="status pending">{fila.fuera} ({fila.porcentaje}%)</span></td>
+              <td>{fila.detalle.map((item) => `${item.fecha} ${item.comerciante} (${item.zona || 'sin zona'})`).join(' · ')}</td>
+            </tr>
+          ))}
+          {!data.cobradores.length && <tr><td colSpan={5} className="empty-state">Nadie marcó fuera de sus zonas asignadas en el rango.</td></tr>}
+        </tbody>
+      </table>
+    </div>
+  );
+}
 
 function CobrosEnOtraZona() {
   const hoy = hoyEnLima();

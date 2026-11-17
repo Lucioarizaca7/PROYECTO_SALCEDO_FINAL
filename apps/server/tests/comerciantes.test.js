@@ -212,6 +212,7 @@ test('updateTarifa rechaza actualizaciones con versión obsoleta', async () => {
   const tarifa = await insertTarifa(db, {
     zona_id: zona.id,
     monto_fijo: 20,
+    norma: 'OM 001-2026 (prueba)',
     vigencia_inicio: '2026-01-01',
     vigencia_fin: '2026-12-31',
     version: 1

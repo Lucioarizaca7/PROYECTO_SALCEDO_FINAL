@@ -29,7 +29,7 @@ async function permanenteConPuesto(db, { zonaId, rubro = 'comida', metros = 1 })
 test('el precio es de la zona: igual para todo rubro y tamaño, y el tipo de vía no lo cambia', async () => {
   const db = await initializeDatabase();
   const zona = await insertZona(db, { nombre: `Zona precio ${unico()}`, tipo_via: 'sin_asfaltar' });
-  await insertTarifa(db, { zona_id: zona.id, monto_fijo: 4, vigencia_inicio: '2026-01-01' }, { permitirInicioPasado: true });
+  await insertTarifa(db, { zona_id: zona.id, monto_fijo: 4, norma: 'OM 001-2026 (prueba)', vigencia_inicio: '2026-01-01' }, { permitirInicioPasado: true });
 
   const comida = await permanenteConPuesto(db, { zonaId: zona.id, rubro: 'comida', metros: 2 });
   const ropa = await permanenteConPuesto(db, { zonaId: zona.id, rubro: 'ropa', metros: 12 });
@@ -57,7 +57,7 @@ test('una zona sin precio aparece así en la lista', async () => {
 
 test('una zona nueva puede nacer con su precio por día, que rige desde hoy', async () => {
   const db = await initializeDatabase();
-  const creada = await insertZona(db, { nombre: `Zona con precio ${unico()}`, tipo_via: 'sin_asfaltar', precio_dia: '2' });
+  const creada = await insertZona(db, { nombre: `Zona con precio ${unico()}`, tipo_via: 'sin_asfaltar', precio_dia: '2', norma: 'OM 001-2026 (prueba)' });
   assert.equal(Number(creada.precio_dia), 2);
   const enLista = (await getZonas(db)).find((zona) => Number(zona.id) === Number(creada.id));
   assert.equal(Number(enLista.precio_dia), 2, 'ya no queda "sin precio" hasta ir a Tarifas');

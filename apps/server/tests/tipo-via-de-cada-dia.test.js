@@ -35,7 +35,7 @@ test('subir el precio de la zona no cambia lo que deben (ni lo que pagaron) los 
 
   // Se asfalta el sector, el super_admin sube el precio desde hoy y el comerciante viene hoy.
   await updateZona(pool, zona.id, { tipo_via: 'asfaltada' });
-  await insertTarifa(pool, { zona_id: zona.id, monto_fijo: 3, vigencia_inicio: hoy });
+  await insertTarifa(pool, { zona_id: zona.id, monto_fijo: 3, norma: 'OM 001-2026 (prueba)', vigencia_inicio: hoy });
   await marcarAsistencias(pool, [{ puesto_id: puesto.id, fecha: hoy, asistio: true }], { usuarioId: 1 });
 
   const liquidacion = await calcularLiquidacion(pool, comerciante.id);
@@ -59,7 +59,7 @@ test('después de subir el precio, los días de antes se cobran con ticket S2 y 
   });
   const puesto = await insertPuesto(pool, { zona_id: zona.id, metros_cuadrados: 4, direccion: 'Calle con tickets', comerciante_id: comerciante.id });
   await marcarAsistencias(pool, [{ puesto_id: puesto.id, fecha: primeroDelMes, asistio: true }], { usuarioId: 1 });
-  await insertTarifa(pool, { zona_id: zona.id, monto_fijo: 3, vigencia_inicio: hoy });
+  await insertTarifa(pool, { zona_id: zona.id, monto_fijo: 3, norma: 'OM 001-2026 (prueba)', vigencia_inicio: hoy });
   await marcarAsistencias(pool, [{ puesto_id: puesto.id, fecha: hoy, asistio: true }], { usuarioId: 1 });
 
   const series = await seriesDelComerciante(pool, comerciante, currentPeriod());

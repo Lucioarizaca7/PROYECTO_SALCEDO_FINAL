@@ -229,10 +229,10 @@ Cada etapa se puede aprobar y unir por separado. El orden va de lo más barato y
 
 ### Etapa 4. Simplificar el modelo
 
-- Marcar y cobrar todos los puestos en un paso (RN-22).
-- Puesto sin zona confirmada sin precio (RN-05).
-- Una sola zona de referencia por comerciante (RN-06) y dos tipos de comerciante (RN-07).
-- Norma legal en cada precio (RN-15), talonario perdido (RN-33), zonas por cobrador (RN-64).
+- Marcar y cobrar todos los puestos en un paso (RN-22). **Hecho el 16/11/2026**: el cobrador elige en la pantalla de cobro qué puestos abrieron.
+- Puesto sin zona confirmada sin precio (RN-05). **Hecho el 16/11/2026**: pide la zona del día.
+- Una sola zona de referencia por comerciante (RN-06). **Hecho el 16/11/2026**. Dos tipos de comerciante (RN-07): **no se hace**, se mantienen los tres (decisión del 15/11/2026).
+- Norma legal en cada precio (RN-15), talonario perdido (RN-33), zonas por cobrador (RN-64). **Hecho el 16/11/2026**: norma obligatoria en precios nuevos; las zonas del cobrador solo avisan.
 - Riesgo: medio. Cambia pantallas de cobro y datos del padrón; necesita las decisiones 8, 9 y 10.
 
 ### Qué recomiendo aprobar primero

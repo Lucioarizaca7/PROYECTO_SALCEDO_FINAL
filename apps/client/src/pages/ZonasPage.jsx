@@ -63,6 +63,10 @@ export function ZonasPage() {
             {!zonas.editingZoneId && (
               <input type="number" inputMode="decimal" min="0.01" step="0.01" placeholder="Precio por día (S/)" aria-label="Precio por día en soles" value={zoneForm.precio_dia} onChange={(event) => setZoneForm({ ...zoneForm, precio_dia: event.target.value })} />
             )}
+            {/* RN-15: si la zona nace con precio, el precio lleva su norma. */}
+            {!zonas.editingZoneId && zoneForm.precio_dia !== '' && (
+              <input required minLength={3} maxLength={120} placeholder="Ordenanza o resolución del precio" aria-label="Ordenanza o resolución que respalda el precio" value={zoneForm.norma} onChange={(event) => setZoneForm({ ...zoneForm, norma: event.target.value })} />
+            )}
             <button className="primary-button" type="submit">{zonas.editingZoneId ? 'Actualizar zona' : 'Guardar zona'}</button>
             {zonas.editingZoneId && <button type="button" className="secondary-button" onClick={zonas.cancelZone}>Cancelar</button>}
           </div>

@@ -84,6 +84,23 @@ function AvisoPocosTickets({ tickets }) {
   );
 }
 
+// Puestos del día (RN-22): con varios puestos y sin marca de hoy, el cobrador desmarca los que no abrieron.
+// Cada puesto marcado paga su día; el servidor marca la asistencia de cada uno con el cobro.
+function PuestosDelDia({ pagos }) {
+  return (
+    <fieldset className="zona-del-dia">
+      <legend>Puestos que abrieron hoy</legend>
+      {pagos.puestosDia.map((puesto) => (
+        <label key={puesto.id}>
+          <input type="checkbox" checked={pagos.puestosElegidos.includes(Number(puesto.id))} onChange={() => pagos.alternarPuesto(puesto.id)} />
+          {' '}{puesto.codigo || `Puesto ${puesto.id}`}{puesto.zona ? ` · ${puesto.zona}` : ''}{puesto.zona_por_confirmar ? ' · zona sin confirmar' : ''}
+        </label>
+      ))}
+      <small>Cada puesto marcado paga su día.</small>
+    </fieldset>
+  );
+}
+
 // Zona del día (12/11/2026): si hoy vende en otra zona porque faltaron otros, se cobra con el precio de esa zona.
 // Queda en la auditoría y el administrador la ve en Observaciones.
 function ZonaDelDia({ pagos, merchant }) {
@@ -96,6 +113,7 @@ function ZonaDelDia({ pagos, merchant }) {
         {pagos.zonas.map((zona) => <option key={zona.id} value={zona.id}>{zona.nombre} · {precio(zona)}</option>)}
       </select>
       {pagos.zonaDia && <small>Hoy se cobra con el precio de esa zona. Queda registrado para la oficina.</small>}
+      {pagos.faltaZona && <small role="alert">Este puesto no tiene zona confirmada: elige dónde vende hoy.</small>}
     </label>
   );
 }
@@ -196,6 +214,7 @@ export function PagosPage() {
           <UnpaidMonths balance={balance} onSelect={pagos.elegirPeriodo} />
           <DebtBreakdown balance={balance} />
           <div className="step-label">03 · Confirmar cobro</div>
+          {pagos.puestosDia.length > 0 && <PuestosDelDia pagos={pagos} />}
           {pagos.muestraZonaDia && <ZonaDelDia pagos={pagos} merchant={merchant} />}
           {pagos.usaTickets && <TicketsDelCobro pagos={pagos} />}
           <div className="payment-fields">

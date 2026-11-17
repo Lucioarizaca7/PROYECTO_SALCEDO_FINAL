@@ -70,6 +70,13 @@ export function useAsistenciaFerial({ isOnline, jornadaMeta }) {
   // zonaId: la zona del día (12/11/2026); sin ella se conserva la que ya tenía la marca.
   const marcar = async (puestoId, asistio, observacion, zonaId) => {
     const actual = estadoDelDia(estado, hoyEnLima());
+    // RN-05: el servidor rechazaría la marca; se avisa aquí para que no se pierda una marca hecha sin señal.
+    const ferial = feriales.find((item) => String(item.puestoFerialId) === String(puestoId));
+    const zonaDeLaMarca = zonaId === undefined ? actual.marcas[String(puestoId)]?.zonaId : zonaId;
+    if (asistio && ferial?.zonaPorConfirmar && !zonaDeLaMarca) {
+      setMensaje(`${ferial.nombresRazonSocial}: su puesto no tiene zona confirmada. Elige primero la zona de hoy.`);
+      return;
+    }
     const nota = observacion ?? observacionQueSeConserva(actual.marcas[String(puestoId)], asistio);
     const siguiente = aplicarMarca(actual, puestoId, asistio, new Date(), { ...nota, ...(zonaId === undefined ? {} : { zonaId }) });
     await guardar(siguiente);

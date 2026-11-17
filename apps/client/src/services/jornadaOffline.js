@@ -41,6 +41,12 @@ export function normalizarComerciante(item, descargadoEn = new Date().toISOStrin
     cobroDiario: Boolean(item.cobro_diario),
     dia: item.dia || null,
     puestoFerialId: item.puesto_ferial_id ?? null,
+    // Sus puestos (RN-22: al cobrar se elige cuáles abrieron) y si el principal pide la zona del día (RN-05).
+    puestos: Array.isArray(item.puestos) ? item.puestos.map((puesto) => ({
+      id: Number(puesto.id), codigo: puesto.codigo || null, zona_id: puesto.zona_id ?? null, zona_por_confirmar: Boolean(puesto.zona_por_confirmar)
+    })) : [],
+    zonaPorConfirmar: Array.isArray(item.puestos)
+      && item.puestos.some((puesto) => Number(puesto.id) === Number(item.puesto_ferial_id) && puesto.zona_por_confirmar),
     diasAsistidos: item.dias_asistidos ?? null,
     // Series de ticket preimpreso con que se le cobra (un ticket por puesto y día); vacía = sin ticket.
     // Deuda de meses anteriores (sin esto, sin señal solo se veía y cobraba el mes en curso).
@@ -205,6 +211,8 @@ export function aSaldoDePantalla(registro, periodo = null) {
     cobro_diario: Boolean(registro.cobroDiario),
     dia: registro.dia || null,
     series_cobro: registro.seriesCobro || [],
+    // Sin señal no se sabe si otro celular ya marcó el día: manda la marca de este celular (aplicarMarcaDeHoy).
+    puestos_del_dia: { puestos: registro.puestos || [], marcado_hoy: false },
     offline: true,
     actualizado_en: registro.actualizadoEn
   };

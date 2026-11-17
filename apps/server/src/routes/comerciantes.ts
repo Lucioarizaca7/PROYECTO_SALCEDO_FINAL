@@ -204,7 +204,7 @@ router.put('/api/v1/comerciantes/:id',
     serializeResponse: (body) => body?.data ?? body
   }),
   async (req, res) => {
-    const comerciante = await updateComerciante(db, req.params.id, req.body || {});
+    const comerciante = await updateComerciante(db, req.params.id, req.body || {}, { zonaDelPuesto: true });
     return res.json({ data: comerciante, message: 'Comerciante actualizado correctamente' });
   }
 );

@@ -3,7 +3,7 @@ import { useSisrec } from '../app/SisrecContext';
 import { apiBase, authFetch, leerJson } from '../services/session';
 
 // precio_dia solo se envía al crear: el precio de una zona que ya existe se cambia en Tarifas.
-const EMPTY_ZONE = { nombre: '', descripcion: '', tipo_via: '', precio_dia: '' };
+const EMPTY_ZONE = { nombre: '', descripcion: '', tipo_via: '', precio_dia: '', norma: '' };
 
 // Página Zonas: lista propia (GET /zonas) y su CRUD. No hay calles (decisión del 14/11/2026).
 export function useZonas() {
@@ -58,7 +58,7 @@ export function useZonas() {
 
   const editZone = (zona) => {
     setEditingZoneId(zona.id);
-    setZoneForm({ nombre: zona.nombre, descripcion: zona.descripcion || '', tipo_via: zona.tipo_via || '', precio_dia: '' });
+    setZoneForm({ nombre: zona.nombre, descripcion: zona.descripcion || '', tipo_via: zona.tipo_via || '', precio_dia: '', norma: '' });
   };
   const cancelZone = () => {
     setEditingZoneId(null);
