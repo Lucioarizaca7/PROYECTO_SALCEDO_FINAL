@@ -11,6 +11,7 @@ const trazos = {
   reportes: <><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z" /><path d="M14 3v6h6M8 13h8M8 17h5" /></>,
   auditoria: <path d="M12 3 4 6v6c0 5 3.5 8 8 9 4.5-1 8-4 8-9V6z" />,
   revision: <><circle cx="11" cy="11" r="7" /><path d="m20 20-4-4" /></>,
+  deuda: <><path d="M12 3 2.5 20h19z" /><path d="M12 10v4M12 17h.01" /></>,
   usuarios: <><circle cx="12" cy="8" r="4" /><path d="M4 21a8 8 0 0 1 16 0" /></>,
   'mi-clave': <><circle cx="8" cy="15" r="4" /><path d="m10.85 12.15 7.65-7.65M15 8l3 3M18 5l2 2" /></>,
   dispositivos: <><rect x="7" y="2.5" width="10" height="19" rx="2" /><path d="M11 18h2" /></>,

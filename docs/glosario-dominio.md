@@ -50,6 +50,10 @@ Los términos que usa la Municipalidad de Salcedo son los mismos en la base de d
 | **Cierre de caja** | Lo que el cobrador entrega al final del día frente a lo que registró | `cierres_caja` | `/api/v1/caja` | `cerrarCaja`, `resumenCaja` | Cierre de caja |
 | **Entrega de caja** | Registro de que el super administrador recibió el efectivo de un cierre; la complementaria es por los cobros que entraron después del cierre | `entregas_caja` | `/api/v1/caja/cierres/:id/entrega` | `registrarEntregaCaja` | Cierre de caja |
 | **Rectificación de cierre** | Corrección de lo declarado en un cierre, con motivo; el cierre original se conserva | `cierres_caja_rectificaciones` | `/api/v1/caja/cierres/:id/rectificacion` | `rectificarCierreCaja` | Cierre de caja |
+| **Solicitud de anulación** | Anulación de un cobro de otro día o de una caja ya cerrada, que espera la aprobación del otro super administrador | `anulaciones_solicitadas` | `/api/v1/cobros/anulaciones` | `anularCobro`, `resolverAnulacion` | Deuda y reclamos |
+| **Aviso de deuda** | Aviso formal a quien debe un día cobrado desde hace 30 días o más | `avisos_deuda` | `/api/v1/deuda/avisos` | `getAvisosDeuda`, `emitirAvisoDeuda` | Deuda y reclamos |
+| **Baja de deuda** | Deuda de meses pasados que deja de cobrarse por una resolución; los días cobrados se conservan | `deuda_bajas` | `/api/v1/deuda/bajas` | `darDeBajaDeuda` | Deuda y reclamos |
+| **Reclamo** | Reclamo del comerciante sobre un día marcado («no asistí», «ya pagué»), hasta 7 días después | `reclamos_dia` | `/api/v1/reclamos` | `registrarReclamo`, `resolverReclamo` | Deuda y reclamos |
 | **Tiempo de atención** | Segundos entre abrir al comerciante y registrar el cobro | `transacciones.inicio_atencion` | `/api/v1/cobros/tiempos` | `getTiemposCobro` | Analítica |
 | **Verificación de recibo** | QR del recibo que comprueba que es auténtico | — (firma HMAC) | `/api/v1/publico/verificar/:token` | `verificarRecibo` | `/verificar/:token` |
 | **Cobrador** | Usuario que cobra en campo | `usuarios` con rol `cobrador` | — | `requireRoles(['cobrador'])` | — |

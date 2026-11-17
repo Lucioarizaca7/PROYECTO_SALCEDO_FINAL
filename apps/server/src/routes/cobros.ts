@@ -1,6 +1,6 @@
 // Cobros, sincronización offline, revisión de observados, jornada y comprobantes.
 import express from 'express';
-import { currentPeriod, textoTicket, getCobros, registrarCobro, syncOfflineCobro, syncOfflineBatch, getCobrosObservados, resolveCobroObservado, getSyncErrors, getJornadaPackage, anularCobro, getTiemposCobro, ticketsDelCobrador, fechaCobroEnLinea } from '../db.js';
+import { currentPeriod, textoTicket, getCobros, registrarCobro, syncOfflineCobro, syncOfflineBatch, getCobrosObservados, resolveCobroObservado, getSyncErrors, getJornadaPackage, anularCobro, getAnulacionesSolicitadas, resolverAnulacion, getTiemposCobro, ticketsDelCobrador, fechaCobroEnLinea } from '../db.js';
 import { requireAuth, requireRoles } from '../auth.js';
 import { handleValidationErrors, validateCobro } from '../validation.js';
 import { staffOnly, auditContext } from '../http/comunes.js';
@@ -134,13 +134,33 @@ router.post('/api/v1/cobros/observados/:id/resolver', requireAuth, requireRoles(
   return res.json({ data, message: data.estado === 'anulado' ? 'Cobro anulado; registre la devolución al comerciante' : 'Cobro aceptado' });
 });
 
+// Anulaciones que esperan la aprobación del otro super_admin (RN-38), o las ya resueltas (?estado=).
+router.get('/api/v1/cobros/anulaciones', requireAuth, requireRoles(['super_admin', 'auditor']), async (req, res) => {
+  const data = await getAnulacionesSolicitadas(db, { estado: String(req.query.estado || 'pendiente') });
+  return res.json({ data, total: data.length });
+});
+
+router.post('/api/v1/cobros/anulaciones/:id/resolver', requireAuth, requireRoles(['super_admin']), async (req, res) => {
+  const data = await resolverAnulacion(db, Number(req.params.id), {
+    decision: String(req.body?.decision || ''),
+    resolucion: req.body?.resolucion,
+    usuarioId: req.user.id,
+    audit: auditContext(req, 'RESOLVER_ANULACION')
+  });
+  return res.json({ data, message: data.estado === 'aprobada' ? 'Anulación aprobada: el cobro quedó anulado; registre la devolución si corresponde' : 'Anulación rechazada: el cobro sigue válido' });
+});
+
 // Anulación: solo el administrador, con motivo. El cobro no se borra; deja de contar en lo pagado.
+// Un cobro de otro día o de una caja ya cerrada queda pedido (202) hasta que lo apruebe el otro super_admin.
 router.post('/api/v1/cobros/:id/anular', requireAuth, requireRoles(['super_admin']), async (req, res) => {
   const data = await anularCobro(db, Number(req.params.id), {
     motivo: req.body?.motivo,
     usuarioId: req.user.id,
     audit: auditContext(req, 'ANULAR_COBRO')
   });
+  if (data.pendiente_aprobacion) {
+    return res.status(202).json({ data, message: `La anulación quedó pedida porque ${data.porque}: debe aprobarla el otro super administrador` });
+  }
   return res.json({ data, message: 'Cobro anulado; registre la devolución al comerciante si corresponde' });
 });
 

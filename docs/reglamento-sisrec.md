@@ -46,6 +46,7 @@ Versión del 14/11/2026. Este documento resume, sin términos técnicos, las reg
 | RN-24 | El cobrador marca hasta 3 días atrás. Más atrás, solo el super administrador. | Sistema | El servidor lo rechaza. Auditoría. |
 | RN-25 | «No salió» no genera deuda. «No vendió» y «se negó a pagar» sí la generan. | Cobrador | Motivo obligatorio y coherente con la marca. |
 | RN-26 | Antes de cerrar su caja, el cobrador ve los puestos que quedaron sin marcar en las zonas donde ese día ya marcó a otros, y los marca. | Cobrador | Lista «sin marcar hoy» en Cierre de caja. Avisa, no bloquea. |
+| RN-27 | El comerciante puede reclamar un día marcado hasta 7 días después. Lo registra y lo resuelve el super administrador. Si procede un «no asistió», ese día deja de deberse. | Super administrador | Registro de reclamos en «Deuda y reclamos». Auditoría. |
 
 ## Cobro y comprobantes
 
@@ -57,6 +58,7 @@ Versión del 14/11/2026. Este documento resume, sin términos técnicos, las reg
 | RN-34 | Yape, Plin y POS exigen número de operación, único por método. | Cobrador | El sistema rechaza un número repetido. |
 | RN-36 | Sin señal, el cobro se guarda en el celular y se envía después. Un conflicto queda observado, nunca se descarta. | Sistema | Revisión de cobros. |
 | RN-37 | Un cobro no se borra: lo anula el super administrador con un motivo. | Super administrador | Auditoría. |
+| RN-38 | Un super administrador anula solo un cobro de hoy cuya caja sigue abierta. Si el cobro es de otro día, o esa caja ya se cerró, uno pide la anulación y el otro super administrador la aprueba o la rechaza. | Super administrador titular y suplente | El sistema deja la anulación pendiente; nadie aprueba la que él mismo pidió. Auditoría. |
 
 ## Caja
 
@@ -75,6 +77,8 @@ Versión del 14/11/2026. Este documento resume, sin términos técnicos, las reg
 | RN-50 | La deuda es la suma de los días cobrados sin pagar, desde el inicio de cobro. | Sistema | Una sola fórmula para todo el sistema. |
 | RN-51 | Un pago cancela primero el mes más antiguo. | Sistema | Automático. |
 | RN-52 | El eventual no acumula deuda. | Sistema | Automático. |
+| RN-53 | Quien debe un día cobrado desde hace 30 días o más recibe un aviso formal de deuda. La suspensión del puesto la decide la municipalidad, no el sistema. | Super administrador | Lista «avisos por emitir» y registro de cada aviso. |
+| RN-54 | La deuda de meses pasados se da de baja solo con resolución, registrando su número. No hay fraccionamiento. Los días cobrados no se borran. | Super administrador | Registro de bajas con número de resolución. Auditoría. |
 
 ## Control y auditoría
 

@@ -83,7 +83,8 @@ test('el personal baja el recibo en PDF y el QR verifica número, monto y estado
   assert.equal((await api(`/publico/verificar/${encodeURIComponent(alterado)}`)).status, 404);
   assert.equal((await api(`/publico/verificar/${encodeURIComponent(tokenVerificacion(cobro.comprobante, 999))}`)).status, 404, 'otro monto no verifica');
 
-  await anularCobro(pool, cobro.id, { motivo: 'Prueba de recibo anulado', usuarioId: 1 });
+  // Cobro de un día pasado: su anulación pide segunda aprobación (RN-38); aquí va ya aprobada, se prueba el recibo.
+  await anularCobro(pool, cobro.id, { motivo: 'Prueba de recibo anulado', usuarioId: 1, aprobada: true });
   assert.equal((await api(`/publico/verificar/${encodeURIComponent(token)}`)).body.data.estado, 'anulado');
 });
 
@@ -163,6 +164,7 @@ test('el cobrador trae su recibo oficial para reenviarlo; el de otro cobrador no
     assert.equal((await api(`/comprobantes/${cobro.comprobante}/${ruta}`, { token: admin })).status, 200);
   }
 
-  await anularCobro(pool, cobro.id, { motivo: 'Prueba de recibo anulado', usuarioId: 1 });
+  // Cobro de un día pasado: su anulación pide segunda aprobación (RN-38); aquí va ya aprobada, se prueba el recibo.
+  await anularCobro(pool, cobro.id, { motivo: 'Prueba de recibo anulado', usuarioId: 1, aprobada: true });
   assert.equal((await api(`/comprobantes/${cobro.comprobante}/recibo`, { token: dueno })).body.data.estado, 'anulado');
 });
