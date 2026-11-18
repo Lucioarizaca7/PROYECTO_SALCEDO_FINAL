@@ -8,7 +8,7 @@ import { canSee, HOME_PATH, navItemByPath, navItems, navItemsFor, pathOf } from 
 import { buildExpressSuggestion } from '../src/features/payments/sugerenciaExpress.js';
 
 test('cada página tiene una ruta propia y el panel la ven todos', () => {
-  const paths = navItems.map((item) => item.path);
+  const paths = navItems.flatMap((item) => [item.path, ...(item.aliases ?? [])]);
   assert.equal(new Set(paths).size, paths.length);
   assert.equal(pathOf('dashboard'), HOME_PATH);
   assert.equal(navItemByPath('/pagos').key, 'pagos');
@@ -19,11 +19,11 @@ test('el menú de cada rol solo muestra lo que su rol puede usar', () => {
   const keys = (rol) => navItemsFor(rol).map((item) => item.key);
   assert.ok(keys('cobrador').includes('pagos'));
   assert.ok(keys('cobrador').includes('mapa'));
-  assert.ok(!keys('cobrador').includes('tarifas'));
+  assert.ok(!keys('cobrador').includes('zonas'));
   assert.ok(!keys('auditor').includes('pagos'));
   assert.ok(keys('auditor').includes('revision'));
-  // El auditor consulta las tarifas (solo lectura), pero no las de configuración del personal.
-  assert.ok(keys('auditor').includes('tarifas'));
+  // El auditor consulta zonas y tarifas (solo lectura).
+  assert.ok(keys('auditor').includes('zonas'));
   assert.ok(!keys('auditor').includes('dispositivos'));
   // Solo el super_admin crea usuarios, los desactiva o les pone clave (decisión del 13/11/2026).
   assert.ok(keys('super_admin').includes('usuarios'));
@@ -36,6 +36,20 @@ test('el menú de cada rol solo muestra lo que su rol puede usar', () => {
   // El servidor responde 403 al cobrador en /auditoria: el menú no debe ofrecerla.
   assert.ok(!keys('cobrador').includes('auditoria'));
   assert.ok(keys('auditor').includes('auditoria'));
+});
+
+test('Zonas y tarifas aparece una vez y conserva los permisos del enlace anterior', () => {
+  const zona = navItemByPath('/zonas');
+  const enlaceAnterior = navItemByPath('/tarifas');
+  assert.equal(enlaceAnterior, zona);
+  assert.equal(enlaceAnterior.path, '/zonas');
+  assert.equal(zona.label, 'Zonas y tarifas');
+  assert.equal(navItems.some((item) => item.path === '/tarifas' || item.key === 'tarifas'), false);
+  for (const rol of ['super_admin', 'auditor']) {
+    assert.equal(canSee(enlaceAnterior, rol), true);
+    assert.equal(navItemsFor(rol).filter((item) => item === zona).length, 1);
+  }
+  assert.equal(canSee(enlaceAnterior, 'cobrador'), false);
 });
 
 test('sin historial, la sugerencia express es el saldo del mes en efectivo', () => {
