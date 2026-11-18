@@ -1,103 +1,311 @@
+import { useEffect, useRef, useState } from 'react';
 import { useSisrec } from '../app/SisrecContext';
-import { precioSugerido } from '../hooks/useTarifas';
+import { precioSugerido, useTarifas } from '../hooks/useTarifas';
 import { useZonas } from '../hooks/useZonas';
+import { formatPEN } from '../lib/formato';
+import { estadoDeTarifa } from '../lib/tarifasPorZona';
+import { hoyEnLima } from '../services/jornadaOffline';
+import './ZonasPage.css';
 
-const TIPO_VIA_TEXTO = { asfaltada: 'Asfaltada', sin_asfaltar: 'Sin asfaltar' };
+const TIPOS_VIA = { asfaltada: 'Asfaltada', sin_asfaltar: 'Sin asfaltar' };
+const TONOS = { Vigente: 'paid', Programada: 'pending', Finalizada: 'neutral', Inactiva: 'neutral' };
 
-// Zonas: una zona es un área con un solo precio por día, que fija el super_admin en Tarifas (14/11/2026).
-// No hay calles: el comerciante se mueve dentro de la feria y lo que cambia el cobro es la zona del día.
-export function ZonasPage() {
-  const { user } = useSisrec();
-  // El auditor solo consulta las zonas (decisión del 04/11/2026); el servidor vuelve a comprobarlo.
-  const puedeEditar = user?.rol === 'super_admin';
-  const zonas = useZonas();
-  const { zoneForm, setZoneForm } = zonas;
-  // Al crear, elegir el tipo de vía sugiere el precio (S/ 3 asfaltada, S/ 2 sin asfaltar) si aún no se escribió
-  // otro: solo sugiere, el super_admin puede cambiarlo antes de guardar.
+function Aviso({ message, success }) {
+  return message ? <p className={success ? 'form-message' : 'form-error'} role={success ? 'status' : 'alert'}>{message}</p> : null;
+}
+
+function FormularioZona({ zonas, zonaEditada, tituloRef, onSave, onCancel, onDelete }) {
+  const { zoneForm: form, setZoneForm: setForm, saving } = zonas;
+  const setField = (field, value) => setForm((current) => ({ ...current, [field]: value }));
   const alElegirVia = (tipoVia) => {
-    const sugeridoAntes = precioSugerido({ tipo_via: zoneForm.tipo_via });
-    const seguirSugerencia = !zonas.editingZoneId && (zoneForm.precio_dia === '' || zoneForm.precio_dia === sugeridoAntes);
-    setZoneForm({ ...zoneForm, tipo_via: tipoVia, ...(seguirSugerencia ? { precio_dia: precioSugerido({ tipo_via: tipoVia }) } : {}) });
+    const sugeridoAntes = precioSugerido({ tipo_via: form.tipo_via });
+    const seguirSugerencia = !zonaEditada && (form.precio_dia === '' || form.precio_dia === sugeridoAntes);
+    setForm({ ...form, tipo_via: tipoVia, ...(seguirSugerencia ? { precio_dia: precioSugerido({ tipo_via: tipoVia }) } : {}) });
   };
 
   return (
-    <section className="page">
-      <div className="page-heading">
+    <form className="panel merchant-form" aria-labelledby="zona-form-titulo" onSubmit={onSave}>
+      <div className="panel-heading">
         <div>
-          <div className="eyebrow">CONFIGURACIÓN / ZONAS</div>
-          <h1>Zonas</h1>
-          <p>Una zona es un área donde todos pagan el mismo precio por día.</p>
+          <h2 className="panel-title" id="zona-form-titulo" ref={tituloRef} tabIndex={-1}>{zonaEditada ? `Editar zona · ${zonaEditada.nombre}` : 'Nueva zona'}</h2>
+          {!zonaEditada && <p className="panel-subtitle">Si registras un precio inicial, se aplica desde hoy.</p>}
         </div>
       </div>
-
-      <div className="panel zonas-ayuda">
-        <strong>Cómo armar las zonas</strong>
-        <ul>
-          <li>Si una feria tiene una parte asfaltada y otra sin asfaltar, regístrela como <b>dos zonas</b>: por ejemplo «Feria sábado – asfaltada» y «Feria sábado – sin asfaltar».</li>
-          <li>Si un comerciante se cambia de sitio dentro de la misma zona, no hay que registrar nada: paga lo mismo.</li>
-          <li>Si un día vende en otra zona, el cobrador elige esa zona al cobrar («Zona de hoy») y ese día paga el precio de esa zona.</li>
-          <li>Al crear la zona se le pone su precio por día: al elegir el tipo de vía se sugiere S/ 3 (asfaltada) o S/ 2 (sin asfaltar). Para cambiarlo después, vaya a <b>Tarifas</b>.</li>
-        </ul>
-      </div>
-
-      {zonas.message && <div className="form-message">{zonas.message}</div>}
-
-      <div className="panel detail-card">
-        <div className="panel-heading">
-          <div>
-            <div className="panel-title">{puedeEditar ? 'Crear o editar zona' : 'Zonas'}</div>
-            <div className="panel-subtitle">Cada zona tiene un solo tipo de vía y un solo precio por día.</div>
-          </div>
-        </div>
-
-        {puedeEditar && (
-        <form className="merchant-form" onSubmit={zonas.submitZone}>
-          <div className="merchant-form-grid">
-            <input required placeholder="Nombre de la zona" aria-label="Nombre de la zona" value={zoneForm.nombre} onChange={(event) => setZoneForm({ ...zoneForm, nombre: event.target.value })} />
-            <input placeholder="Descripción" aria-label="Descripción" value={zoneForm.descripcion} onChange={(event) => setZoneForm({ ...zoneForm, descripcion: event.target.value })} />
-            <select aria-label="Tipo de vía" value={zoneForm.tipo_via} onChange={(event) => alElegirVia(event.target.value)}>
-              <option value="">Tipo de vía: sin dato</option>
-              <option value="asfaltada">Vía asfaltada</option>
-              <option value="sin_asfaltar">Vía sin asfaltar</option>
-            </select>
-            {!zonas.editingZoneId && (
-              <input type="number" inputMode="decimal" min="0.01" step="0.01" placeholder="Precio por día (S/)" aria-label="Precio por día en soles" value={zoneForm.precio_dia} onChange={(event) => setZoneForm({ ...zoneForm, precio_dia: event.target.value })} />
-            )}
-            {/* RN-15: si la zona nace con precio, el precio lleva su norma. */}
-            {!zonas.editingZoneId && zoneForm.precio_dia !== '' && (
-              <input required minLength={3} maxLength={120} placeholder="Ordenanza o resolución del precio" aria-label="Ordenanza o resolución que respalda el precio" value={zoneForm.norma} onChange={(event) => setZoneForm({ ...zoneForm, norma: event.target.value })} />
-            )}
-            <button className="primary-button" type="submit">{zonas.editingZoneId ? 'Actualizar zona' : 'Guardar zona'}</button>
-            {zonas.editingZoneId && <button type="button" className="secondary-button" onClick={zonas.cancelZone}>Cancelar</button>}
-          </div>
-        </form>
+      <fieldset className="merchant-form-grid" disabled={saving}>
+        <label>Nombre de la zona
+          <input required value={form.nombre} onChange={(event) => setField('nombre', event.target.value)} />
+        </label>
+        <label>Descripción
+          <input value={form.descripcion} onChange={(event) => setField('descripcion', event.target.value)} />
+        </label>
+        <label>Tipo de vía
+          <select value={form.tipo_via} onChange={(event) => alElegirVia(event.target.value)}>
+            <option value="">Sin dato</option>
+            <option value="asfaltada">Asfaltada</option>
+            <option value="sin_asfaltar">Sin asfaltar</option>
+          </select>
+        </label>
+        {!zonaEditada && (
+          <label>Precio inicial por día (S/) · opcional
+            <input type="number" inputMode="decimal" min="0.01" step="0.01" value={form.precio_dia} onChange={(event) => setField('precio_dia', event.target.value)} />
+          </label>
         )}
+        {!zonaEditada && form.precio_dia !== '' && (
+          <label>Ordenanza o resolución
+            <input required minLength={3} maxLength={120} value={form.norma} onChange={(event) => setField('norma', event.target.value)} />
+          </label>
+        )}
+      </fieldset>
+      <div className="zonas-acciones">
+        <button className="primary-button" type="submit" disabled={saving}>{saving ? 'Guardando…' : 'Guardar zona'}</button>
+        <button className="secondary-button" type="button" onClick={onCancel} disabled={saving}>Cancelar</button>
+        {zonaEditada && <button className="table-action peligro" type="button" onClick={onDelete} disabled={saving}>Eliminar zona</button>}
+      </div>
+    </form>
+  );
+}
 
-        <div className="table-card" style={{ marginTop: '16px' }}>
+function FormularioPrecio({ tarifas, zona, hoy, tituloRef, onSave, onCancel }) {
+  const { form, setForm, saving } = tarifas;
+  const setField = (field, value) => setForm((current) => ({ ...current, [field]: value }));
+  const accion = tarifas.editingId ? 'Editar precio' : zona?.precio_dia == null ? 'Poner precio' : 'Cambiar precio';
+
+  return (
+    <form className="panel merchant-form" aria-labelledby="precio-form-titulo" onSubmit={onSave}>
+      <div className="panel-heading">
+        <div>
+          <h2 className="panel-title" id="precio-form-titulo" ref={tituloRef} tabIndex={-1}>{accion} · {zona?.nombre}</h2>
+          <p className="panel-subtitle">
+            {tarifas.yaFinalizo ? 'Puedes actualizar la norma de este precio.' : tarifas.yaRige
+              ? 'Puedes actualizar la norma o indicar cuándo termina. Para cambiar el monto, registra un precio nuevo.'
+              : 'El precio se aplica desde la fecha elegida. Si reemplaza al anterior, ese precio termina el día previo.'}
+          </p>
+        </div>
+      </div>
+      <fieldset className="merchant-form-grid" disabled={saving}>
+        <label>Precio por día (S/)
+          <input disabled={tarifas.yaRige} required min="0.01" step="0.01" type="number" inputMode="decimal" value={form.monto_fijo} onChange={(event) => setField('monto_fijo', event.target.value)} />
+        </label>
+        <label>Vigente desde
+          <input disabled={tarifas.yaRige} required type="date" min={hoy} value={form.vigencia_inicio} onChange={(event) => setField('vigencia_inicio', event.target.value)} />
+        </label>
+        <label>Ordenanza o resolución
+          <input required={tarifas.normaRequerida} minLength={3} maxLength={120} value={form.norma} onChange={(event) => setField('norma', event.target.value)} />
+        </label>
+        {tarifas.editingId && (
+          <label>Vigente hasta · opcional
+            <input type="date" disabled={tarifas.yaFinalizo} min={tarifas.yaRige ? hoy : form.vigencia_inicio} value={form.vigencia_fin} onChange={(event) => setField('vigencia_fin', event.target.value)} />
+          </label>
+        )}
+      </fieldset>
+      <div className="zonas-acciones">
+        <button className="primary-button" type="submit" disabled={saving}>{saving ? 'Guardando…' : 'Guardar precio'}</button>
+        <button className="secondary-button" type="button" onClick={onCancel} disabled={saving}>Cancelar</button>
+      </div>
+    </form>
+  );
+}
+
+function HistorialPrecios({ records, zona, hoy, tituloRef, puedeEditar, busy, onEdit, onClose }) {
+  return (
+    <section className="table-card" id="historial-precios" aria-labelledby="historial-precios-titulo">
+      <div className="panel-heading zonas-encabezado">
+        <h2 className="panel-title" id="historial-precios-titulo" ref={tituloRef} tabIndex={-1}>{zona ? `Historial de precios · ${zona.nombre}` : 'Historial general de precios'}</h2>
+        <button className="secondary-button compact" type="button" onClick={onClose}>Cerrar historial</button>
+      </div>
+      {records.length ? (
+        <div className="zonas-tabla-scroll" role="region" aria-label="Tabla del historial" tabIndex={0}>
+          <table>
+            <thead><tr>{!zona && <th scope="col">Zona</th>}<th scope="col">Precio por día</th><th scope="col">Vigencia</th><th scope="col">Norma</th><th scope="col">Estado</th>{puedeEditar && <th scope="col">Acción</th>}</tr></thead>
+            <tbody>
+              {records.map((item) => {
+                const estado = estadoDeTarifa(item, hoy);
+                return (
+                  <tr key={item.id}>
+                    {!zona && <th scope="row">{item.zona || `Zona ${item.zona_id}`}</th>}
+                    <td>{formatPEN(item.monto_fijo)}</td>
+                    <td>{item.vigencia_inicio}{item.vigencia_fin ? ` a ${item.vigencia_fin}` : ' en adelante'}</td>
+                    <td>{item.norma || 'Sin norma'}</td>
+                    <td><span className={`status ${TONOS[estado]}`}>{estado}</span></td>
+                    {puedeEditar && <td>{item.estado ? <button className="table-action" type="button" disabled={busy} aria-label={`Editar precio de ${item.zona || zona?.nombre}, vigente desde ${item.vigencia_inicio}`} onClick={(event) => onEdit(item, event.currentTarget)}>Editar precio</button> : null}</td>}
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      ) : <p className="zonas-vacio">Todavía no hay precios registrados.</p>}
+    </section>
+  );
+}
+
+export function ZonasPage() {
+  const { tariffRecords, loading, apiConnected } = useSisrec();
+  const zonas = useZonas();
+  const tarifas = useTarifas();
+  const [showZoneForm, setShowZoneForm] = useState(false);
+  const [historial, setHistorial] = useState(null);
+  const editorTitle = useRef(null);
+  const historialTitle = useRef(null);
+  const editorTrigger = useRef(null);
+  const historialTrigger = useRef(null);
+  const newZoneButton = useRef(null);
+  const hoy = hoyEnLima();
+  const zoneRecords = zonas.zoneRecords;
+  const findZona = (id) => zoneRecords.find((zona) => String(zona.id) === String(id));
+  const zonaEditada = zonas.editingZoneId ? findZona(zonas.editingZoneId) : null;
+  const zonaDelPrecio = findZona(tarifas.form.zona_id);
+  const zonaDelHistorial = historial === 'todas' ? null : findZona(historial);
+  const busy = zonas.saving || tarifas.saving;
+  const sinPrecio = zoneRecords.filter((zona) => zona.precio_dia == null).length;
+
+  useEffect(() => {
+    if (showZoneForm || tarifas.showForm) editorTitle.current?.focus();
+  }, [showZoneForm, tarifas.showForm, zonas.editingZoneId, tarifas.editingId, tarifas.form.zona_id]);
+
+  useEffect(() => {
+    if (historial !== null) historialTitle.current?.focus();
+  }, [historial]);
+
+  const openZoneForm = (zona, trigger) => {
+    editorTrigger.current = trigger;
+    tarifas.cerrarFormulario();
+    if (zona) zonas.editZone(zona);
+    else zonas.cancelZone();
+    setShowZoneForm(true);
+  };
+
+  const openPriceForm = (opener, item, trigger) => {
+    editorTrigger.current = trigger;
+    setShowZoneForm(false);
+    opener(item);
+  };
+
+  const returnEditorFocus = () => {
+    const trigger = editorTrigger.current;
+    requestAnimationFrame(() => (trigger?.isConnected ? trigger : newZoneButton.current)?.focus());
+  };
+
+  const closeZoneForm = () => {
+    setShowZoneForm(false);
+    zonas.cancelZone();
+    returnEditorFocus();
+  };
+
+  const closePriceForm = () => {
+    tarifas.cerrarFormulario();
+    returnEditorFocus();
+  };
+
+  const openHistory = (id, trigger) => {
+    historialTrigger.current = trigger;
+    if (id === historial) historialTitle.current?.focus();
+    else setHistorial(id);
+  };
+
+  const closeHistory = () => {
+    setHistorial(null);
+    historialTrigger.current?.focus();
+  };
+
+  return (
+    <section className="page zonas-tarifas">
+      <div className="page-heading zonas-encabezado">
+        <div>
+          <div className="eyebrow">CONFIGURACIÓN</div>
+          <h1>Zonas y tarifas</h1>
+          <p>Cada puesto paga el precio vigente de la zona donde vende ese día.</p>
+        </div>
+        <div className="zonas-acciones">
+          <button className="secondary-button" type="button" onClick={(event) => openHistory('todas', event.currentTarget)} aria-expanded={historial === 'todas'}>Historial general</button>
+          {tarifas.puedeEditar && <button className="primary-button" type="button" ref={newZoneButton} disabled={busy} onClick={(event) => openZoneForm(null, event.currentTarget)}>Nueva zona</button>}
+        </div>
+      </div>
+
+      <Aviso message={zonas.message} success={zonas.success} />
+      <Aviso message={tarifas.message} success={tarifas.success} />
+
+      {showZoneForm && tarifas.puedeEditar && (
+        <FormularioZona zonas={zonas} zonaEditada={zonaEditada} tituloRef={editorTitle} onCancel={closeZoneForm}
+          onSave={async (event) => { if (await zonas.submitZone(event)) closeZoneForm(); }}
+          onDelete={async () => {
+            if (!window.confirm(`¿Eliminar la zona «${zonaEditada.nombre}»?`)) return;
+            if (await zonas.deleteZone(zonaEditada.id)) {
+              if (historial === String(zonaEditada.id)) setHistorial(null);
+              closeZoneForm();
+            }
+          }} />
+      )}
+      {tarifas.showForm && tarifas.puedeEditar && (
+        <FormularioPrecio tarifas={tarifas} zona={zonaDelPrecio} hoy={hoy} tituloRef={editorTitle} onCancel={closePriceForm}
+          onSave={async (event) => { if (await tarifas.submit(event)) returnEditorFocus(); }} />
+      )}
+
+      {sinPrecio > 0 && (
+        <p className="zonas-sin-precio" role="status">
+          {sinPrecio === 1 ? 'Una zona está sin precio vigente.' : `${sinPrecio} zonas están sin precio vigente.`} Sus días cobrados requieren un precio aplicable para liquidarse.
+        </p>
+      )}
+      <div className="table-card">
+        <div className="zonas-tabla-scroll" role="region" aria-label="Tabla de zonas y tarifas" tabIndex={0}>
           <table>
             <thead>
-              <tr><th>Zona</th><th>Descripción</th><th>Tipo de vía</th><th>Precio por día</th><th>Puestos</th>{puedeEditar && <th>Acciones</th>}</tr>
+              <tr><th scope="col">Zona</th><th scope="col">Tipo de vía</th><th scope="col">Puestos asociados</th><th scope="col">Precio diario vigente</th><th scope="col">Desde</th><th scope="col">Acciones</th></tr>
             </thead>
             <tbody>
-              {zonas.zoneRecords.map((zona) => (
-                <tr key={zona.id}>
-                  <td>{zona.nombre}</td>
-                  <td>{zona.descripcion || 'Sin descripción'}</td>
-                  <td>{TIPO_VIA_TEXTO[zona.tipo_via] || 'Sin dato'}</td>
-                  <td>{zona.precio_dia == null ? <span className="status pending">Sin precio</span> : `S/ ${Number(zona.precio_dia).toFixed(2)}`}</td>
-                  <td>{Number(zona.total_puestos || 0)}</td>
-                  {puedeEditar && (
+              {zoneRecords.map((zona) => {
+                const accionPrecio = zona.precio_dia == null ? 'Poner precio' : 'Cambiar precio';
+                return (
+                  <tr key={zona.id}>
+                    <th scope="row">{zona.nombre}{zona.descripcion && <small className="zonas-descripcion">{zona.descripcion}</small>}</th>
+                    <td>{TIPOS_VIA[zona.tipo_via] || 'Sin dato'}</td>
+                    <td>{Number(zona.total_puestos || 0)}</td>
+                    <td>{zona.precio_dia == null ? <span className="status pending">Sin precio vigente</span> : formatPEN(zona.precio_dia)}</td>
+                    <td>{zona.precio_desde ? <time dateTime={zona.precio_desde}>{zona.precio_desde}</time> : '—'}</td>
                     <td>
-                      <button className="table-action" type="button" onClick={() => zonas.editZone(zona)}>Editar</button>
-                      <button className="table-action peligro" type="button" onClick={() => zonas.deleteZone(zona.id)}>Eliminar</button>
+                      <div className="zonas-acciones zonas-acciones-tabla">
+                        {tarifas.puedeEditar && <>
+                          <button className="table-action" type="button" disabled={busy} aria-label={`Editar zona ${zona.nombre}`} onClick={(event) => openZoneForm(zona, event.currentTarget)}>Editar zona</button>
+                          <button className="table-action" type="button" disabled={busy} aria-label={`${accionPrecio} de ${zona.nombre}`} onClick={(event) => openPriceForm(tarifas.cambiarPrecio, zona, event.currentTarget)}>{accionPrecio}</button>
+                        </>}
+                        <button className="table-action" type="button" aria-label={`Ver historial de ${zona.nombre}`} aria-expanded={historial === String(zona.id)} onClick={(event) => openHistory(String(zona.id), event.currentTarget)}>Ver historial</button>
+                      </div>
                     </td>
-                  )}
-                </tr>
-              ))}
+                  </tr>
+                );
+              })}
+              {!zoneRecords.length && (
+                <tr><td colSpan={6}>{loading ? 'Cargando zonas…' : apiConnected ? 'Todavía no hay zonas registradas.' : 'No se pudieron cargar las zonas.'}</td></tr>
+              )}
             </tbody>
           </table>
         </div>
       </div>
+
+      {historial !== null && (
+        <HistorialPrecios
+          records={tariffRecords.filter((item) => item.unidad_medida === 'dia' && (historial === 'todas' || String(item.zona_id) === historial))}
+          zona={zonaDelHistorial} hoy={hoy} tituloRef={historialTitle} puedeEditar={tarifas.puedeEditar} busy={busy} onClose={closeHistory}
+          onEdit={(item, trigger) => openPriceForm(tarifas.edit, item, trigger)}
+        />
+      )}
+
+      <section className="panel merchant-form" aria-labelledby="inicio-cobro-titulo">
+        <div className="panel-heading">
+          <div>
+            <h2 className="panel-title" id="inicio-cobro-titulo">Inicio de cobro general</h2>
+            <p className="panel-subtitle">Mes desde el que se calcula la deuda acumulada del padrón.</p>
+          </div>
+        </div>
+        <form className="merchant-form-grid" onSubmit={tarifas.guardarInicioCobro}>
+          <label>Deuda acumulada desde (inicio de cobro)
+            <input type="month" required max={hoy.slice(0, 7)} value={tarifas.inicioCobro} disabled={!tarifas.puedeEditar || tarifas.cargandoInicio || tarifas.savingInicio} onChange={(event) => tarifas.setInicioCobro(event.target.value)} />
+          </label>
+          {tarifas.puedeEditar && <button type="submit" className="secondary-button" disabled={tarifas.cargandoInicio || tarifas.savingInicio}>{tarifas.savingInicio ? 'Guardando…' : 'Guardar inicio de cobro'}</button>}
+        </form>
+        {tarifas.cargandoInicio && <p role="status">Cargando inicio de cobro…</p>}
+        {tarifas.inicioFeedback && <Aviso {...tarifas.inicioFeedback} />}
+      </section>
     </section>
   );
 }
