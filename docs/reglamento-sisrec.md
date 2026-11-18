@@ -63,7 +63,7 @@ Versión del 14/11/2026. Este documento resume, sin términos técnicos, las reg
 | RN-34 | Solo se cobra en efectivo. No se acepta Yape, Plin ni POS. | Cobrador | El sistema rechaza cualquier otro medio. Un cobro digital guardado sin señal antes del cambio entra y queda observado. |
 | RN-36 | Sin señal, el cobro se guarda en el celular y se envía después. Un conflicto queda observado, nunca se descarta. | Sistema | Revisión de cobros. |
 | RN-37 | Un cobro no se borra: lo anula el super administrador con un motivo. | Super administrador | Auditoría. |
-| RN-38 | Un super administrador anula solo un cobro de hoy cuya caja sigue abierta. Si el cobro es de otro día, o esa caja ya se cerró, uno pide la anulación y el otro super administrador la aprueba o la rechaza. | Super administrador titular y suplente | El sistema deja la anulación pendiente; nadie aprueba la que él mismo pidió. Auditoría. |
+| RN-38 | Un super administrador anula solo un cobro de hoy cuya caja sigue abierta. Si el cobro es de otro día, o esa caja ya se cerró, uno pide la anulación y el otro super administrador la aprueba o la rechaza. Si no hay otro super administrador activo, la anula quien la pide, con motivo, y queda señalada para la revisión mensual. | Super administrador titular y suplente | El sistema deja la anulación pendiente; nadie aprueba ni revisa la que él mismo hizo. Lista «Anuladas sin segunda aprobación». Auditoría. |
 
 ## Caja
 
