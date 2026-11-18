@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { NavLink, Outlet, useLocation } from 'react-router-dom';
 import { SyncStatusBadge } from '../components/ui/SyncStatusBadge';
 import { fechaLargaEnLima, formatRole, getInitials } from '../lib/formato';
@@ -26,6 +26,22 @@ const accesosPara = (rol) => accesosCelular
   .filter(({ item }) => item && canSee(item, rol))
   .slice(0, 4);
 
+// El mismo corte que el CSS (tema-municipal.css y styles.css): hasta 1100 px el menú se abre con el botón.
+const MENU_FLOTANTE = '(max-width: 1100px)';
+
+function useMenuFlotante() {
+  const consulta = () => typeof window !== 'undefined' && Boolean(window.matchMedia?.(MENU_FLOTANTE).matches);
+  const [flotante, setFlotante] = useState(consulta);
+  useEffect(() => {
+    const media = window.matchMedia?.(MENU_FLOTANTE);
+    if (!media) return undefined;
+    const alCambiar = () => setFlotante(media.matches);
+    media.addEventListener('change', alCambiar);
+    return () => media.removeEventListener('change', alCambiar);
+  }, []);
+  return flotante;
+}
+
 // Marco de las páginas del personal: menú lateral por grupos, barra superior y accesos rápidos del celular.
 export function AppShell({ onLogout }) {
   const { user, isOnline, apiConnected, offlineQueue, avisoSesion, cerrarAvisoSesion } = useSisrec();
@@ -33,11 +49,36 @@ export function AppShell({ onLogout }) {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const pendingSyncCount = offlineQueue.counts.pendiente + offlineQueue.counts.error;
   const visibles = navItemsFor(user?.rol);
+  const menuFlotante = useMenuFlotante();
+  const sidebarRef = useRef(null);
+  const menuButtonRef = useRef(null);
+  // Celular y tablet: cerrado, el menú está fuera de la pantalla y no debe recibir el foco (antes Mayús+Tab
+  // desde «Abrir menú» iba a «Instalar app», invisible). React 18 no conoce `inert`: se pone a mano.
+  const menuOculto = menuFlotante && !sidebarOpen;
+  useEffect(() => {
+    const aside = sidebarRef.current;
+    if (!aside) return;
+    aside.toggleAttribute('inert', menuOculto);
+    if (menuOculto) aside.setAttribute('aria-hidden', 'true');
+    else aside.removeAttribute('aria-hidden');
+  }, [menuOculto]);
+  // Abierto en celular: el foco entra al menú y Escape lo cierra y vuelve al botón.
+  useEffect(() => {
+    if (!menuFlotante || !sidebarOpen) return undefined;
+    sidebarRef.current?.querySelector('a, button')?.focus();
+    const alTeclear = (event) => {
+      if (event.key !== 'Escape') return;
+      setSidebarOpen(false);
+      menuButtonRef.current?.focus();
+    };
+    document.addEventListener('keydown', alTeclear);
+    return () => document.removeEventListener('keydown', alTeclear);
+  }, [menuFlotante, sidebarOpen]);
 
   return (
     <div className="app-shell">
       <div className={`sidebar-backdrop ${sidebarOpen ? 'visible' : ''}`} onClick={() => setSidebarOpen(false)} aria-hidden="true" />
-      <aside className={`sidebar ${sidebarOpen ? 'open' : ''}`} id="sidebar">
+      <aside className={`sidebar ${sidebarOpen ? 'open' : ''}`} id="sidebar" ref={sidebarRef}>
         <div className="sidebar-header">
           <span className="marca-logo" aria-hidden="true">S</span>
           <div>
@@ -77,7 +118,7 @@ export function AppShell({ onLogout }) {
       <main className="main-panel">
         <header className="topbar">
           <div className="topbar-left">
-            <button className="menu-button" type="button" aria-label="Abrir menú" aria-expanded={sidebarOpen} onClick={() => setSidebarOpen((open) => !open)}>
+            <button className="menu-button" type="button" ref={menuButtonRef} aria-label={sidebarOpen ? 'Cerrar menú' : 'Abrir menú'} aria-controls="sidebar" aria-expanded={sidebarOpen} onClick={() => setSidebarOpen((open) => !open)}>
               <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16" /></svg>
             </button>
             <div className="topbar-titulo">

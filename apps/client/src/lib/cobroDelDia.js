@@ -59,3 +59,13 @@ export function faltaZonaDelDia(puestosDelDia, { elegidos = null, zonaDia = '', 
   const queMarca = marcados ? puestos.filter((puesto) => marcados.has(Number(puesto.id))) : puestos.slice(0, 1);
   return queMarca.some((puesto) => puesto.zona_por_confirmar);
 }
+
+/**
+ * La liquidación en pantalla justo después de un cobro en línea, con la respuesta del servidor: el saldo que
+ * queda y lo cobrado sumado a «Pagado» (y su estado). Luego se reemplaza por la del servidor (recargarSaldo).
+ */
+export function pagadoTrasCobro(balance, cobro) {
+  const saldo = Number(cobro?.saldo_restante ?? balance.saldo ?? 0);
+  const montoPagado = Number((Number(balance.monto_pagado || 0) + Number(cobro?.monto || 0)).toFixed(2));
+  return { ...balance, saldo, monto_pagado: montoPagado, estado: saldo > 0 ? 'pendiente' : 'pagado' };
+}

@@ -134,6 +134,17 @@ Corregidos, con prueba en `tests/codigo-operacion.test.js`, `tests/tipo-via-de-c
 
 Queda: el paquete de jornada calcula dos veces el mes en curso (`calcularLiquidacion` y otra vez dentro de `calcularDeudaAcumulada`). Con un padrón mucho mayor convendrá la liquidación en lote (paso 6).
 
+## Auditoría con Playwright del 18/11/2026 (base real, 52 comerciantes)
+
+- **Padrón del celular de la mañana:** no se volvía a bajar en el día; seguía mostrando comerciantes borrados y no traía altas ni precios nuevos. Ahora se baja al abrir la app con señal si no quedan cobros sin subir (`padronPorRenovar`).
+- **Sitios contra Panel:** Sitios sumaba el día de los eventuales como deuda (S/ 74 contra S/ 48). Ahora va aparte (`totalesDeSitios`, RN-52).
+- **Zona de hoy con «Faltó»:** cambiarla pasaba a «Asistió» y cobraba el día. Ahora no se ofrece hasta tocar «Asistió» (`zonaDelDiaEditable`).
+- **Contador «45 de 41 marcados»:** contaba marcas de puestos fuera de la lista (`marcadosDeLaLista`).
+- **«Pagado» desactualizado tras un cobro:** solo se corregía el saldo y «Pagado» seguía en S/ 0.00 hasta volver a buscar. Ahora suma lo cobrado al instante (`pagadoTrasCobro`) y luego vuelve a pedir la liquidación al servidor (`recargarSaldo` en `usePagos.js`).
+- **Menú del celular:** cerrado, sus enlaces y «Instalar app» recibían el foco fuera de la pantalla, y Escape no lo cerraba. Ahora, hasta 1100 px, el menú cerrado es `inert`, al abrirlo el foco entra en él y Escape lo cierra y vuelve al botón (`AppShell.jsx`).
+- **Error de ingreso:** «Credenciales inválidas» solo se veía. Ahora es `role="alert"`, los campos lo citan (`aria-describedby`) y el foco vuelve a la contraseña, seleccionada (`IngresarPage.jsx`).
+- **Queda:** un recorrido automático que prueba todos los selectores **no debe correr contra la base real**: «Zona de hoy» guarda al cambiar. El del 18/11 marcó 41 asistencias (ya quitadas) y dejó 615 filas de auditoría, que se conservan como registro.
+
 ## Vigesimoquinta revisión del 13/11/2026: continuidad entre gestiones
 
 - (Resuelto el 13/11/2026: pantalla Usuarios para el super_admin, con alta, desactivar y clave nueva auditados.) Antes no había pantalla de usuarios: las cuentas se crean con `crear-admin` / `crear-usuario` y se desactivan con `UPDATE usuarios SET activo = false` en el servidor (el ingreso y la renovación de sesión revisan `u.activo`; comprobado: 401). Ese cambio no queda en la auditoría de SISREC, por eso el procedimiento de `docs/despliegue-produccion.md` (sección 11) lo anota en un acta.

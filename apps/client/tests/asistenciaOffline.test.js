@@ -4,8 +4,24 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { aplicarMarca, estadoDelDia, ferialesDelPadron, marcarEnviadas, marcasPendientes, observacionQueSeConserva, puestosSinMarcar } from '../src/services/asistenciaOffline.js';
+import { aplicarMarca, estadoDelDia, ferialesDelPadron, marcarEnviadas, marcasPendientes, observacionQueSeConserva, marcadosDeLaLista, puestosSinMarcar, zonaDelDiaEditable } from '../src/services/asistenciaOffline.js';
 import { normalizarComerciante } from '../src/services/jornadaOffline.js';
+
+test('la zona de hoy no se ofrece a quien está marcado «Faltó» (no se le cobra el día sin querer)', () => {
+  assert.equal(zonaDelDiaEditable(undefined), true, 'sin marca: elegir la zona lo marca presente');
+  assert.equal(zonaDelDiaEditable({ asistio: true, zonaId: 3 }), true);
+  assert.equal(zonaDelDiaEditable({ asistio: false }), false);
+  assert.equal(zonaDelDiaEditable({ asistio: false, motivo: 'no_salio' }), false);
+});
+
+test('el contador de marcados solo cuenta a los de la lista de hoy', () => {
+  const feriales = [{ puestoFerialId: 10 }, { puestoFerialId: 11 }, { puestoFerialId: 12 }];
+  // El 99 ya no está en el padrón (se dio de baja después de marcarlo): no cuenta.
+  const marcas = { 10: { asistio: true }, 12: { asistio: false }, 99: { asistio: true } };
+  assert.equal(marcadosDeLaLista(feriales, marcas), 2);
+  assert.equal(marcadosDeLaLista([], marcas), 0);
+  assert.equal(marcadosDeLaLista(feriales), 0);
+});
 
 const padron = [
   { id: 1, nombre: 'Zoila Ferial', tipo_comerciante: 'ferial', codigo_puesto: 'ZAP-02', puesto_ferial_id: 12 },

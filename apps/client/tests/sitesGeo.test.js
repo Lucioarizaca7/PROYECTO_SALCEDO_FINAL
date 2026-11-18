@@ -1,8 +1,21 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  accountStatusText, buildAvenueSample, buildSiteFeatures, filterSites, geolocationErrorMessage, paymentStatusText, rectangleAround, siteFromFeature, siteProperties, PAYMENT_COLORS
+  accountStatusText, buildAvenueSample, buildSiteFeatures, filterSites, geolocationErrorMessage, paymentStatusText, rectangleAround, siteFromFeature, siteProperties, totalesDeSitios, PAYMENT_COLORS
 } from '../src/components/features/map/sitesGeo.js';
+
+test('Sitios suma la deuda como el Panel: el día del eventual va aparte', () => {
+  const totales = totalesDeSitios([
+    { saldo_pendiente: 2, cobro_diario: false },
+    { saldo_pendiente: '4.50', cobro_diario: false },
+    { saldo_pendiente: 3, cobro_diario: true },
+    { saldo_pendiente: 0, cobro_diario: true },
+    { saldo_pendiente: 2, cobro_diario: true },
+    { saldo_pendiente: null }
+  ]);
+  assert.deepEqual(totales, { deuda: 6.5, deHoy: 5, eventuales: 2 });
+  assert.deepEqual(totalesDeSitios(), { deuda: 0, deHoy: 0, eventuales: 0 });
+});
 
 const { sites, geojson } = buildAvenueSample(12);
 
