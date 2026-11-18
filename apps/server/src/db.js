@@ -2808,9 +2808,15 @@ export async function anularCobro(db, id, { motivo, usuarioId, audit = null, apr
   const previous = await first(db, 'SELECT * FROM transacciones WHERE id = $1 FOR UPDATE', [Number(id)]);
   if (!previous) throw new NotFoundError('Cobro no encontrado');
   if (previous.estado === 'anulado') throw new ConflictError('El cobro ya estaba anulado');
+  // Sin otro super_admin activo que la apruebe, la anula él solo y queda señalada para la revisión mensual
+  // (decisión del 18/11/2026, migración 0038).
+  let sinSegundo = null;
   if (!aprobada) {
     const porque = await porQuePideAprobacion(db, previous.id);
-    if (porque) return solicitarAnulacion(db, previous, { razon, usuarioId, audit, porque });
+    if (porque) {
+      if (await hayOtroSuperAdminActivo(db, usuarioId)) return solicitarAnulacion(db, previous, { razon, usuarioId, audit, porque });
+      sinSegundo = await registrarAnulacionSinSegundo(db, previous, { razon, usuarioId, porque });
+    }
   }
 
   const updated = await first(db, `
@@ -2845,13 +2851,15 @@ export async function anularCobro(db, id, { motivo, usuarioId, audit = null, apr
     UPDATE cobros_observados SET estado = 'anulado', resolucion = $2, revisado_por = $3, revisado_en = now()
     WHERE transaccion_id = $1 AND estado = 'pendiente' RETURNING id`, [Number(id), razon, Number(usuarioId)]);
   result.observacion_cerrada = observacion ? Number(observacion.id) : null;
+  if (sinSegundo) Object.assign(result, { sin_segunda_aprobacion: true, porque: sinSegundo.porque, solicitud_id: sinSegundo.id });
 
   if (audit) {
     await appendAudit(db, {
       ...audit,
       usuarioId: audit.usuarioId ?? usuarioId,
       entidad: 'cobros',
-      detalle: `Cobro ${id} por S/ ${result.monto.toFixed(2)} anulado: ${razon}${result.asistencias_quitadas.length
+      detalle: `Cobro ${id} por S/ ${result.monto.toFixed(2)} anulado${sinSegundo
+        ? ` sin segunda aprobación (${sinSegundo.porque}; no hay otro super administrador activo; queda para la revisión mensual)` : ''}: ${razon}${result.asistencias_quitadas.length
         ? `. Se quitó la asistencia del ${result.asistencias_quitadas.join(', ')} que había puesto el cobro` : ''}${result.observacion_cerrada
         ? `. Se cerró su revisión pendiente (observado ${result.observacion_cerrada})` : ''}`,
       recursoId: result.id,
@@ -2879,10 +2887,38 @@ async function porQuePideAprobacion(db, cobroId) {
   return null;
 }
 
+// ¿Hay otro super_admin activo que pueda aprobar? Bloquea esas filas para que nadie se active o desactive a la
+// mitad de la anulación (cambiarEstadoUsuario bloquea igual).
+async function hayOtroSuperAdminActivo(db, usuarioId) {
+  const otros = await rows(db, `
+    SELECT u.id FROM usuarios u JOIN roles r ON r.id = u.rol_id
+    WHERE r.codigo = 'super_admin' AND u.activo AND u.id <> $1 FOR SHARE OF u`, [Number(usuarioId)]);
+  return otros.length > 0;
+}
+
+// Deja escrita la anulación que hizo un único super_admin activo: aprobada por él mismo y señalada. Si él mismo
+// la había pedido cuando había otro (que luego se desactivó), esa solicitud pendiente es la que se cierra.
+async function registrarAnulacionSinSegundo(db, cobro, { razon, usuarioId, porque }) {
+  const resolucion = `Sin otro super administrador activo (${porque}): anulada por quien la pidió; queda para la revisión mensual`;
+  const pendiente = await first(db, `SELECT id, solicitado_por FROM anulaciones_solicitadas WHERE transaccion_id = $1 AND estado = 'pendiente' FOR UPDATE`, [Number(cobro.id)]);
+  if (pendiente && Number(pendiente.solicitado_por) !== Number(usuarioId)) {
+    throw new ConflictError('Ese cobro ya tiene una anulación pedida por otro super administrador: apruébela o recházela en Deuda y reclamos');
+  }
+  const fila = pendiente
+    ? await first(db, `
+        UPDATE anulaciones_solicitadas SET estado = 'aprobada', sin_segundo_admin = true, resuelto_por = solicitado_por,
+          resuelto_en = now(), resolucion = $2, motivo = $3 WHERE id = $1 RETURNING id`, [pendiente.id, resolucion, razon])
+    : await first(db, `
+        INSERT INTO anulaciones_solicitadas (transaccion_id, motivo, solicitado_por, estado, resuelto_por, resuelto_en, resolucion, sin_segundo_admin)
+        VALUES ($1, $2, $3, 'aprobada', $3, now(), $4, true) RETURNING id`, [Number(cobro.id), razon, Number(usuarioId), resolucion]);
+  return { id: Number(fila.id), porque };
+}
+
 const ANULACION_SELECT = `
   SELECT s.id, s.transaccion_id, s.motivo, s.estado, s.resolucion, s.solicitado_por AS solicitado_por_id,
          us.nombre AS solicitado_por, ${TS('s.solicitado_en')} AS solicitado_en,
          ur.nombre AS resuelto_por, ${TS('s.resuelto_en')} AS resuelto_en,
+         s.sin_segundo_admin, uv.nombre AS revisada_por, ${TS('s.revisada_en')} AS revisada_en, s.revision,
          t.monto, t.metodo_pago, t.estado AS estado_cobro, to_char(${LOCAL('t.fecha_cobro_cliente')}, 'YYYY-MM-DD') AS fecha_cobro,
          cp.numero_correlativo AS comprobante, c.nombre AS comerciante, uc.nombre AS cobrador
   FROM anulaciones_solicitadas s
@@ -2891,7 +2927,8 @@ const ANULACION_SELECT = `
   LEFT JOIN comprobantes cp ON cp.id = t.comprobante_id
   LEFT JOIN usuarios uc ON uc.id = t.cobrador_id
   JOIN usuarios us ON us.id = s.solicitado_por
-  LEFT JOIN usuarios ur ON ur.id = s.resuelto_por`;
+  LEFT JOIN usuarios ur ON ur.id = s.resuelto_por
+  LEFT JOIN usuarios uv ON uv.id = s.revisada_por`;
 
 const normalizarAnulacion = (fila) => fila && {
   ...fila, id: Number(fila.id), transaccion_id: Number(fila.transaccion_id), solicitado_por_id: Number(fila.solicitado_por_id), monto: Number(fila.monto)
@@ -2915,9 +2952,38 @@ async function solicitarAnulacion(db, cobro, { razon, usuarioId, audit, porque }
   return { id: Number(cobro.id), estado: cobro.estado, pendiente_aprobacion: true, porque, solicitud };
 }
 
+// estado: pendiente, aprobada o rechazada; o 'sin_segunda_aprobacion': las que anuló un único super_admin activo
+// (todas, primero las que faltan revisar), para la revisión mensual.
 export async function getAnulacionesSolicitadas(db, { estado = 'pendiente' } = {}) {
+  if (estado === 'sin_segunda_aprobacion') {
+    return (await rows(db, `${ANULACION_SELECT} WHERE s.sin_segundo_admin ORDER BY (s.revisada_por IS NULL) DESC, s.id DESC LIMIT 200`)).map(normalizarAnulacion);
+  }
   const filtro = ['pendiente', 'aprobada', 'rechazada'].includes(estado) ? estado : 'pendiente';
   return (await rows(db, `${ANULACION_SELECT} WHERE s.estado = $1 ORDER BY s.id DESC LIMIT 200`, [filtro])).map(normalizarAnulacion);
+}
+
+// Revisión mensual (RN-61) de una anulación hecha sin segunda aprobación: la marca revisada otro super_admin,
+// nunca quien la anuló. Revisarla no deshace la anulación; si estuvo mal, se registra el cobro de nuevo.
+export async function revisarAnulacionSinSegundo(_db, id, { revision, usuarioId, audit = null }) {
+  const nota = cleanText(revision, 300) || null;
+  return withTransaction(async (client) => {
+    const previa = await first(client, 'SELECT * FROM anulaciones_solicitadas WHERE id = $1 FOR UPDATE', [Number(id)]);
+    if (!previa || !previa.sin_segundo_admin) throw new NotFoundError('Anulación sin segunda aprobación no encontrada');
+    if (previa.revisada_por) throw new ConflictError('Esa anulación ya fue revisada');
+    if (Number(previa.solicitado_por) === Number(usuarioId)) {
+      throw new ConflictError('No puede revisar una anulación que usted mismo hizo: debe revisarla otro super administrador');
+    }
+    await client.query('UPDATE anulaciones_solicitadas SET revisada_por = $2, revisada_en = now(), revision = $3 WHERE id = $1', [previa.id, Number(usuarioId), nota]);
+    const solicitud = normalizarAnulacion(await first(client, `${ANULACION_SELECT} WHERE s.id = $1`, [previa.id]));
+    if (audit) {
+      await appendAudit(client, {
+        ...audit, usuarioId: audit.usuarioId ?? usuarioId, entidad: 'cobros', recursoId: Number(previa.transaccion_id),
+        detalle: `Revisada la anulación sin segunda aprobación del cobro ${previa.transaccion_id} (la hizo ${solicitud.solicitado_por})${nota ? `: ${nota}` : ''}`,
+        payloadPrevio: previa, payloadNuevo: solicitud
+      });
+    }
+    return solicitud;
+  });
 }
 
 // El otro super_admin aprueba (el cobro se anula con el motivo de quien la pidió) o rechaza (el cobro sigue válido).
