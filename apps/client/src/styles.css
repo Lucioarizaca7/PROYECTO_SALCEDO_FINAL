@@ -1467,6 +1467,8 @@ tbody td {
 
 .padron-import-panel {
   display: grid;
+  /* La columna seguía al ancho del selector de archivo y en el celular los botones de importar se cortaban. */
+  grid-template-columns: minmax(0, 1fr);
   gap: 14px;
   border-left: 3px solid var(--primary-2);
 }
@@ -1480,6 +1482,9 @@ tbody td {
 
 .padron-file-control {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  min-width: 0;
+  max-width: 100%;
   gap: 6px;
   color: var(--muted);
   font-size: 0.78rem;
