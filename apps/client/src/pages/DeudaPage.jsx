@@ -36,7 +36,7 @@ function Anulaciones({ deuda }) {
       <div className="panel-heading">
         <div>
           <div className="panel-title">Anulaciones por aprobar</div>
-          <div className="panel-subtitle">Un cobro de otro día, o de una caja ya cerrada, no lo anula una sola persona: uno la pide y el otro super administrador la aprueba o la rechaza.</div>
+          <div className="panel-subtitle">Un cobro de otro día, o de una caja ya cerrada, no lo anula una sola persona: uno la pide y el otro super administrador la aprueba o la rechaza. Si no hay otro super administrador activo, la anula quien la pide y queda para la revisión mensual.</div>
         </div>
       </div>
       <div className="table-card">
@@ -73,6 +73,52 @@ function Anulaciones({ deuda }) {
 }
 
 // RN-53: aviso formal a quien debe un día cobrado desde hace 30 días o más.
+// Anulaciones que hizo un único super administrador activo, sin segunda aprobación (decisión del 18/11/2026).
+// Quedan señaladas hasta que otro super administrador las revise en la revisión mensual (RN-61).
+function AnulacionesSinSegunda({ deuda }) {
+  if (!deuda.sinSegunda.length) return null;
+  const porRevisar = deuda.sinSegunda.filter((item) => !item.revisada_por).length;
+  const revisar = (solicitud) => {
+    const nota = window.prompt(`Revisión de la anulación de ${solicitud.comprobante || `el cobro #${solicitud.transaccion_id}`}. Puede escribir una nota:`, '');
+    if (nota === null) return;
+    deuda.revisarAnulacion(solicitud, nota);
+  };
+  return (
+    <div className="panel">
+      <div className="panel-heading">
+        <div>
+          <div className="panel-title">Anuladas sin segunda aprobación · {porRevisar} por revisar</div>
+          <div className="panel-subtitle">No había otro super administrador activo: las anuló una sola persona. Las revisa otro super administrador en la revisión mensual.</div>
+        </div>
+      </div>
+      <div className="table-card">
+        <table>
+          <thead><tr><th>Cobro</th><th>Fecha</th><th>Comerciante</th><th>Monto</th><th>Motivo</th><th>La anuló</th><th>Revisión</th></tr></thead>
+          <tbody>
+            {deuda.sinSegunda.map((solicitud) => (
+              <tr key={solicitud.id}>
+                <td>{solicitud.comprobante || `#${solicitud.transaccion_id}`}</td>
+                <td>{solicitud.fecha_cobro}</td>
+                <td>{solicitud.comerciante}</td>
+                <td>{formatPEN(solicitud.monto)}</td>
+                <td>{solicitud.motivo}</td>
+                <td>{solicitud.solicitado_por}<br /><small>{solicitud.resuelto_en}</small></td>
+                <td>
+                  {solicitud.revisada_por
+                    ? <>{solicitud.revisada_por}<br /><small>{solicitud.revisada_en}{solicitud.revision ? ` · ${solicitud.revision}` : ''}</small></>
+                    : deuda.puedeEscribir && puedeResolverAnulacion(solicitud, deuda.usuarioId)
+                      ? <button type="button" className="table-action" disabled={deuda.ocupado} onClick={() => revisar(solicitud)}>Marcar revisada</button>
+                      : <span className="status pending">Por revisar</span>}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
 function Avisos({ deuda }) {
   const { por_emitir: porEmitir, emitidos, dias_para_aviso: dias } = deuda.avisos;
   const emitir = (fila) => {
@@ -281,6 +327,7 @@ export function DeudaPage() {
       {deuda.message && <div className="form-message">{deuda.message}</div>}
       {deuda.error && <div className="form-error" role="alert">{deuda.error}</div>}
       <Anulaciones deuda={deuda} />
+      <AnulacionesSinSegunda deuda={deuda} />
       <Avisos deuda={deuda} />
       <Bajas deuda={deuda} />
       <Reclamos deuda={deuda} />

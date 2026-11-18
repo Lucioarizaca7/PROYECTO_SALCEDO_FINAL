@@ -8,6 +8,8 @@ import { apiBase, authFetch, leerJson } from '../services/session';
 export function useDeuda() {
   const { user, refresh } = useSisrec();
   const [anulaciones, setAnulaciones] = useState([]);
+  // Anuladas por un único super_admin activo, para la revisión mensual (migración 0038).
+  const [sinSegunda, setSinSegunda] = useState([]);
   const [avisos, setAvisos] = useState({ por_emitir: [], emitidos: [], dias_para_aviso: 30 });
   const [bajas, setBajas] = useState([]);
   const [reclamos, setReclamos] = useState([]);
@@ -25,10 +27,11 @@ export function useDeuda() {
 
   const cargar = async () => {
     try {
-      const [listaAnulaciones, listaAvisos, listaBajas, listaReclamos] = await Promise.all([
-        leer('/cobros/anulaciones'), leer('/deuda/avisos'), leer('/deuda/bajas'), leer('/reclamos')
+      const [listaAnulaciones, listaSinSegunda, listaAvisos, listaBajas, listaReclamos] = await Promise.all([
+        leer('/cobros/anulaciones'), leer('/cobros/anulaciones?estado=sin_segunda_aprobacion'), leer('/deuda/avisos'), leer('/deuda/bajas'), leer('/reclamos')
       ]);
       setAnulaciones(listaAnulaciones);
+      setSinSegunda(listaSinSegunda);
       setAvisos(listaAvisos);
       setBajas(listaBajas);
       setReclamos(listaReclamos);
@@ -82,6 +85,7 @@ export function useDeuda() {
     if (data) await refresh?.();
     return data;
   };
+  const revisarAnulacion = (solicitud, revision) => enviar(`/cobros/anulaciones/${solicitud.id}/revisar`, { revision }, 'No se pudo marcar la revisión');
   const emitirAviso = (comercianteId, observaciones) => enviar('/deuda/avisos', { comerciante_id: comercianteId, observaciones }, 'No se pudo registrar el aviso');
   const darDeBaja = async (cuerpo) => {
     const data = await enviar('/deuda/bajas', cuerpo, 'No se pudo dar de baja la deuda');
@@ -92,8 +96,8 @@ export function useDeuda() {
   const resolverReclamo = (reclamo, decision, resolucion) => enviar(`/reclamos/${reclamo.id}/resolver`, { decision, resolucion }, 'No se pudo resolver el reclamo');
 
   return {
-    anulaciones, avisos, bajas, reclamos, message, error, ocupado, cargando,
+    anulaciones, sinSegunda, avisos, bajas, reclamos, message, error, ocupado, cargando,
     puedeEscribir: user?.rol === 'super_admin', usuarioId: Number(user?.id),
-    buscarComerciante, resolverAnulacion, emitirAviso, darDeBaja, registrarReclamo, resolverReclamo
+    buscarComerciante, resolverAnulacion, revisarAnulacion, emitirAviso, darDeBaja, registrarReclamo, resolverReclamo
   };
 }

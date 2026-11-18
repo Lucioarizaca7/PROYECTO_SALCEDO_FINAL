@@ -1,6 +1,6 @@
 // Cobros, sincronización offline, revisión de observados, jornada y comprobantes.
 import express from 'express';
-import { currentPeriod, textoTicket, getCobros, registrarCobro, syncOfflineCobro, syncOfflineBatch, getCobrosObservados, resolveCobroObservado, getSyncErrors, getJornadaPackage, anularCobro, getAnulacionesSolicitadas, resolverAnulacion, getTiemposCobro, ticketsDelCobrador, fechaCobroEnLinea } from '../db.js';
+import { currentPeriod, textoTicket, getCobros, registrarCobro, syncOfflineCobro, syncOfflineBatch, getCobrosObservados, resolveCobroObservado, getSyncErrors, getJornadaPackage, anularCobro, getAnulacionesSolicitadas, resolverAnulacion, revisarAnulacionSinSegundo, getTiemposCobro, ticketsDelCobrador, fechaCobroEnLinea } from '../db.js';
 import { requireAuth, requireRoles } from '../auth.js';
 import { handleValidationErrors, validateCobro } from '../validation.js';
 import { staffOnly, auditContext } from '../http/comunes.js';
@@ -150,6 +150,16 @@ router.post('/api/v1/cobros/anulaciones/:id/resolver', requireAuth, requireRoles
   return res.json({ data, message: data.estado === 'aprobada' ? 'Anulación aprobada: el cobro quedó anulado; registre la devolución si corresponde' : 'Anulación rechazada: el cobro sigue válido' });
 });
 
+// Revisión mensual de una anulación hecha sin segunda aprobación (un único super_admin activo; migración 0038).
+router.post('/api/v1/cobros/anulaciones/:id/revisar', requireAuth, requireRoles(['super_admin']), async (req, res) => {
+  const data = await revisarAnulacionSinSegundo(db, Number(req.params.id), {
+    revision: req.body?.revision,
+    usuarioId: req.user.id,
+    audit: auditContext(req, 'REVISAR_ANULACION')
+  });
+  return res.json({ data, message: 'Anulación revisada' });
+});
+
 // Anulación: solo el administrador, con motivo. El cobro no se borra; deja de contar en lo pagado.
 // Un cobro de otro día o de una caja ya cerrada queda pedido (202) hasta que lo apruebe el otro super_admin.
 router.post('/api/v1/cobros/:id/anular', requireAuth, requireRoles(['super_admin']), async (req, res) => {
@@ -160,6 +170,9 @@ router.post('/api/v1/cobros/:id/anular', requireAuth, requireRoles(['super_admin
   });
   if (data.pendiente_aprobacion) {
     return res.status(202).json({ data, message: `La anulación quedó pedida porque ${data.porque}: debe aprobarla el otro super administrador` });
+  }
+  if (data.sin_segunda_aprobacion) {
+    return res.json({ data, message: `Cobro anulado sin segunda aprobación (${data.porque}; no hay otro super administrador activo). Queda señalado para la revisión mensual; registre la devolución si corresponde` });
   }
   return res.json({ data, message: 'Cobro anulado; registre la devolución al comerciante si corresponde' });
 });

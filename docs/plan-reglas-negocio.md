@@ -140,7 +140,7 @@ Cada regla tiene un número, una frase clara, un responsable y la forma de contr
 | RN-35 | Cada pago por Yape, Plin o POS se concilia con el estado de la cuenta municipal. | Tesorería | Marca «conciliado» por cobro. Reporte de no conciliados. | Retirada (17/11/2026): ya no hay cobro digital |
 | RN-36 | Sin señal, el cobro se guarda en el celular y se envía después. Un conflicto queda observado, nunca se descarta. | Sistema | Revisión de cobros. | Vigente |
 | RN-37 | Un cobro no se borra: lo anula el super administrador con un motivo. | Super administrador | Auditoría. | Vigente |
-| RN-38 | La anulación tiene plazo. Fuera de plazo, o si la caja de ese día ya se entregó, necesita una segunda aprobación. | Super administrador titular y suplente | Plazo y doble firma. | Decisión (F9) |
+| RN-38 | La anulación tiene plazo. Fuera de plazo, o si la caja de ese día ya se entregó, necesita una segunda aprobación. Con un solo super administrador activo, la anula él con motivo y queda para la revisión mensual (18/11/2026). | Super administrador titular y suplente | Plazo y doble firma. | Decisión (F9) |
 
 ### 3.5. Caja y entrega del dinero
 
@@ -222,7 +222,7 @@ Cada etapa se puede aprobar y unir por separado. El orden va de lo más barato y
 
 ### Etapa 3. Deuda, anulaciones y reclamos
 
-- Plazo y doble aprobación de anulaciones (RN-38). **Hecho el 15/11/2026**: directo solo el mismo día y con la caja abierta; después, la aprueba el otro super administrador.
+- Plazo y doble aprobación de anulaciones (RN-38). **Hecho el 15/11/2026**: directo solo el mismo día y con la caja abierta; después, la aprueba el otro super administrador. **18/11/2026**: con un solo super administrador activo, la anula él solo y queda señalada para la revisión mensual.
 - Avisos formales de deuda (RN-53) y baja con resolución (RN-54). **Hecho el 15/11/2026**: aviso a los 30 días del día impago más antiguo; solo baja, sin fraccionamiento (**pendiente** por decisión).
 - Reclamo de un día marcado (RN-27). **Hecho el 15/11/2026**: hasta 7 días después, ante el super administrador.
 - Necesita las decisiones 4, 5, 6 y 7.
