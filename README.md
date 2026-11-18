@@ -178,7 +178,7 @@ docker compose --env-file .env.production -f docker-compose.prod.yml exec api no
 ### 3. Cobranza y liquidación
 - Consulta de deuda por comerciante.
 - Cálculo del saldo pendiente y liquidación.
-- Registro de pagos con distintos medios: efectivo, Yape, Plin y POS.
+- Registro de pagos en efectivo (Yape, Plin y POS se retiraron el 17/11/2026).
 - Validación de comprobantes y hash de idempotencia para evitar duplicidad.
 - Emisión de recibos y trazabilidad del cobro.
 

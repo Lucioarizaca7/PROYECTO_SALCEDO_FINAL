@@ -55,7 +55,7 @@ Las reglas propuestas y las decisiones pendientes están en `docs/plan-reglas-ne
 | RN-31 | Por cada puesto y día cobrado se entrega un ticket preimpreso del valor de ese día. | Cobrador | La suma de los tickets debe ser igual al monto. | Tickets preimpresos |
 | RN-32 | Los talonarios los asigna solo el super administrador. | Super administrador | Lotes con rango único. | Tickets preimpresos |
 | RN-33 | Un talonario perdido o robado se reporta el mismo día y el super administrador anula de una vez sus tickets disponibles, con motivo. | Cobrador y super administrador | Botón «Perdido o robado» en Tickets. Auditoría. | Modelo simplificado (Etapa 4) |
-| RN-34 | Yape, Plin y POS exigen número de operación, único por método. | Cobrador | El sistema rechaza un número repetido. | Cobros |
+| RN-34 | Solo se cobra en efectivo. No se acepta Yape, Plin ni POS. | Cobrador | El sistema rechaza cualquier otro medio. Un cobro digital guardado sin señal antes del cambio entra y queda observado. | Cobros |
 | RN-36 | Sin señal, el cobro se guarda en el celular y se envía después. Un conflicto queda observado, nunca se descarta. | Sistema | Revisión de cobros. | Cobros y Offline |
 | RN-37 | Un cobro no se borra: lo anula el super administrador con un motivo. | Super administrador | Auditoría. | Tickets preimpresos (anularCobro) |
 | RN-38 | Un super administrador anula solo un cobro de hoy cuya caja sigue abierta. Si el cobro es de otro día, o esa caja ya se cerró, uno pide la anulación y el otro super administrador la aprueba o la rechaza. | Super administrador titular y suplente | El sistema deja la anulación pendiente; nadie aprueba la que él mismo pidió. Auditoría. | Deuda, anulaciones y reclamos |
@@ -362,7 +362,7 @@ Antes pasar a un ferial a eventual borraba su deuda atrasada entera, y pasar un 
 - **Justificación de la diferencia** (RN-42, decisión del usuario del 15/11/2026; migración 0034): todo faltante y todo sobrante de S/ 5 o más piden `justificacion` (5 a 500 caracteres) al cerrar; si falta, `cerrarCaja` responde 400. La base repite la regla (`cierres_caja_diferencia_justificada`, `NOT VALID`: no obliga a los cierres anteriores). El tope vive en `SOBRANTE_SIN_JUSTIFICAR` (servidor) y en `lib/caja.js` (cliente, solo para mostrar el campo).
 - **Entrega del dinero** (RN-41 y RN-44, misma decisión): `registrarEntregaCaja`, `POST /caja/cierres/:id/entrega`, solo super_admin. Se entrega el **efectivo**; Yape, Plin y POS llegan a la cuenta. Tabla `entregas_caja`: tipo `cierre` (una sola por cierre, índice único) o `complementaria` (los cobros que entraron después del cierre; solo si los hay y con monto mayor que cero). Si el monto recibido no es el efectivo declarado vigente, las observaciones son obligatorias. **Quien recibe no puede ser quien cerró esa caja** (409): con titular y suplente, uno recibe la caja del otro. La pantalla muestra la constancia (`textoConstancia`, número `E-000012`).
 - **Rectificación** (RN-43, misma decisión): `rectificarCierreCaja`, `POST /caja/cierres/:id/rectificacion`, solo super_admin, con los cuatro montos corregidos y el motivo (5 a 500 caracteres). No toca `cierres_caja`: agrega una fila en `cierres_caja_rectificaciones` y vale la última. Cada cierre devuelve `vigente` (lo declarado y la diferencia que valen hoy), `rectificacion`, `entregas` y `entregado`. Rectificar con los mismos montos responde 409.
-- **Sin regla todavía:** la conciliación de Yape, Plin y POS con el estado de cuenta (el usuario la dejó para después, 15/11/2026). **Límites:** una entrega registrada no se anula ni se corrige; rectificar después de la entrega no cambia la entrega ya registrada.
+- **Conciliación de Yape, Plin y POS (RN-35): retirada** el 17/11/2026, porque ya solo se cobra en efectivo (ver «Solo efectivo»). **Límites:** una entrega registrada no se anula ni se corrige; rectificar después de la entrega no cambia la entrega ya registrada.
 
 ## Deuda, anulaciones y reclamos (migración 0035, `routes/deuda.ts` y `routes/cobros.ts`)
 
@@ -377,6 +377,19 @@ Decisiones del usuario del 15/11/2026 (Etapa 3 del plan de reglas). Pantalla: «
 - **Reclamo de un día marcado** (RN-27): `DIAS_PARA_RECLAMAR = 7` (también en la base: `reclamos_dentro_del_plazo`). `registrarReclamo` (`POST /reclamos`): lo registra el super_admin en nombre del comerciante; tipo `no_asistio` o `ya_pago`; solo sobre un día que el comerciante tiene marcado como asistió; uno pendiente por comerciante y día. `resolverReclamo` (`POST /reclamos/:id/resolver`, `procedente` o `no_procedente`, con explicación):
   - procedente y `no_asistio`: cada puesto marcado ese día pasa a falta (`no_salio`, marca de la app, que manda sobre el Excel) y el día deja de deberse. Si ese día tiene un cobro confirmado responde 409: primero se anula el cobro (con RN-38). Un reclamo no devuelve dinero por su cuenta.
   - procedente y `ya_pago`: el sistema no inventa un pago; la resolución dice qué se hizo.
+
+## Solo efectivo (decisión del 17/11/2026, migración 0037)
+
+**Por qué:** el POS de la municipalidad no está activado y figura a nombre de una persona de la gestión anterior; con el cambio de alcalde no hay una cuenta municipal donde comprobar un pago digital.
+
+- **Regla (RN-34):** solo se cobra en efectivo. `registrarCobro` rechaza en línea (400) todo `metodo_pago` que no sea `efectivo`.
+- **Sin señal:** un cobro por Yape, Plin o POS que un celular guardó antes del cambio entra con `allowExcess` y queda **observado** («Pago por YAPE (operación …): ya solo se cobra en efectivo»). Sigue exigiendo número de operación, único por método.
+- **En la base:** disparador diferido `trg_transacciones_solo_efectivo` (error 23514, `transacciones_solo_efectivo`): una fila nueva, o un cambio de `metodo_pago`, que no sea efectivo solo pasa si tiene su fila en `cobros_observados`. Es un disparador y no un CHECK porque la fila de observados se escribe después del cobro, en la misma transacción.
+- **Historia:** los cobros digitales ya registrados no cambian y se siguen viendo con su medio y su operación (recibo, reportes, portal). Las columnas `*_yape`, `*_plin` y `*_pos` del cierre de caja se quedan.
+- **Cliente:** Pagos ya no tiene selector de medio ni código de operación; envía siempre `efectivo`. Caja muestra solo efectivo, y un medio digital únicamente si ese día tiene monto (`mediosDeCaja` en `lib/caja.js`).
+- **RN-35 (conciliación) se retira.** Para volver a cobrar con POS o QR hace falta una decisión nueva y una migración que quite el disparador.
+- **Límite:** un cierre de caja con un Yape observado lo sigue contando en lo esperado de Yape; el cobrador lo declara en ese campo, que aparece solo ese día.
+- **Pruebas:** `tests/codigo-operacion.test.js` (servidor) y `tests/caja.test.js` (cliente).
 
 ## Modelo simplificado (Etapa 4, migración 0036)
 

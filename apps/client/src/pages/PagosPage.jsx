@@ -205,7 +205,6 @@ export function PagosPage() {
               <div className="express-grid">
                 <div><span>Saldo pendiente</span><strong>S/ {Number(balance.saldo || 0).toFixed(2)}</strong></div>
                 <div><span>Sugerencia</span><strong>S/ {Number(suggestion.suggestedAmount || 0).toFixed(2)}</strong></div>
-                <div><span>Método preferido</span><strong>{String(suggestion.preferredMethod || 'efectivo').toUpperCase()}</strong></div>
               </div>
               <div className="express-last">{suggestion.lastLabel}</div>
             </div>
@@ -219,9 +218,7 @@ export function PagosPage() {
           {pagos.usaTickets && <TicketsDelCobro pagos={pagos} />}
           <div className="payment-fields">
             <input required min="0.01" max={pagos.cobraHoy ? undefined : balance?.saldo || undefined} step="0.01" type="number" placeholder="Monto a cobrar" aria-label="Monto a cobrar" readOnly={pagos.usaTickets} title={pagos.usaTickets ? 'El monto es lo que valen los tickets a entregar' : undefined} value={form.monto} onChange={(event) => setForm({ ...form, monto: event.target.value })} />
-            <select value={form.metodo_pago} onChange={(event) => setForm({ ...form, metodo_pago: event.target.value })}><option value="efectivo">Efectivo</option><option value="yape">Yape</option><option value="plin">Plin</option><option value="pos">POS</option></select>
           </div>
-          {form.metodo_pago !== 'efectivo' && <input required placeholder="Código de operación digital" value={form.codigo_operacion} onChange={(event) => setForm({ ...form, codigo_operacion: event.target.value })} />}
           <input placeholder="Observaciones (opcional)" maxLength={500} value={form.observaciones} onChange={(event) => setForm({ ...form, observaciones: event.target.value })} />
           {pagos.message && <div className="form-message">{pagos.message}</div>}
           <button className="primary-button payment-submit" disabled={!merchant || !balance || (balance.saldo <= 0 && !pagos.cobraHoy)} type="submit">Confirmar y emitir comprobante</button>

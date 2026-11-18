@@ -122,3 +122,4 @@ Para ver los roles exactos de una ruta: `grep -rn "'/api/v1/<ruta>" apps/server/
 - **0034:** `cierres_caja.justificacion` (obligatoria con faltante o sobrante de S/ 5 o más), `entregas_caja` y `cierres_caja_rectificaciones`.
 - **0035:** `anulaciones_solicitadas` (segunda aprobación), `avisos_deuda`, `deuda_bajas` (baja con resolución) y `reclamos_dia`.
 - **0036:** `tarifas.norma`, `cobrador_zonas`, `asistencias_feriales.fuera_de_asignacion` y la zona del comerciante atada a su puesto principal (triggers).
+- **0037:** solo efectivo: disparador diferido `trg_transacciones_solo_efectivo` (un cobro digital solo entra si queda observado).
