@@ -150,6 +150,18 @@ export function jornadaVigente(meta, ahora = new Date()) {
   return hoyEnLima(new Date(meta.descargadoEn)) === hoy && (!meta.periodo || meta.periodo === hoy.slice(0, 7));
 }
 
+/**
+ * ¿Se vuelve a bajar el padrón al abrir la app? Sin señal, nunca. Si no es de hoy, sí (como siempre).
+ * Si ya es de hoy, también, para traer las altas, bajas y precios que cambiaron desde la mañana (auditoría
+ * del 18/11/2026: un padrón de las 10:08 seguía mostrando comerciantes borrados a las 10:14), pero solo si
+ * no quedan cobros sin subir: bajarlo pisaría el saldo que el celular les descontó sin señal.
+ */
+export function padronPorRenovar({ meta, enLinea, cobrosSinSubir = 0, ahora = new Date() }) {
+  if (!enLinea) return false;
+  if (!jornadaVigente(meta, ahora)) return true;
+  return cobrosSinSubir === 0;
+}
+
 /** Convierte un registro local al formato que usa la pantalla de cobro. */
 export function aComercianteDePantalla(registro) {
   return {

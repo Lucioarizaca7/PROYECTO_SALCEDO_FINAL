@@ -4,7 +4,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { aplicarCobroLocal, aSaldoDePantalla, buscarEnPadron, hoyEnLima, jornadaVigente, normalizarComerciante, periodoEnLima } from '../src/services/jornadaOffline.js';
+import { aplicarCobroLocal, aSaldoDePantalla, buscarEnPadron, hoyEnLima, jornadaVigente, normalizarComerciante, padronPorRenovar, periodoEnLima } from '../src/services/jornadaOffline.js';
 
 const paquete = [
   { id: 1, codigo: 'CM-001', dni_ruc: '40123456', nombre: 'María Quispe Mamani', rubro: 'Abarrotes', zona: 'Mercado Central', codigo_puesto: 'S-001', periodo: '2026-11', tarifa_id: 4, tarifa_monto_fijo: 1, monto_total: 30, monto_pagado: 10, saldo: 20 },
@@ -92,6 +92,21 @@ test('el padrón vale solo el día (de Lima) en que se descargó', () => {
   assert.equal(jornadaVigente(meta, new Date('2026-11-11T00:30:00Z')), true);
   assert.equal(jornadaVigente(meta, new Date('2026-11-11T13:00:00Z')), false);
   assert.equal(jornadaVigente(null), false);
+});
+
+test('al abrir la app con señal el padrón se renueva, salvo que haya cobros sin subir', () => {
+  const ahora = new Date('2026-11-18T15:20:00Z');
+  const deHoy = { descargadoEn: '2026-11-18T15:08:00.000Z', periodo: '2026-11' };
+  const deAyer = { descargadoEn: '2026-11-17T15:08:00.000Z', periodo: '2026-11' };
+  // Ya es de hoy y no hay nada pendiente: se baja de nuevo (trae altas, bajas y precios del día).
+  assert.equal(padronPorRenovar({ meta: deHoy, enLinea: true, cobrosSinSubir: 0, ahora }), true);
+  // Ya es de hoy pero hay cobros sin subir: se conserva, porque su saldo local ya los descuenta.
+  assert.equal(padronPorRenovar({ meta: deHoy, enLinea: true, cobrosSinSubir: 2, ahora }), false);
+  // No es de hoy: se baja aunque haya pendientes (como siempre).
+  assert.equal(padronPorRenovar({ meta: deAyer, enLinea: true, cobrosSinSubir: 2, ahora }), true);
+  assert.equal(padronPorRenovar({ meta: null, enLinea: true, ahora }), true);
+  // Sin señal, nunca.
+  assert.equal(padronPorRenovar({ meta: deAyer, enLinea: false, ahora }), false);
 });
 
 test('el periodo es el mes de Lima, no el de UTC', () => {

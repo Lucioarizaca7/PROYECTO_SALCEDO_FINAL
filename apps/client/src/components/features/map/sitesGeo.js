@@ -61,6 +61,27 @@ const NO_DEVENGO_TEXT = {
   dado_de_baja: 'Dado de baja: no paga este mes'
 };
 
+/**
+ * Totales de la lista de Sitios. `deuda` es la de los días cobrados del mes, la misma regla del Panel
+ * (getPendingDebt): el saldo de un eventual (cobro_diario) es lo que pagaría hoy si se le encuentra, no deuda,
+ * y va en `deHoy` con cuántos son.
+ */
+export function totalesDeSitios(sites = []) {
+  let deuda = 0;
+  let deHoy = 0;
+  let eventuales = 0;
+  for (const site of sites) {
+    const saldo = Number(site.saldo_pendiente || 0);
+    if (site.cobro_diario) {
+      deHoy += saldo;
+      if (saldo > 0) eventuales += 1;
+    } else {
+      deuda += saldo;
+    }
+  }
+  return { deuda: Number(deuda.toFixed(2)), deHoy: Number(deHoy.toFixed(2)), eventuales };
+}
+
 /** Una línea legible del estado de cuenta del puesto en el mes. */
 export function paymentStatusText(site) {
   const saldo = money(site.saldo_pendiente);

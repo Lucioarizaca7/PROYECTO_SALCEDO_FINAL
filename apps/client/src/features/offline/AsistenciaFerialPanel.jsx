@@ -1,6 +1,6 @@
 import { useState } from 'react';
 
-import { MOTIVOS_OBSERVACION, textoMotivo } from '../../services/asistenciaOffline';
+import { marcadosDeLaLista, MOTIVOS_OBSERVACION, textoMotivo, zonaDelDiaEditable } from '../../services/asistenciaOffline';
 import { useAsistenciaFerial } from './useAsistenciaFerial';
 
 const SIN_NOTA = { motivo: 'no_salio', observacion: '', asistio: false };
@@ -36,7 +36,7 @@ export function AsistenciaFerialPanel({ isOnline, jornada }) {
           <div className="panel-title">Asistencia de hoy (cobro por día)</div>
           <div className="panel-subtitle">
             {feriales.length
-              ? `${Object.keys(estado.marcas).length} de ${feriales.length} marcados · ${asistencia.pendientes} por subir`
+              ? `${marcadosDeLaLista(feriales, estado.marcas)} de ${feriales.length} marcados · ${asistencia.pendientes} por subir`
               : 'El padrón descargado no tiene comerciantes que cobren por día con puesto.'}
           </div>
         </div>
@@ -61,6 +61,8 @@ export function AsistenciaFerialPanel({ isOnline, jornada }) {
                 {asistencia.zonas.length > 1 && (
                   <select className="zona-del-dia-select" aria-label={`Zona de hoy de ${ferial.nombresRazonSocial}`}
                     value={String(marca?.zonaId ?? '')}
+                    disabled={!zonaDelDiaEditable(marca)}
+                    title={zonaDelDiaEditable(marca) ? undefined : 'Marcó «Faltó»: toque «Asistió» para elegir la zona de hoy'}
                     onChange={(event) => asistencia.marcar(ferial.puestoFerialId, true, undefined, event.target.value ? Number(event.target.value) : null)}>
                     <option value="">{ferial.zonaPorConfirmar ? 'Zona sin confirmar: elige la de hoy' : 'Zona de hoy: la de su puesto'}</option>
                     {asistencia.zonas.filter((zona) => ferial.zonaPorConfirmar || String(zona.id) !== String(ferial.zonaPuestoId)).map((zona) => (
