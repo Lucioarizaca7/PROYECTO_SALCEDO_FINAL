@@ -70,6 +70,8 @@
   margin: 0;
   padding: 0;
   display: grid;
+  /* Sin minmax(0, …) la columna crecía al ancho de la lista de zonas del día y en el celular el panel se cortaba. */
+  grid-template-columns: minmax(0, 1fr);
   gap: 8px;
   max-height: 320px;
   overflow-y: auto;
@@ -93,6 +95,13 @@
 .field-queue-item > div:first-child {
   display: grid;
   gap: 2px;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+/* Un selector toma el ancho de su opción más larga («Hoy en Etapa 4 sin asfaltar (S/ 2.00)»): se limita al panel. */
+.field-queue-item select {
+  max-width: 100%;
   min-width: 0;
 }
 
