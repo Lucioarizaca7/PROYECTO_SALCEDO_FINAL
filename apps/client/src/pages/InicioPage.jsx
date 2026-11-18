@@ -9,7 +9,7 @@ import vestimentaImage from '../assets/images/puno-traditional-clothing.jpg';
 const PASOS = [
   { icono: 'padron', titulo: '1. Estás en el padrón', texto: 'La municipalidad registra tu puesto, su zona y los días que vienes.' },
   { icono: 'carnet', titulo: '2. Recibes tu carnet', texto: 'Al frente tiene el QR para el cobrador y atrás tu llave para el portal.' },
-  { icono: 'pago', titulo: '3. Pagas y consultas', texto: 'Pagas en efectivo, Yape o Plin, recibes tu recibo y lo ves desde el celular.' }
+  { icono: 'pago', titulo: '3. Pagas y consultas', texto: 'Pagas en efectivo, recibes tu recibo y lo ves desde el celular.' }
 ];
 
 const BENEFICIOS = [

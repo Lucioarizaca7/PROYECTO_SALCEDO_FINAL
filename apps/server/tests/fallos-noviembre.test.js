@@ -67,7 +67,9 @@ test('la nota de un cobro observado se ve en la revisión', async () => {
 test('un cobro en efectivo ignora el código de operación que arrastró del cobro por Yape', async () => {
   const merchant = await nuevoComerciante();
   const codigo = `YP-${Date.now()}`;
-  await registrarCobro(pool, { comerciante_id: merchant.id, cobrador_id: 1, monto: 10, metodo_pago: 'yape', codigo_operacion: codigo });
+  // Un Yape ya solo entra sin señal, y queda observado (RN-34, 17/11/2026).
+  const yape = await syncOfflineCobro(pool, { comerciante_id: merchant.id, cobrador_id: 1, monto: 10, metodo_pago: 'yape', codigo_operacion: codigo, hash_transaccion: `yape-previo-${Date.now()}` });
+  assert.equal(yape.status, 'OBSERVED');
 
   // En línea: antes respondía "Ya existe un cobro registrado con ese código de operación".
   const efectivo = await registrarCobro(pool, { comerciante_id: merchant.id, cobrador_id: 1, monto: 5, metodo_pago: 'efectivo', codigo_operacion: codigo });
@@ -86,7 +88,7 @@ test('un cobro en efectivo ignora el código de operación que arrastró del cob
 
   // El mismo código digital sigue sin poder usarse dos veces con el mismo método (es único por método:
   // uq_transacciones_operacion; ver tests/codigo-operacion.test.js).
-  await assert.rejects(() => registrarCobro(pool, { comerciante_id: merchant.id, cobrador_id: 1, monto: 5, metodo_pago: 'yape', codigo_operacion: codigo }), /código de operación/);
+  await assert.rejects(() => syncOfflineCobro(pool, { comerciante_id: merchant.id, cobrador_id: 1, monto: 5, metodo_pago: 'yape', codigo_operacion: codigo, hash_transaccion: `yape-repetido-${Date.now()}` }), /código de operación/);
 });
 
 test('el resumen de riesgo cuenta a todos los puntuados, no solo a los que lista', async () => {

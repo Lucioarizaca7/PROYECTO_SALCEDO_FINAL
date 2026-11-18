@@ -3556,7 +3556,14 @@ export async function registrarCobro(db, payload, { audit = null, allowExcess = 
   if (!comercianteId || !cobradorId || !Number.isFinite(monto) || monto <= 0 || !allowedMethods.includes(metodoPago)) {
     throw new ValidationError('Comerciante, monto positivo y método de pago válido son obligatorios');
   }
-  if (['yape', 'plin', 'pos'].includes(metodoPago) && !codigoOperacion) {
+  // RN-34 (decisión del 17/11/2026): solo se cobra en efectivo. En línea un cobro por Yape, Plin o POS se rechaza.
+  // Sin señal el dinero ya se recibió (un celular que tenía el cobro guardado antes del cambio): entra y queda
+  // observado, más abajo. La base lo cuida igual (migración 0037).
+  const pagoDigital = metodoPago !== 'efectivo';
+  if (pagoDigital && !allowExcess) {
+    throw new ValidationError('Solo se cobra en efectivo: Yape, Plin y POS ya no se aceptan');
+  }
+  if (pagoDigital && !codigoOperacion) {
     throw new ValidationError('El código de operación es obligatorio para pagos digitales');
   }
 
@@ -3655,6 +3662,10 @@ export async function registrarCobro(db, payload, { audit = null, allowExcess = 
   }
   if (marcaDelCobro.sinZonaConfirmada) {
     const aviso = 'Puesto sin zona confirmada y cobro sin zona del día: se usó la zona provisional. Confirme la zona del puesto';
+    observacion = observacion ? `${observacion}. ${aviso}` : `Cobro offline observado. ${aviso}`;
+  }
+  if (pagoDigital) {
+    const aviso = `Pago por ${metodoPago.toUpperCase()} (operación ${codigoOperacion}): ya solo se cobra en efectivo. Compruebe que el pago llegó a la cuenta municipal`;
     observacion = observacion ? `${observacion}. ${aviso}` : `Cobro offline observado. ${aviso}`;
   }
 
