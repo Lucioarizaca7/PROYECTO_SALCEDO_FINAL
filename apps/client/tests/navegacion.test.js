@@ -45,7 +45,7 @@ test('sin historial, la sugerencia express es el saldo del mes en efectivo', () 
   assert.equal(suggestion.lastPayment, null);
 });
 
-test('tres cobros iguales seguidos fijan el monto y el método sugeridos', () => {
+test('tres cobros iguales seguidos fijan el monto sugerido; el medio sugerido es siempre efectivo (RN-34)', () => {
   const merchant = { id: 902, nombre: 'Cliente Fijo' };
   const day = (n) => `2026-10-0${n}T15:00:00.000Z`;
   const history = [
@@ -56,7 +56,7 @@ test('tres cobros iguales seguidos fijan el monto y el método sugeridos', () =>
   ];
   const suggestion = buildExpressSuggestion(merchant, { saldo: 60 }, history);
   assert.equal(suggestion.suggestedAmount, 20);
-  assert.equal(suggestion.preferredMethod, 'yape');
+  assert.equal(suggestion.preferredMethod, 'efectivo', 'el historial fue por Yape, pero ya solo se cobra en efectivo');
   assert.equal(suggestion.lastPayment.fecha_cobro, day(3));
   assert.match(suggestion.lastLabel, /S\/ 20\.00 con YAPE/);
 });

@@ -1,14 +1,17 @@
 /**
- * Código de operación de Yape/Plin/POS (revisión del 11/11/2026). Solo el mismo hash es el mismo cobro
- * reenviado. Antes, sin señal, otro cobro con un número de operación ya usado se daba por "duplicado": el
- * celular lo borraba de la cola y el dinero no entraba a ninguna parte. Y el número se comparaba sin el
- * método, aunque la base lo pide único por método (un Yape y un POS con el mismo número no chocan).
+ * Solo efectivo (RN-34, decisión del 17/11/2026) y código de operación de los cobros digitales que quedan.
+ *
+ * En línea ya no se cobra por Yape, Plin ni POS. El único cobro digital que entra es el que un celular guardó
+ * sin señal: el dinero ya se recibió, así que se registra y queda observado. Para esos sigue valiendo la
+ * revisión del 11/11/2026: solo el mismo hash es el mismo cobro reenviado; otro cobro con un número de
+ * operación ya usado se rechaza a la vista (antes se daba por "duplicado" y el dinero no entraba), y el número
+ * es único por método (un Plin y un POS con el mismo número no chocan).
  */
 import test, { after, before } from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
-  closeDatabase, createUser, getSyncErrors, initializeDatabase, insertComerciante, insertPuesto, insertZona,
+  closeDatabase, createUser, getCobrosObservados, getSyncErrors, initializeDatabase, insertComerciante, insertPuesto,
   registrarCobro, syncOfflineBatch
 } from '../src/db.js';
 import { pool } from '../src/pg.js';
@@ -33,21 +36,33 @@ async function comerciante() {
   return merchant;
 }
 const nuevoCobrador = () => createUser({ nombre: `Cobrador operación ${unico()}`, email: `operacion-${unico()}@prueba.pe`, password: 'clave-de-prueba-1', rol: 'cobrador' });
+const cobrosDe = async (comercianteId) => (await pool.query('SELECT metodo_pago FROM transacciones WHERE comerciante_id = $1', [comercianteId])).rows;
 
-test('en línea: el número de operación es único por método y el aviso dice en qué recibo se usó', async () => {
+test('en línea solo se cobra en efectivo: Yape, Plin y POS se rechazan y no dejan nada escrito', async () => {
   const cobrador = await nuevoCobrador();
-  const numero = `OP${unico()}`;
-  const yape = await registrarCobro(pool, { comerciante_id: (await comerciante()).id, cobrador_id: cobrador.id, monto: 3, metodo_pago: 'yape', codigo_operacion: numero });
+  const merchant = await comerciante();
+  for (const metodo of ['yape', 'plin', 'pos']) {
+    await assert.rejects(
+      registrarCobro(pool, { comerciante_id: merchant.id, cobrador_id: cobrador.id, monto: 3, metodo_pago: metodo, codigo_operacion: `OP${unico()}` }),
+      (error) => error.status === 400 && /Solo se cobra en efectivo/.test(error.message));
+  }
+  assert.equal((await cobrosDe(merchant.id)).length, 0);
 
-  const pos = await registrarCobro(pool, { comerciante_id: (await comerciante()).id, cobrador_id: cobrador.id, monto: 3, metodo_pago: 'pos', codigo_operacion: numero });
-  assert.equal(pos.codigo_operacion, numero, 'antes chocaba con el Yape del mismo número');
-
-  await assert.rejects(
-    registrarCobro(pool, { comerciante_id: (await comerciante()).id, cobrador_id: cobrador.id, monto: 3, metodo_pago: 'yape', codigo_operacion: numero }),
-    (error) => error.status === 409 && error.message.includes(`ya se usó en el cobro ${yape.comprobante}`));
+  const efectivo = await registrarCobro(pool, { comerciante_id: merchant.id, cobrador_id: cobrador.id, monto: 3, metodo_pago: 'efectivo' });
+  assert.equal(efectivo.estado, 'confirmado');
 });
 
-test('sin señal: otro cobro con un número ya usado queda rechazado a la vista, no "duplicado"', async () => {
+test('la base no deja un cobro digital que no esté observado', async () => {
+  const cobrador = await nuevoCobrador();
+  const merchant = await comerciante();
+  const efectivo = await registrarCobro(pool, { comerciante_id: merchant.id, cobrador_id: cobrador.id, monto: 3, metodo_pago: 'efectivo' });
+  await assert.rejects(
+    pool.query("UPDATE transacciones SET metodo_pago = 'yape' WHERE id = $1", [efectivo.id]),
+    (error) => error.code === '23514' && error.constraint === 'transacciones_solo_efectivo');
+  assert.deepEqual(await cobrosDe(merchant.id), [{ metodo_pago: 'efectivo' }]);
+});
+
+test('sin señal: un cobro digital guardado antes del cambio entra observado; un número ya usado se rechaza a la vista', async () => {
   const cobrador = await nuevoCobrador();
   const numero = `OP${unico()}`;
   const primero = {
@@ -55,11 +70,17 @@ test('sin señal: otro cobro con un número ya usado queda rechazado a la vista,
     fecha_cobro: new Date().toISOString(), hash_transaccion: `hash-${unico()}`
   };
   const segundo = { ...primero, comerciante_id: (await comerciante()).id, hash_transaccion: `hash-${unico()}` };
+  // El mismo número con otro método no choca.
+  const conPos = { ...primero, comerciante_id: (await comerciante()).id, metodo_pago: 'pos', hash_transaccion: `hash-${unico()}` };
 
-  const { resultados } = await syncOfflineBatch(pool, [primero, segundo], { cobradorId: cobrador.id, deviceId: 'cel-operacion' });
-  assert.equal(resultados[0].estado, 'sincronizado');
+  const { resultados } = await syncOfflineBatch(pool, [primero, segundo, conPos], { cobradorId: cobrador.id, deviceId: 'cel-operacion' });
+  assert.equal(resultados[0].estado, 'observado', 'el dinero ya se recibió: entra y va a revisión');
   assert.equal(resultados[1].estado, 'rechazado', 'antes era "duplicado" y el celular lo borraba de la cola');
   assert.match(resultados[1].mensaje, new RegExp(`${numero} de PLIN ya se usó`));
+  assert.equal(resultados[2].estado, 'observado');
+
+  const observado = (await getCobrosObservados(pool)).find((item) => Number(item.comerciante_id) === primero.comerciante_id);
+  assert.match(observado.motivo, new RegExp(`Pago por PLIN \\(operación ${numero}\\): ya solo se cobra en efectivo`));
 
   const errores = await getSyncErrors(pool);
   assert.ok(errores.some((item) => item.hash_transaccion === segundo.hash_transaccion), 'sale en los errores de sincronización');

@@ -189,7 +189,7 @@ test('registrarCobro rechaza cobros duplicados por código de operación', async
     codigo_operacion: 'OP-123456',
     observaciones: 'Primer cobro',
     periodo: '2026-09'
-  });
+  }, { allowExcess: true });   // digital: solo entra sin señal, y queda observado (RN-34)
 
   await assert.rejects(async () => {
     await registrarCobro(db, {
@@ -201,7 +201,7 @@ test('registrarCobro rechaza cobros duplicados por código de operación', async
       codigo_operacion: 'OP-123456',
       observaciones: 'Cobro duplicado',
       periodo: '2026-09'
-    });
+    }, { allowExcess: true });
   }, /duplicado|ya existe|código de operación/i);
 });
 

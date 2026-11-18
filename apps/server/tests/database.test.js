@@ -88,7 +88,9 @@ test('el riesgo de morosidad se recalcula cada día y no muestra a los dados de 
   assert.ok(riesgo.records.length > 0);
   assert.ok(riesgo.records.every((item) => item.motivo_principal !== 'puntaje viejo'));
   assert.ok(riesgo.records.every((item) => Number(item.comerciante_id) !== Number(deBaja.id)));
-  assert.ok(riesgo.records.every((item) => todayInLima(new Date(item.fecha_calculo)) === todayInLima()));
+  // fecha_calculo ya viene en hora de Lima, sin zona ('AAAA-MM-DD HH:MM:SS'). Se compara su día tal cual: con
+  // new Date() una máquina en UTC lo leía como UTC y, de 00:00 a 05:00 de Lima, la prueba caía en el día anterior.
+  assert.ok(riesgo.records.every((item) => String(item.fecha_calculo).slice(0, 10) === todayInLima()));
 });
 
 test('la morosidad del panel es la parte de lo devengado en el periodo que sigue impaga', () => {
