@@ -177,14 +177,7 @@ export function MerchantDirectory({
                 {catalogos.zonas.map((item) => <option key={item.id} value={item.id}>{item.nombre}</option>)}
               </select>
             </label>
-            <label>
-              <span>Tipo de comerciante</span>
-              <select name="tipo_comerciante" value={form.tipo_comerciante} onChange={(event) => setForm({ ...form, tipo_comerciante: event.target.value, categoria: event.target.value })}>
-                <option value="permanente">Permanente</option>
-                <option value="eventual">Eventual</option>
-                <option value="ferial">Ferial</option>
-              </select>
-            </label>
+            {/* Sin tipo de comerciante (decisión del usuario, 23/11/2026): a todos se les cobra el día que están presentes. */}
             <button className="primary-button" type="submit">{editingId ? 'Guardar cambios' : 'Guardar comerciante'}</button>
           </div>
         </form>

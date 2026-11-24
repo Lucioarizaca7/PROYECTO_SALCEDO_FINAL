@@ -8,7 +8,7 @@ import assert from 'node:assert/strict';
 
 import {
   calcularDeudaAcumulada, calcularLiquidacion, closeDatabase, currentPeriod, initializeDatabase, insertComerciante,
-  insertPuesto, insertZona, setInicioCobro, tipoEnPeriodo, updateComerciante
+  insertPuesto, insertZona, setInicioCobro, tipoEnDia, tipoEnPeriodo, todayInLima, updateComerciante
 } from '../src/db.js';
 import { pool } from '../src/pg.js';
 import { insertZonaConPrecio } from './_deuda.js';
@@ -35,31 +35,48 @@ test('tipoEnPeriodo: cada mes con el tipo que tenía; un mes con días de ferial
   assert.equal(tipoEnPeriodo('ferial', [], '2026-01', '2026-11'), 'ferial', 'sin cambios, el actual');
 });
 
-test('pasar a un ferial a eventual no borra los días que debe del mes pasado', async () => {
+test('tipoEnDia: el tipo de cada día según sus cambios', () => {
+  const cambios = [{ tipo_anterior: 'eventual', tipo_nuevo: 'ferial', desde: '2026-11-23' }];
+  assert.equal(tipoEnDia(cambios, '2026-11-22'), 'eventual');
+  assert.equal(tipoEnDia(cambios, '2026-11-23'), 'ferial', 'el día del cambio ya rige el tipo nuevo');
+  assert.equal(tipoEnDia([...cambios, { tipo_anterior: 'ferial', tipo_nuevo: 'permanente', desde: '2026-12-01' }], '2026-12-05'), 'permanente');
+});
+
+// Un solo tipo (decisión del usuario, 23/11/2026; 0039): la base ya no acepta 'eventual'. La migración pasó a cada
+// eventual a 'ferial' y el trigger de la 0023 dejó el cambio con su fecha; aquí se arma igual, a mano.
+test('el ex eventual: sus meses de eventual no se deben; desde el cambio, un día presente sin pagar sí', async () => {
   const mesPasado = anterior(currentPeriod());
   await setInicioCobro(pool, mesPasado);
   const zona = await insertZonaConPrecio(pool, { nombre: `Zona tipo ${process.pid}`, tipo_via: 'asfaltada' });
   const rubro = (await pool.query("SELECT id FROM rubros WHERE nombre = 'ropa'")).rows[0].id;
   const comerciante = await insertComerciante(pool, {
-    dni_ruc: `4657${String(process.pid).slice(-4).padStart(4, '0')}`, nombre: 'Ferial que pasa a eventual', rubro_id: rubro,
-    zona_id: zona.id, tipo_comerciante: 'ferial', estado: 'activo', usuario_creador: 1
+    dni_ruc: `4657${String(process.pid).slice(-4).padStart(4, '0')}`, nombre: 'Ex eventual', rubro_id: rubro,
+    zona_id: zona.id, tipo_comerciante: 'eventual', estado: 'activo', usuario_creador: 1
   });
-  await pool.query(`UPDATE comerciantes SET creado_en = $2::date WHERE id = $1`, [comerciante.id, `${mesPasado}-01`]);
-  const puesto = await insertPuesto(pool, { zona_id: zona.id, metros_cuadrados: 4, direccion: 'Puesto que cambia de tipo', comerciante_id: comerciante.id });
-  // Dos días marcados el mes pasado, sin pagar (con la tarifa que regía ese mes).
-  for (const dia of ['10', '17']) {
-    await pool.query(`INSERT INTO asistencias_feriales (puesto_id, fecha, sesion, marca, fuente) VALUES ($1, $2::date, '', 'P', 'app')`,
-      [puesto.id, `${mesPasado}-${dia}`]);
+  assert.equal(comerciante.tipo_comerciante, 'ferial', 'el tipo pedido se ignora');
+  await assert.rejects(pool.query("UPDATE comerciantes SET tipo_comerciante = 'eventual' WHERE id = $1", [comerciante.id]), /comerciantes_un_solo_tipo/);
+
+  const hoy = todayInLima();
+  await pool.query('UPDATE comerciantes SET creado_en = $2::date WHERE id = $1', [comerciante.id, `${mesPasado}-01`]);
+  await pool.query("INSERT INTO comerciantes_tipo_cambios (comerciante_id, tipo_anterior, tipo_nuevo, desde) VALUES ($1, 'eventual', 'ferial', $2::date)",
+    [comerciante.id, hoy]);
+  const puesto = await insertPuesto(pool, { zona_id: zona.id, direccion: 'Puesto del ex eventual', comerciante_id: comerciante.id });
+  const marcar = (dia) => pool.query("INSERT INTO asistencias_feriales (puesto_id, fecha, sesion, marca, fuente) VALUES ($1, $2::date, '', 'P', 'app')", [puesto.id, dia]);
+
+  // El mes pasado era eventual: un día marcado ese mes no se debe (RN-52 seguía vigente).
+  await marcar(`${mesPasado}-10`);
+  // Este mes, ya con el tipo único: hoy estuvo presente y no pagó.
+  await marcar(hoy);
+  // Lo que pagó como eventual antes del cambio (sin periodo_aplicado) pagó ese día y no cubre el de hoy.
+  if (hoy.slice(8) !== '01') {
+    await pool.query(`INSERT INTO transacciones (comerciante_id, cobrador_id, monto, concepto, metodo_pago, hash_transaccion, fecha_cobro_cliente)
+      VALUES ($1, 2, 3, 'Día como eventual', 'efectivo', $2, ($3::date + time '12:00') AT TIME ZONE 'America/Lima')`,
+    [comerciante.id, `prueba-ex-eventual-${comerciante.id}`, `${hoy.slice(0, 8)}01`]);
   }
-  const debia = (await calcularLiquidacion(pool, comerciante.id, mesPasado)).saldo;
-  assert.ok(debia > 0);
 
-  await updateComerciante(pool, comerciante.id, { tipo_comerciante: 'eventual' });
-  const { rows: cambios } = await pool.query('SELECT tipo_anterior, tipo_nuevo FROM comerciantes_tipo_cambios WHERE comerciante_id = $1', [comerciante.id]);
-  assert.deepEqual(cambios.map((item) => [item.tipo_anterior, item.tipo_nuevo]), [['ferial', 'eventual']]);
-
-  assert.equal((await calcularLiquidacion(pool, comerciante.id, mesPasado)).saldo, debia, 'antes daba 0: el mes se recalculaba como eventual');
+  const esteMes = await calcularLiquidacion(pool, comerciante.id);
+  assert.equal(esteMes.saldo, 3, 'el día presente sin pagar se debe');
+  assert.equal(esteMes.monto_pagado, 0, 'lo pagado como eventual no lo cubre');
   const deuda = await calcularDeudaAcumulada(pool, comerciante.id);
-  assert.deepEqual(deuda.meses_impagos, [mesPasado], 'antes la deuda atrasada desaparecía');
-  assert.equal(deuda.deuda_vencida, debia);
+  assert.ok(!deuda.meses_impagos.includes(mesPasado), 'el mes en que era eventual no entra en la deuda');
 });

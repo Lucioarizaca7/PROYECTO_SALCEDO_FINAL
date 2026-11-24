@@ -278,7 +278,8 @@ test('la plantilla oficial trae los encabezados que reconoce la importación', a
   assert.deepEqual(sheets.map((sheet) => sheet.name).sort(), ['LISTAS_SISREC', 'PADRON']);
   const padron = sheets.find((sheet) => sheet.name === 'PADRON');
   const zona = (await db.query('SELECT nombre FROM zonas ORDER BY id LIMIT 1')).rows[0].nombre;
-  padron.rows.push(['53234567', 'Desde Plantilla', 'PLA-01', 'BLOQUE T', zona, 'ferial', 'zapatillas', 2, 'Presente']);
+  // La plantilla ya no tiene la columna de tipo de comerciante (23/11/2026).
+  padron.rows.push(['53234567', 'Desde Plantilla', 'PLA-01', 'BLOQUE T', zona, 'zapatillas', 2, 'Presente']);
 
   const preview = await previewPadronSheets(sheets, { filename: 'plantilla.xlsx', db });
   assert.equal(preview.workbookType, 'merchant-padron');

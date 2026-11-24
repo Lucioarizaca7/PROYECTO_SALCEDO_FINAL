@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { BrowserRouter, Navigate, Route, Routes, useLocation } from 'react-router-dom';
 
 import { AppShell } from './app/AppShell';
-import { canSee, HOME_PATH, navItems } from './app/navegacion';
+import { canSee, HOME_PATH, navItemByPath, navItems } from './app/navegacion';
 import { SisrecContext } from './app/SisrecContext';
 import { useDatosSisrec } from './app/useDatosSisrec';
 import { useSesion } from './app/useSesion';
@@ -21,7 +21,6 @@ import { PagosPage } from './pages/PagosPage';
 import { PanelPage } from './pages/PanelPage';
 import { PortalPage } from './pages/PortalPage';
 import { SitiosPage } from './pages/SitiosPage';
-import { TarifasPage } from './pages/TarifasPage';
 import { TicketsPage } from './pages/TicketsPage';
 import { UsuariosPage } from './pages/UsuariosPage';
 import { DeudaPage } from './pages/DeudaPage';
@@ -48,7 +47,6 @@ function pageFor(key, { user, refresh }) {
     case 'mi-clave': return <MiClavePage />;
     case 'dispositivos': return <DeviceSessions />;
     case 'ia': return <AnaliticaPage />;
-    case 'tarifas': return <TarifasPage />;
     default: return <Navigate to={HOME_PATH} replace />;
   }
 }
@@ -86,8 +84,8 @@ function SisrecRoutes() {
     setLeaving(true);
     sesion.logout();
   };
-  const from = location.state?.from;
-  const afterLogin = navItems.some((item) => item.path === from && canSee(item, user.rol)) ? from : HOME_PATH;
+  const from = navItemByPath(location.state?.from);
+  const afterLogin = from && canSee(from, user.rol) ? from.path : HOME_PATH;
 
   return (
     <SisrecContext.Provider value={{ user, isOnline, jornada, offlineQueue, avisoSesion: sesion.aviso, cerrarAvisoSesion: () => sesion.setAviso(''), ...datos }}>
@@ -100,6 +98,9 @@ function SisrecRoutes() {
               element={canSee(item, user.rol) ? pageFor(item.key, { user, refresh: datos.refresh }) : <Navigate to={HOME_PATH} replace />}
             />
           ))}
+          {navItems.flatMap((item) => (item.aliases ?? []).map((alias) => (
+            <Route key={alias} path={alias} element={<Navigate to={canSee(item, user.rol) ? item.path : HOME_PATH} replace />} />
+          )))}
         </Route>
         <Route path="/ingresar" element={<Navigate to={afterLogin} replace />} />
         <Route path="/verificar/:token" element={<VerificarPage />} />

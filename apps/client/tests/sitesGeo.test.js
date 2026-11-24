@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  accountStatusText, buildAvenueSample, buildSiteFeatures, filterSites, geolocationErrorMessage, paymentStatusText, rectangleAround, siteFromFeature, siteProperties, totalesDeSitios, PAYMENT_COLORS
+  accountStatusText, buildAvenueSample, buildSiteFeatures, filterSites, geolocationErrorMessage, paymentStatusText, rectangleAround, siteFromFeature, siteProperties, tamanoPuesto, totalesDeSitios, PAYMENT_COLORS
 } from '../src/components/features/map/sitesGeo.js';
 
 test('Sitios suma la deuda como el Panel: el día del eventual va aparte', () => {
@@ -104,6 +104,28 @@ test('el puesto sin días cobrados explica por qué no debe; con deuda dice que 
   assert.equal(paymentStatusText({ estado_pago: 'no_devenga', motivo: 'sin_asistencia' }), 'Sin días cobrados en el mes: no debe nada');
   assert.equal(paymentStatusText({ estado_pago: 'no_devenga', motivo: 'ferial_sin_asistencia' }), 'Sin días cobrados en el mes: no debe nada');
   assert.equal(paymentStatusText({ estado_pago: 'pendiente', saldo_pendiente: 6 }), 'Debe por días cobrados: S/ 6.00', 'antes decía "Saldo del mes"');
-  assert.equal(paymentStatusText({ estado_pago: 'sin_tarifa' }), 'Su zona no tiene precio por día: póngalo en Tarifas');
+  assert.equal(paymentStatusText({ estado_pago: 'sin_tarifa' }), 'Su zona no tiene precio por día: póngalo en Zonas y tarifas');
   assert.equal(paymentStatusText({ estado_pago: 'no_devenga', motivo: 'dado_de_baja' }), 'Dado de baja: no paga este mes');
+});
+
+test('el punto de un puesto crece con el zoom para que los puestos no se vean pegados (23/11/2026)', () => {
+  assert.equal(tamanoPuesto(14), 4);
+  assert.equal(tamanoPuesto(18), 6);
+  assert.equal(tamanoPuesto(19.6), 10);
+  assert.equal(tamanoPuesto(20), 18);
+  assert.equal(tamanoPuesto(22), 26);
+  assert.equal(tamanoPuesto(undefined), 4);
+  // En cada zoom, dos puestos a 4 m quedan más lejos que el diámetro del punto: no se montan.
+  for (const zoom of [18, 19, 20, 21]) {
+    const metrosPorPixel = (156543.03 * Math.cos((15.869 * Math.PI) / 180)) / 2 ** zoom;
+    assert.ok(4 / metrosPorPixel > tamanoPuesto(zoom), `zoom ${zoom}`);
+  }
+});
+
+test('el bloque 2.5D de un puesto mide 2.5 m: dos puestos a 4 m no se tocan', () => {
+  const [feature] = buildSiteFeatures([{ id: 1, latitud: -15.869, longitud: -69.999 }]).features;
+  const ring = feature.geometry.coordinates[0];
+  const anchoM = (ring[1][0] - ring[0][0]) * 111320 * Math.cos((15.869 * Math.PI) / 180);
+  assert.ok(Math.abs(anchoM - 2.5) < 0.05);
+  assert.ok(anchoM < 4);
 });

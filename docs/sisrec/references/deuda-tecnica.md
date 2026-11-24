@@ -134,6 +134,30 @@ Corregidos, con prueba en `tests/codigo-operacion.test.js`, `tests/tipo-via-de-c
 
 Queda: el paquete de jornada calcula dos veces el mes en curso (`calcularLiquidacion` y otra vez dentro de `calcularDeudaAcumulada`). Con un padrón mucho mayor convendrá la liquidación en lote (paso 6).
 
+## Un solo tipo de comerciante del 23/11/2026 (migración 0039)
+
+- **Hecho:** a todos se les cobra el día que están presentes, y un día presente sin pagar queda como deuda (RN-07 y RN-52, ver `reglas-negocio.md`). En la base real pasaron 11 eventuales y 10 permanentes a `ferial`. Comparando la liquidación de los 52 antes y después, los 41 feriales y permanentes no cambiaron. Los 11 ex eventuales ya no tienen el cobro «de hoy si se le encuentra» (S/ 2 o S/ 3): deben los días que se les marque. El respaldo previo está en el scratchpad de la sesión (`sisrec-antes-0039-2026-11-23.dump`).
+- **Queda sin uso, a propósito:** la rama `eventual` de `calcularLiquidacion`, `cobro_diario` en el cliente (Cobrar, Sitios, el paquete sin señal) y `totalesDeSitios`. Sirven para los meses pasados en que alguien fue eventual y para los celulares que todavía tengan un padrón bajado antes del cambio. Se pueden quitar cuando ya no queden meses de eventual por cobrar.
+- **Cuidado al migrar:** `initializeDatabase` aplica las migraciones pendientes al arrancar, y las configuraciones `dev` y `api` usan `tsx watch`. Una migración nueva llega a la base real con la siguiente edición de `apps/server/src`. Antes de escribir una, hay que detener esos servidores.
+
+## Mapa y puestos de la feria del 23/11/2026
+
+- **«Vista híbrida» en 2.5D mostraba el mapa de calles:** sin `VITE_MAPBOX_TOKEN` caía siempre a OpenStreetMap. Ahora usa el satélite con calles de la vista 2D, y el relleno del plano municipal casi no se ve en esa capa: con opacidad 0.85 tapaba el terreno (`SitesMap25D.jsx`).
+- **400 puestos sobre las 4 calles** (pedido del usuario; primero fueron 500 y se rebajaron el mismo día): S-001..S-188 Av. Sideral, S-189..S-298 Jr. Juan Cáceres, S-299..S-344 Av. Siete y S-345..S-400 Calle S/N, a unos 4 m uno de otro y sin puestos en los cruces. Av. Sideral tiene dos calzadas y lleva una fila en cada uno de sus 4 carriles; las demás calles, una fila a cada lado. Cada zona recibe puestos según sus metros de fila (ejes de OpenStreetMap). Los 62 puestos ocupados conservan id, titular e historial. Los libres, que eran del mismo día y sin historial, se borraron y se crearon de nuevo. **Comerciantes repartidos entre las 4 zonas** según su cantidad de puestos: Av. Sideral 23, Jr. Juan Cáceres 13, Av. Siete 7 y Calle S/N 9. Para eso, 14 comerciantes de un solo puesto cambiaron de zona; el cambio queda en `puestos_zona_cambios` con fecha 23/11/2026 y los días ya marcados conservan su zona. Desde ahí, quienes pasaron de Av. Sideral (S/ 3) a otra zona pagan S/ 2. Hay filas de auditoría `ORDENAR_PUESTOS_EN_CALLES` y `REORDENAR_PUESTOS_400`, y respaldos previos en el scratchpad de cada sesión.
+- **Tamaño de los puestos en el mapa:** el punto crece con el zoom (`tamanoPuesto`: 6 px a zoom 18, 10 a 19, 18 a 20 y 26 a 21) y siempre es menor que la distancia entre puestos. Se puede acercar hasta zoom 22. En 2.5D cada puesto es un bloque de 2.5 × 2.5 m; antes medía 4 × 5 m y se tocaban.
+- **Queda, para el usuario:** S-338 (Juan José Arquin, Av. Siete) sale «sin tarifa vigente». Tiene un día marcado el 13/11/2026, y el precio de Av. Siete rige desde el 23/11/2026, así que ese día no tiene precio. Un precio no se pone hacia atrás (RN-14): ese día se anula o se cobra aparte.
+
+## Revisión de la pantalla Zonas y tarifas del 18/11/2026
+
+Corregido, con prueba en `apps/client/tests/tarifasPorZona.test.js` y `sitesGeo.test.js`:
+- **«Cambiar precio» proponía siempre hoy** y chocaba con un precio puesto hoy o programado («ya tiene un precio vigente desde…»). Ahora propone el primer día que acepta el servidor (`primerDiaDePrecioNuevo`).
+- **Cerrar un precio sin otro que lo siga** dejaba la zona sin precio sin avisar. Ahora la pantalla lo advierte (`zonaQuedaSinPrecio`).
+- **Textos que mandaban a «Tarifas»**, pantalla que ya no existe: el error del cobro, la observación del cobro sin señal y el estado del mapa. Ahora dicen «Zonas y tarifas».
+- **Se había perdido la ayuda «Cómo armar las zonas»** (RN-11) al unir las pantallas. Volvió, desplegable.
+- **Avisos superpuestos:** el de una zona guardada seguía visible al guardar un precio. Ahora cada formulario limpia los anteriores.
+
+Queda, para el usuario: el **inicio de cobro de la base real es `2026-12`**, un mes futuro (guardado el 16/10/2026; hoy `setInicioCobro` rechaza un mes futuro). Mientras siga así, la deuda acumulada no suma ningún mes, y la pantalla no deja guardarlo hasta elegir un mes que no sea futuro. Desde qué mes se cobra lo decide el usuario.
+
 ## Auditoría con Playwright del 18/11/2026 (base real, 52 comerciantes)
 
 - **Padrón del celular de la mañana:** no se volvía a bajar en el día; seguía mostrando comerciantes borrados y no traía altas ni precios nuevos. Ahora se baja al abrir la app con señal si no quedan cobros sin subir (`padronPorRenovar`).

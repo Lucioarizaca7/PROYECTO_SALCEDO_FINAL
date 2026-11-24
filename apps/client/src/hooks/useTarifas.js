@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useSisrec } from '../app/SisrecContext';
+import { primerDiaDePrecioNuevo, zonaQuedaSinPrecio } from '../lib/tarifasPorZona';
 import { hoyEnLima } from '../services/jornadaOffline';
 import { apiBase, authFetch, leerJson } from '../services/session';
 
@@ -13,31 +14,62 @@ export const tarifaYaRige = (tarifa, hoy = hoyEnLima()) => Boolean(tarifa?.vigen
 export const precioSugerido = (zona) => (zona?.precio_dia != null ? String(Number(zona.precio_dia))
   : zona?.tipo_via === 'asfaltada' ? '3' : zona?.tipo_via === 'sin_asfaltar' ? '2' : '');
 
-// Un precio nuevo empieza hoy por omisión: con una fecha pasada cambiaría la deuda de días ya cobrados.
-const nuevoPrecio = (zona = null) => ({ zona_id: zona ? String(zona.id) : '', monto_fijo: precioSugerido(zona), vigencia_inicio: hoyEnLima(), vigencia_fin: '', norma: '' });
+// Un precio nuevo empieza hoy o después (primerDiaDePrecioNuevo): con una fecha pasada cambiaría la deuda de días
+// ya cobrados.
+const nuevoPrecio = (zona = null, desde = hoyEnLima()) => ({ zona_id: zona ? String(zona.id) : '', monto_fijo: precioSugerido(zona), vigencia_inicio: desde, vigencia_fin: '', norma: '' });
 
-// Página Tarifas: el precio por día de cada zona (cobro solo por día cobrado, 13/11/2026). Crear un precio
-// cierra el anterior de esa zona el día previo; el servidor rechaza la edición si otro usuario la cambió antes.
+// Precios de la pantalla Zonas y tarifas (unidas el 18/11/2026): el precio por día de cada zona (cobro solo por día
+// cobrado, 13/11/2026). Crear un precio cierra el anterior de esa zona el día previo; el servidor rechaza la edición
+// si otro usuario la cambió antes.
 export function useTarifas() {
-  const { refresh, user } = useSisrec();
+  const { refresh, user, tariffRecords = [] } = useSisrec();
   const [showForm, setShowForm] = useState(false);
   // Primer mes desde el que se suma la deuda acumulada (lo cambia solo el administrador).
   const [inicioCobro, setInicioCobro] = useState('');
-  const [editingId, setEditingId] = useState(null);
-  const [editingVersion, setEditingVersion] = useState(null);
-  const [yaRige, setYaRige] = useState(false);
+  const [inicioFeedback, setInicioFeedback] = useState(null);
+  const [cargandoInicio, setCargandoInicio] = useState(true);
+  const [savingInicio, setSavingInicio] = useState(false);
+  const [editingTariff, setEditingTariff] = useState(null);
   const [message, setMessage] = useState('');
+  const [success, setSuccess] = useState(false);
+  const [saving, setSaving] = useState(false);
   const [form, setForm] = useState(nuevoPrecio);
+  const hoy = hoyEnLima();
+  const editingId = editingTariff?.id ?? null;
+  const yaRige = tarifaYaRige(editingTariff, hoy);
+  const yaFinalizo = Boolean(editingTariff?.vigencia_fin && editingTariff.vigencia_fin < hoy);
+  const normaRequerida = !editingTariff || Boolean(editingTariff.norma?.trim());
+  // Un precio nuevo no puede empezar antes del día que propone el formulario; uno programado se mueve desde hoy.
+  const inicioMinimo = editingTariff ? hoy : primerDiaDePrecioNuevo(tariffRecords, form.zona_id, hoy);
+  // Solo avisa si la fecha final la cambia ahora quien edita.
+  const quedaSinPrecio = Boolean(editingTariff) && form.vigencia_fin !== (editingTariff.vigencia_fin || '')
+    && zonaQuedaSinPrecio(tariffRecords, editingTariff, form.vigencia_fin);
 
   useEffect(() => {
-    authFetch(`${apiBase}/parametros`).then((response) => response.json())
-      .then((body) => setInicioCobro(body.data?.find((item) => item.clave === 'inicio_cobro')?.valor || ''))
-      .catch(() => null);
+    const controller = new AbortController();
+
+    const cargarInicio = async () => {
+      try {
+        const response = await authFetch(`${apiBase}/parametros`, { signal: controller.signal });
+        const data = await leerJson(response);
+        if (!response.ok) throw new Error(data.message || 'No se pudo cargar el inicio de cobro');
+        if (!controller.signal.aborted) setInicioCobro(data.data?.find((item) => item.clave === 'inicio_cobro')?.valor || '');
+      } catch (error) {
+        if (!controller.signal.aborted) setInicioFeedback({ message: error.message, success: false });
+      } finally {
+        if (!controller.signal.aborted) setCargandoInicio(false);
+      }
+    };
+
+    cargarInicio();
+    return () => controller.abort();
   }, []);
 
   const guardarInicioCobro = async (event) => {
     event.preventDefault();
-    setMessage('');
+    if (savingInicio || cargandoInicio) return false;
+    setSavingInicio(true);
+    setInicioFeedback(null);
     try {
       const response = await authFetch(`${apiBase}/parametros/inicio_cobro`, {
         method: 'PUT',
@@ -46,55 +78,75 @@ export function useTarifas() {
       });
       const data = await leerJson(response);
       if (!response.ok) throw new Error(data.message || 'No se pudo guardar el inicio de cobro');
-      setMessage(data.message);
+      setInicioCobro(data.data.valor);
+      setInicioFeedback({ message: data.message, success: true });
+      return true;
     } catch (error) {
-      setMessage(error.message);
+      setInicioFeedback({ message: error.message, success: false });
+      return false;
+    } finally {
+      setSavingInicio(false);
     }
   };
 
-  /** "Poner precio" / "Cambiar precio" de una zona: un precio nuevo desde hoy (o la fecha que se elija). */
+  /** "Poner precio" / "Cambiar precio" de una zona: un precio nuevo desde el primer día posible (o el que se elija). */
   const cambiarPrecio = (zona = null) => {
-    setEditingId(null);
-    setEditingVersion(null);
-    setYaRige(false);
-    setForm(nuevoPrecio(zona));
+    setEditingTariff(null);
+    setForm(nuevoPrecio(zona, primerDiaDePrecioNuevo(tariffRecords, zona?.id, hoyEnLima())));
     setMessage('');
+    setSuccess(false);
     setShowForm(true);
   };
 
-  // Editar un precio del historial: uno que todavía no empieza se corrige; uno que ya rige solo se cierra.
+  // Un precio que ya rigió mantiene su monto e inicio. Su norma se puede corregir.
   const edit = (item) => {
-    setEditingId(item.id);
-    setEditingVersion(item.version);
-    setYaRige(tarifaYaRige(item));
+    setEditingTariff(item);
     setForm({ zona_id: String(item.zona_id), monto_fijo: String(Number(item.monto_fijo)), vigencia_inicio: item.vigencia_inicio, vigencia_fin: item.vigencia_fin || '', norma: item.norma || '' });
     setMessage('');
+    setSuccess(false);
     setShowForm(true);
   };
 
-  const cerrarFormulario = () => { setShowForm(false); setEditingId(null); };
+  const cerrarFormulario = () => { setShowForm(false); setEditingTariff(null); };
+  const limpiarAviso = () => { setMessage(''); setSuccess(false); };
 
   const submit = async (event) => {
     event.preventDefault();
+    if (saving) return false;
+    setSaving(true);
     setMessage('');
+    setSuccess(false);
     try {
+      const { vigencia_fin, norma, ...campos } = form;
+      const payload = { ...campos, zona_id: Number(form.zona_id) };
+      // El servidor conserva campos omitidos. La fecha pasada y la norma vacía heredada no son cambios.
+      if (!editingTariff || vigencia_fin !== (editingTariff.vigencia_fin || '')) payload.vigencia_fin = vigencia_fin;
+      if (normaRequerida || norma.trim()) payload.norma = norma;
+      if (editingTariff) payload.version = editingTariff.version;
       const response = await authFetch(`${apiBase}/tarifas${editingId ? `/${editingId}` : ''}`, {
         method: editingId ? 'PUT' : 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...form, zona_id: Number(form.zona_id), ...(editingId ? { version: editingVersion } : {}) })
+        body: JSON.stringify(payload)
       });
       const data = await leerJson(response);
       if (!response.ok) throw new Error(data.message || 'No se pudo guardar el precio');
-      setMessage(data.message);
       cerrarFormulario();
       await refresh();
+      setMessage(data.message);
+      setSuccess(true);
+      return true;
     } catch (tariffError) {
       setMessage(tariffError.message);
+      return false;
+    } finally {
+      setSaving(false);
     }
   };
 
   return {
-    showForm, editingId, yaRige, message, form, setForm, cambiarPrecio, edit, cerrarFormulario, submit,
-    inicioCobro, setInicioCobro, guardarInicioCobro, puedeEditar: user?.rol === 'super_admin'
+    showForm, editingId, yaRige, yaFinalizo, normaRequerida, inicioMinimo, quedaSinPrecio, message, success, saving,
+    form, setForm, cambiarPrecio, edit, cerrarFormulario, limpiarAviso, submit,
+    inicioCobro, setInicioCobro, guardarInicioCobro, inicioFeedback, cargandoInicio, savingInicio,
+    puedeEditar: user?.rol === 'super_admin'
   };
 }

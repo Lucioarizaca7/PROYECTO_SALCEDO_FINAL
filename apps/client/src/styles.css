@@ -2469,23 +2469,21 @@ tbody td {
   border: 0;
 }
 
+/* El tamaño lo fija el zoom (--tam-puesto, tamanoPuesto en sitesGeo.js); el ícono no tiene tamaño y el punto se
+   centra sobre la coordenada. */
 .site-marker {
-  display: grid;
-  place-items: center;
-  width: 38px;
-  height: 38px;
-  border: 3px solid white;
-  border-radius: 50% 50% 50% 0;
-  transform: rotate(-45deg);
+  position: absolute;
+  left: 0;
+  top: 0;
+  display: block;
+  width: var(--tam-puesto, 14px);
+  height: var(--tam-puesto, 14px);
+  transform: translate(-50%, -50%);
+  border: solid white;
+  border-width: clamp(1px, calc(var(--tam-puesto, 14px) / 8), 3px);
+  border-radius: 50%;
   background: var(--marker-color);
-  color: white;
-  box-shadow: 0 4px 12px rgba(15, 23, 42, 0.25);
-  font-size: 0.64rem;
-  font-weight: 800;
-}
-
-.site-marker::first-line {
-  transform: rotate(45deg);
+  box-shadow: 0 1px 4px rgba(15, 23, 42, 0.35);
 }
 
 .site-popup {

@@ -68,7 +68,7 @@ test('el ferial ausente que conserva su puesto también paga si asistió', async
   assert.equal(liquidacion.monto_total, 3);
 });
 
-test('las marcas se validan y la lista del día muestra a quienes pagan por día; el eventual no se marca', async () => {
+test('las marcas se validan y la lista del día muestra a todos; quien se pide como eventual también se marca', async () => {
   const db = await initializeDatabase();
   const rubroId = await zonaConPrecioDiario(db, 2); // id de la zona
   const { comerciante, puesto } = await ferialConPuesto(db, rubroId);
@@ -82,7 +82,8 @@ test('las marcas se validan y la lista del día muestra a quienes pagan por día
     tipo_comerciante: 'eventual', estado: 'activo', usuario_creador: 1
   });
   const puestoEventual = await insertPuesto(db, { zona_id: rubroId, metros_cuadrados: 2, direccion: `Eventual ${documento}`, comerciante_id: eventual.id });
-  await assert.rejects(() => marcarAsistencias(db, { puesto_id: puestoEventual.id, asistio: true }), /eventual/);
+  // Un solo tipo (23/11/2026, 0039): ya no hay eventual al que no se le marque el día.
+  assert.equal(eventual.tipo_comerciante, 'ferial');
 
   await marcarAsistencias(db, { puesto_id: puesto.id, asistio: true }, { usuarioId: 2 });
   const hoy = await getAsistencias(db);
@@ -90,7 +91,7 @@ test('las marcas se validan y la lista del día muestra a quienes pagan por día
   const fila = hoy.puestos.find((item) => item.puesto_id === Number(puesto.id));
   assert.equal(fila.asistio, true);
   assert.equal(fila.comerciante_id, Number(comerciante.id));
-  assert.ok(!hoy.puestos.some((item) => item.puesto_id === Number(puestoEventual.id)), 'el eventual no está en la lista');
+  assert.ok(hoy.puestos.some((item) => item.puesto_id === Number(puestoEventual.id)), 'quien antes sería eventual está en la lista');
 
   const paquete = await getJornadaPackage(db);
   const enPaquete = paquete.comerciantes.find((item) => item.id === Number(comerciante.id));

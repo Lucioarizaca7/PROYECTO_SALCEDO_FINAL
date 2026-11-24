@@ -87,18 +87,20 @@ test('el permanente paga S/ 3 o S/ 2 por día cobrado, sin importar rubro ni met
   assert.equal((await calcularLiquidacion(db, miercoles.comerciante.id, PERIODO)).monto_total, 12);
 });
 
-test('el ferial y el eventual también cobran S/ 3 en vía asfaltada', async () => {
+test('el ferial cobra S/ 3 en vía asfaltada; quien se pide como eventual paga igual, por día presente (23/11/2026)', async () => {
   const db = await preparar();
   const asfaltada = await zonaNueva(db, 'asfaltada');
   const ferial = await comercianteConPuesto(db, { rubro: 'zapatillas', zonaId: asfaltada.id, tipo: 'ferial' });
   await marcar(db, ferial.puesto, ['2026-09-06', '2026-09-07', '2026-09-13']);
   assert.equal((await calcularLiquidacion(db, ferial.comerciante.id, PERIODO)).monto_total, 9);
 
-  const eventual = await comercianteConPuesto(db, { rubro: 'comida', zonaId: asfaltada.id, tipo: 'eventual' });
-  const hoy = await calcularLiquidacion(db, eventual.comerciante.id);
-  assert.equal(hoy.cobro_diario, true);
-  assert.equal(hoy.monto_total, 3);
-  await assert.rejects(() => marcar(db, eventual.puesto, [todayInLima()]), /eventual: se le cobra el día en que se le encuentra/, 'al eventual se le cobra sin marca');
+  // Un solo tipo (0039): el pedido "eventual" se ignora, se le marca el día y no hay cobro diario sin marca.
+  const antesEventual = await comercianteConPuesto(db, { rubro: 'comida', zonaId: asfaltada.id, tipo: 'eventual' });
+  assert.equal(antesEventual.comerciante.tipo_comerciante, 'ferial');
+  await marcar(db, antesEventual.puesto, ['2026-09-06']);
+  const liquidacion = await calcularLiquidacion(db, antesEventual.comerciante.id, PERIODO);
+  assert.equal(liquidacion.cobro_diario, undefined);
+  assert.equal(liquidacion.monto_total, 3);
 });
 
 test('una zona sin precio: sin días no debe nada; un día marcado avisa que falta el precio', async () => {

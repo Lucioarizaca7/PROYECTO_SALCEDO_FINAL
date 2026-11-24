@@ -21,9 +21,9 @@ export function SitiosPage() {
     && (!filters.porRegularizar || zonaPorRegularizar(site))
   ));
   const pendientesDeZona = source.filter(zonaPorRegularizar).length;
-  // El eventual paga el día en que se le encuentra: su saldo de hoy no es deuda y va aparte, como en el
-  // Panel (getPendingDebt). Antes se sumaba todo y Sitios daba S/ 74 contra S/ 48 del Panel (18/11/2026).
-  const { deuda: totalSaldo, deHoy: saldoEventuales, eventuales } = totalesDeSitios(rows);
+  // La misma deuda que el Panel (getPendingDebt). Desde el 23/11/2026 no hay eventuales: ya no hay un saldo «de hoy»
+  // aparte que mostrar; totalesDeSitios lo sigue separando por si llega uno de un dato antiguo.
+  const { deuda: totalSaldo } = totalesDeSitios(rows);
 
   return (
     <section className="page">
@@ -40,7 +40,6 @@ export function SitiosPage() {
         <div>
           <strong>{rows.length} puestos</strong>
           <span>Saldo de días cobrados del mes: {formatPEN(totalSaldo)}</span>
-          {eventuales > 0 && <span>Eventuales: {formatPEN(saldoEventuales)} de hoy si se les encuentra ({eventuales})</span>}
         </div>
         <div className="map-filters" aria-label="Filtros de sitios">
           <select value={filters.estado} onChange={(event) => setFilters((current) => ({ ...current, estado: event.target.value }))} aria-label="Filtrar por estado de pago">

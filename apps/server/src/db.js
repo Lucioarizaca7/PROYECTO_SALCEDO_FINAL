@@ -145,7 +145,7 @@ async function seedDemoData() {
     const admin = await first(client, `SELECT id FROM usuarios WHERE email = 'admin@salcedo.gob.pe'`);
     const demo = await first(client, `
       INSERT INTO comerciantes (dni_ruc, nombre, rubro_id, zona_id, tipo_comerciante, estado, usuario_creador_id)
-      VALUES ('20123456780', 'Comerciante Demo', $1, $2, 'permanente', 'activo', $3) RETURNING id`,
+      VALUES ('20123456780', 'Comerciante Demo', $1, $2, 'ferial', 'activo', $3) RETURNING id`,
     [await rubroId('comida'), await zonaId('Mercado Central'), admin.id]);
     await client.query(
       `INSERT INTO puestos (comerciante_id, zona_id, codigo_puesto, direccion, metros_cuadrados, estado, latitud, longitud)
@@ -1058,7 +1058,7 @@ export async function getRubros(db) {
 }
 
 // Cada zona con su precio por día vigente hoy (precio_dia NULL = el super_admin aún no lo puso) y el id de esa
-// tarifa, para cambiarlo desde Tarifas. El paquete de jornada la usa para cobrar sin señal.
+// tarifa, para cambiarlo desde Zonas y tarifas. El paquete de jornada la usa para cobrar sin señal.
 export async function getZonas(db) {
   return rows(db, `
     SELECT z.id, z.codigo, z.nombre, z.descripcion, z.tipo_via,
@@ -1091,7 +1091,7 @@ export async function insertZona(db, payload) {
   if (!nombre) throw new ValidationError('El nombre de la zona es obligatorio');
 
   // Precio por día opcional (decisión del 14/11/2026): la zona nace con su precio, que rige desde hoy, en vez
-  // de quedar "sin precio" hasta que alguien vaya a Tarifas. Cambiarlo después sigue siendo en Tarifas.
+  // de quedar "sin precio" hasta que alguien le ponga uno. Cambiarlo después es con "Cambiar precio" (Zonas y tarifas).
   const conPrecio = !vacio(payload.precio_dia);
   const precio = conPrecio ? Number(Number(payload.precio_dia).toFixed(2)) : null;
   if (conPrecio && (!Number.isFinite(precio) || precio <= 0)) throw new ValidationError('El precio por día debe ser mayor que cero');
@@ -1259,7 +1259,11 @@ async function ensureUniqueActiveDocument(db, dniRuc, excludeId = null) {
   if (result) throw new ConflictError('Ya existe un comerciante activo con ese DNI/RUC');
 }
 
-const TIPOS_COMERCIANTE = ['eventual', 'permanente', 'ferial'];
+// Un solo tipo de comerciante (decisión del usuario, 23/11/2026; migración 0039, reemplaza RN-07 y RN-52): a todos
+// se les cobra el día que están presentes, y un día presente sin pagar queda como deuda. Se guarda como 'ferial',
+// que ya cobraba así. Un tipo que llegue en el pedido (pantalla antigua, cola sin señal, padrón) se ignora: no hay
+// otro que elegir. Los meses en que alguien fue eventual se siguen liquidando como entonces (0023).
+const TIPO_COMERCIANTE = 'ferial';
 const ESTADOS_COMERCIANTE = ['activo', 'inactivo', 'pendiente'];
 
 // documentoTemporal: solo la importación del padrón lo activa, para el titular sin DNI. Ese comerciante
@@ -1270,13 +1274,11 @@ export async function insertComerciante(db, payload, { documentoTemporal = false
   const nombre = String(payload.nombre || '').trim();
   const rubroId = Number(payload.rubro_id);
   const zonaId = Number(payload.zona_id);
-  // "categoria" se acepta como sinónimo antiguo de tipo_comerciante.
-  const tipoComerciante = String(payload.tipo_comerciante || payload.categoria || 'permanente').trim();
+  const tipoComerciante = TIPO_COMERCIANTE;
   const estado = String(payload.estado || 'activo').trim();
   const usuarioCreador = Number(payload.usuario_creador || 1);
 
   if (!dniRuc || !nombre || !rubroId || !zonaId) throw new ValidationError('DNI/RUC, nombre, rubro y zona son obligatorios');
-  if (!TIPOS_COMERCIANTE.includes(tipoComerciante)) throw new ValidationError('Tipo de comerciante no válido');
   if (!ESTADOS_COMERCIANTE.includes(estado)) throw new ValidationError('Estado de comerciante no válido');
 
   await ensureUniqueActiveDocument(db, dniRuc);
@@ -1330,16 +1332,13 @@ export async function updateComerciante(db, id, payload, { zonaDelPuesto = false
   const nombre = payload.nombre === undefined ? current.nombre : String(payload.nombre).trim();
   const rubroId = payload.rubro_id === undefined ? current.rubro_id : Number(payload.rubro_id);
   const zonaId = payload.zona_id === undefined ? current.zona_id : Number(payload.zona_id);
-  const tipoComerciante = payload.tipo_comerciante === undefined
-    ? (payload.categoria === undefined ? current.tipo_comerciante : String(payload.categoria).trim())
-    : String(payload.tipo_comerciante).trim();
+  const tipoComerciante = TIPO_COMERCIANTE;
   // Al regularizarse, el pendiente pasa a activo salvo que se pida otro estado.
   const estado = payload.estado === undefined
     ? (regulariza && current.estado === 'pendiente' ? 'activo' : current.estado)
     : String(payload.estado).trim();
 
   if (!nombre || !rubroId || !zonaId) throw new ValidationError('Nombre, rubro y zona son obligatorios');
-  if (!TIPOS_COMERCIANTE.includes(tipoComerciante)) throw new ValidationError('Tipo de comerciante no válido');
   if (!ESTADOS_COMERCIANTE.includes(estado)) throw new ValidationError('Estado de comerciante no válido');
   // RN-06 (decisión del usuario, 15/11/2026): la zona de quien tiene puesto es la de su puesto principal; la base
   // la sigue sola (trigger de la 0036). zonaDelPuesto: la pantalla avisa en vez de ignorar el cambio en silencio.
@@ -1943,6 +1942,7 @@ async function asistenciasPorPuesto(db, merchantId, periodo, diaMetros = null) {
 
 // Todos pagan por día cobrado (13/11/2026): al ferial y al permanente se les marca el día; al eventual se le
 // cobra el día en que se le encuentra, sin marca. Queda async y con la firma de antes para sus llamadores.
+// Desde el 23/11/2026 (0039) nadie es eventual: a todos se les marca el día. Se conserva por los datos antiguos.
 async function cobraPorAsistencia(_db, merchant) {
   return String(merchant.tipo_comerciante || '').trim().toLowerCase() !== 'eventual';
 }
@@ -1950,12 +1950,29 @@ async function cobraPorAsistencia(_db, merchant) {
 // Todo lo pagado en el mes cuenta, con la tarifa que fuera: si se registra una tarifa nueva
 // vigente desde el día 1, lo ya cobrado sigue descontando del saldo.
 // Un cobro cuenta para el mes al que se aplicó (periodo_aplicado) o, si no lo tiene, el mes en que se hizo.
+// Excepción (23/11/2026, 0039): el cobro de un día en que el comerciante era eventual pagó ese día, que nunca fue
+// deuda (sin periodo_aplicado). Si en ese mes deja de ser eventual, ese cobro no descuenta sus días presentes
+// después del cambio: si no, un día presente sin pagar salía cubierto por lo que pagó como eventual.
 async function paidInPeriod(db, merchantId, periodo) {
-  const paid = await first(db, `
-    SELECT COALESCE(SUM(monto), 0) AS pagado FROM transacciones
+  const pagos = await rows(db, `
+    SELECT monto, periodo_aplicado, to_char(${LOCAL('fecha_cobro_cliente')}, 'YYYY-MM-DD') AS dia FROM transacciones
     WHERE comerciante_id = $1 AND estado = 'confirmado'
       AND COALESCE(periodo_aplicado, to_char(${LOCAL('fecha_cobro_cliente')}, 'YYYY-MM')) = $2`, [merchantId, periodo]);
-  return Number(paid.pagado);
+  let cuentan = pagos;
+  if (pagos.some((pago) => pago.periodo_aplicado === null)) {
+    const cambios = await cambiosDeTipo(db, merchantId);
+    if (cambios.some((cambio) => cambio.tipo_anterior === 'eventual')) {
+      cuentan = pagos.filter((pago) => pago.periodo_aplicado !== null || tipoEnDia(cambios, pago.dia) !== 'eventual');
+    }
+  }
+  return dinero(cuentan.reduce((total, pago) => total + Number(pago.monto), 0));
+}
+
+// Tipo que tenía el comerciante un día según sus cambios (0023): el del último cambio hasta ese día o, antes del
+// primero, el anterior a ese primer cambio. Solo se usa con cambios.
+export function tipoEnDia(cambios, dia) {
+  const previos = cambios.filter((cambio) => cambio.desde <= dia);
+  return previos.length ? previos[previos.length - 1].tipo_nuevo : cambios[0].tipo_anterior;
 }
 
 // ---------------------------------------------------------------------------
@@ -1986,10 +2003,10 @@ export async function setInicioCobro(db, valor, { usuarioId = null } = {}) {
 
 // El comerciante no tiene tarifa aplicable (zona sin tipo de vía y rubro sin tarifa, o un mes sin tarifa). La marca
 // sinTarifa deja que el cobro sin señal y el portal lo distingan de otros errores de datos.
-// La zona no tiene precio por día ese día: lo pone el super_admin en Tarifas. No se inventa un monto.
+// La zona no tiene precio por día ese día: lo pone el super_admin en Zonas y tarifas. No se inventa un monto.
 function sinTarifaVigente(zona = null) {
   const donde = zona ? `La zona ${zona}` : 'La zona';
-  return Object.assign(new ValidationError(`${donde} no tiene precio por día: el super administrador debe ponerlo en Tarifas`), { sinTarifa: true });
+  return Object.assign(new ValidationError(`${donde} no tiene precio por día: el super administrador debe ponerlo en Zonas y tarifas`), { sinTarifa: true });
 }
 
 // Tipo con que se liquida un mes (migración 0023, decisión del usuario del 11/11/2026): el cambio de tipo rige
@@ -3640,7 +3657,7 @@ export async function registrarCobro(db, payload, { audit = null, allowExcess = 
   if (monto > liquidation.saldo) {
     if (!allowExcess) throw new ValidationError(`El monto excede el saldo pendiente de S/ ${liquidation.saldo.toFixed(2)}`);
     observacion = liquidation.sin_tarifa
-      ? 'Cobro offline de un comerciante cuya zona no tiene precio por día: póngalo en Tarifas'
+      ? 'Cobro offline de un comerciante cuya zona no tiene precio por día: póngalo en Zonas y tarifas'
       : liquidation.no_devengo
         ? `Cobro offline en un periodo sin devengo (${liquidation.motivo})`
         : `Cobro offline de S/ ${monto.toFixed(2)} excede el saldo pendiente de S/ ${liquidation.saldo.toFixed(2)}`;

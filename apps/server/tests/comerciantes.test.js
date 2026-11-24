@@ -124,36 +124,35 @@ test('calcularLiquidacion respeta la política de no devengo para ferial sin asi
   assert.equal(result.no_devengo, true);
 });
 
-test('al eventual se le cobra un día del precio de su zona, solo una vez por día', async () => {
+// Un solo tipo de comerciante (decisión del usuario, 23/11/2026; 0039). Antes el eventual pagaba el día en que se
+// le encontraba, sin marca, y lo que no pagaba no quedaba como deuda (RN-52).
+test('a todos se les cobra el día que están presentes, y un día presente sin pagar queda como deuda', async () => {
   const db = await initializeDatabase();
   // Zona de S/ 6 por día (lo fija el super_admin).
   const zona = await zonaConPrecio(db, 6);
   const comerciante = await insertComerciante(db, {
-    dni_ruc: '75163744', nombre: 'Ambulante Eventual', rubro_id: 3, zona_id: zona.id,
+    dni_ruc: '75163744', nombre: 'Antes Eventual', rubro_id: 3, zona_id: zona.id,
     categoria: 'eventual', tipo_comerciante: 'eventual', estado: 'activo', usuario_creador: 1
   });
+  assert.equal(comerciante.tipo_comerciante, 'ferial', 'el tipo pedido se ignora: hay uno solo');
+  const puesto = await insertPuesto(db, { comerciante_id: comerciante.id, zona_id: zona.id, direccion: 'Antes eventual, puesto 1' });
 
-  const hoy = await calcularLiquidacion(db, comerciante.id);
-  assert.equal(hoy.cobro_diario, true);
-  assert.equal(hoy.no_devengo, false);
-  assert.equal(hoy.monto_total, 6);
-  assert.equal(hoy.saldo, 6);
-  assert.equal(hoy.vencida, false);
+  // Sin un día presente no debe nada: ya no hay cobro del día sin marca.
+  const sinDias = await calcularLiquidacion(db, comerciante.id, '2026-09');
+  assert.equal(sinDias.no_devengo, true);
+  assert.equal(sinDias.cobro_diario, undefined);
 
-  await registrarCobro(db, { comerciante_id: comerciante.id, cobrador_id: 2, monto: 6, metodo_pago: 'efectivo', concepto: 'Cobro del día' });
-  const pagado = await calcularLiquidacion(db, comerciante.id);
-  assert.equal(pagado.saldo, 0);
-  assert.equal(pagado.estado, 'pagado');
-  await assert.rejects(
-    registrarCobro(db, { comerciante_id: comerciante.id, cobrador_id: 2, monto: 6, metodo_pago: 'efectivo', concepto: 'Cobro del día' }),
-    /excede el saldo pendiente de S\/ 0\.00/
-  );
-
-  // Otro día del mes vuelve a deber su día; un periodo distinto del día no devenga.
-  const otroDia = await calcularLiquidacion(db, comerciante.id, '2026-09', { dia: '2026-09-15' });
-  assert.equal(otroDia.saldo, 6);
-  assert.equal(otroDia.dia, '2026-09-15');
-  assert.equal((await calcularLiquidacion(db, comerciante.id, '2026-08', { dia: '2026-09-15' })).no_devengo, true);
+  // Dos días presentes en septiembre; paga uno: el otro queda como deuda.
+  await marcarDias(db, puesto.id, '2026-09', 2, { desde: 14 });
+  const presente = await calcularLiquidacion(db, comerciante.id, '2026-09');
+  assert.equal(presente.monto_total, 12);
+  assert.equal(presente.saldo, 12);
+  await registrarCobro(db, {
+    comerciante_id: comerciante.id, cobrador_id: 2, monto: 6, metodo_pago: 'efectivo', concepto: 'Un día', periodo: '2026-09'
+  });
+  const debe = await calcularLiquidacion(db, comerciante.id, '2026-09');
+  assert.equal(debe.saldo, 6, 'el día presente sin pagar se debe');
+  assert.equal(debe.vencida, true);
 });
 
 test('registrarCobro rechaza cobros duplicados por código de operación', async () => {

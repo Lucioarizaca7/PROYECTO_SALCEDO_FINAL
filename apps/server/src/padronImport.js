@@ -104,12 +104,10 @@ function detectAttendanceSheet(sheet) {
   return { dataStart, records: dataRows.length, markedCells, marks, dates: [...new Set(dates)] };
 }
 
-function validCategory(value, fallback = 'ferial') {
-  const normalized = normalize(value);
-  if (normalized.includes('eventual')) return 'eventual';
-  if (normalized.includes('permanente')) return 'permanente';
-  if (normalized.includes('ferial') || normalized.includes('feria')) return 'ferial';
-  return fallback;
+// Un solo tipo de comerciante (23/11/2026, 0039): la columna "Tipo Comerciante" de un padrón antiguo se lee pero
+// no cambia nada; a todos se les cobra el día que están presentes.
+function validCategory() {
+  return 'ferial';
 }
 
 function documentValue(value) {

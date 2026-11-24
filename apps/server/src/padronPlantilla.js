@@ -5,9 +5,9 @@ import ExcelJS from 'exceljs';
 import { getRubros, getZonas } from './db.js';
 import { HOJA_LISTAS_PLANTILLA } from './padronImport.js';
 
+// Sin columna de tipo de comerciante: hay un solo tipo desde el 23/11/2026 (0039).
 // Filas con lista desplegable y formato de texto en el DNI; alcanza para el padrón de una feria.
 const FILAS_PLANTILLA = 3000;
-const TIPOS_COMERCIANTE = ['ferial', 'permanente', 'eventual'];
 const ESTADOS_FILA = ['Presente', 'Ausente'];
 
 const COLUMNAS = [
@@ -16,10 +16,9 @@ const COLUMNAS = [
   { header: 'Código Puesto', width: 16, nota: 'Único en todo el padrón. Si lo dejas vacío se genera uno con el nombre de la hoja.' },
   { header: 'Sector', width: 22, nota: 'Bloque, tramo o ubicación. Si lo dejas vacío se usa el nombre de la hoja.' },
   { header: 'Zona', width: 22, nota: 'Elige una zona de la lista. Su tipo de vía define el cobro por día: S/ 3 asfaltada, S/ 2 sin asfaltar.' },
-  { header: 'Tipo Comerciante', width: 17, nota: 'ferial, permanente o eventual.' },
   { header: 'Rubro', width: 16, nota: 'Elige un rubro de la lista.' },
   { header: 'Metraje m2', width: 12, nota: 'Opcional si la zona tiene tipo de vía (el cobro por día no usa metros); obligatorio si no lo tiene.' },
-  { header: 'Estado', width: 12, nota: 'Presente o Ausente. Un ferial ausente conserva su puesto y no devenga.' }
+  { header: 'Estado', width: 12, nota: 'Presente o Ausente. Un comerciante ausente conserva su puesto y no devenga.' }
 ];
 
 const columna = (indice) => String.fromCharCode(65 + indice);
@@ -34,7 +33,6 @@ export async function buildPadronTemplate(db) {
   const listas = libro.addWorksheet(HOJA_LISTAS_PLANTILLA, { state: 'veryHidden' });
   zonas.forEach((zona, indice) => { listas.getCell(`A${indice + 1}`).value = zona.nombre; });
   rubros.forEach((rubro, indice) => { listas.getCell(`B${indice + 1}`).value = rubro.nombre; });
-  TIPOS_COMERCIANTE.forEach((tipo, indice) => { listas.getCell(`C${indice + 1}`).value = tipo; });
   ESTADOS_FILA.forEach((estado, indice) => { listas.getCell(`D${indice + 1}`).value = estado; });
 
   hoja.columns = COLUMNAS.map(({ header, width }) => ({ header, width }));
@@ -54,7 +52,6 @@ export async function buildPadronTemplate(db) {
   };
   lista('Zona', 'A', zonas.length, 'Elige una zona de la lista.');
   lista('Rubro', 'B', rubros.length, 'Elige un rubro de la lista.');
-  lista('Tipo Comerciante', 'C', TIPOS_COMERCIANTE.length, 'Elige ferial, permanente o eventual.');
   lista('Estado', 'D', ESTADOS_FILA.length, 'Elige Presente o Ausente.');
   hoja.dataValidations.add(`${columna(indice('Metraje m2'))}2:${columna(indice('Metraje m2'))}${ultima}`, {
     type: 'decimal', operator: 'greaterThan', allowBlank: true, formulae: [0],

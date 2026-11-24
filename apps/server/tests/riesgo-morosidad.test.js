@@ -33,7 +33,7 @@ before(async () => {
   await pool.query(`
     INSERT INTO comerciantes (dni_ruc, nombre, rubro_id, zona_id, tipo_comerciante, estado)
     SELECT '7700' || lpad(n::text, 4, '0'), 'Padrón grande ' || n, (SELECT id FROM rubros ORDER BY id LIMIT 1),
-           (SELECT id FROM zonas ORDER BY id LIMIT 1), 'permanente', CASE WHEN n % 50 = 0 THEN 'inactivo' ELSE 'activo' END
+           (SELECT id FROM zonas ORDER BY id LIMIT 1), 'ferial', CASE WHEN n % 50 = 0 THEN 'inactivo' ELSE 'activo' END
     FROM generate_series(1, 320) AS n`);
 
   // Paga por día cobrado: S/ 3 por puesto y día marcado en vía asfaltada; hoy asistió y no pagó.
