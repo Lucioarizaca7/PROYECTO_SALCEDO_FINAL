@@ -79,6 +79,7 @@ function FormularioPrecio({ tarifas, zona, hoy, tituloRef, onSave, onCancel }) {
             {tarifas.yaFinalizo ? 'Puedes actualizar la norma de este precio.' : tarifas.yaRige
               ? 'Puedes actualizar la norma o indicar cuándo termina. Para cambiar el monto, registra un precio nuevo.'
               : 'El precio se aplica desde la fecha elegida. Si reemplaza al anterior, ese precio termina el día previo.'}
+            {!tarifas.editingId && tarifas.inicioMinimo > hoy && ` La zona ya tiene un precio que empieza hoy o está programado: el nuevo puede empezar desde el ${tarifas.inicioMinimo}.`}
           </p>
         </div>
       </div>
@@ -87,17 +88,23 @@ function FormularioPrecio({ tarifas, zona, hoy, tituloRef, onSave, onCancel }) {
           <input disabled={tarifas.yaRige} required min="0.01" step="0.01" type="number" inputMode="decimal" value={form.monto_fijo} onChange={(event) => setField('monto_fijo', event.target.value)} />
         </label>
         <label>Vigente desde
-          <input disabled={tarifas.yaRige} required type="date" min={hoy} value={form.vigencia_inicio} onChange={(event) => setField('vigencia_inicio', event.target.value)} />
+          <input disabled={tarifas.yaRige} required type="date" min={tarifas.inicioMinimo} value={form.vigencia_inicio} onChange={(event) => setField('vigencia_inicio', event.target.value)} />
         </label>
         <label>Ordenanza o resolución
           <input required={tarifas.normaRequerida} minLength={3} maxLength={120} value={form.norma} onChange={(event) => setField('norma', event.target.value)} />
         </label>
         {tarifas.editingId && (
           <label>Vigente hasta · opcional
-            <input type="date" disabled={tarifas.yaFinalizo} min={tarifas.yaRige ? hoy : form.vigencia_inicio} value={form.vigencia_fin} onChange={(event) => setField('vigencia_fin', event.target.value)} />
+            <input type="date" disabled={tarifas.yaFinalizo} aria-describedby={tarifas.quedaSinPrecio ? 'precio-sin-sucesor' : undefined} min={tarifas.yaRige ? hoy : form.vigencia_inicio} value={form.vigencia_fin} onChange={(event) => setField('vigencia_fin', event.target.value)} />
           </label>
         )}
       </fieldset>
+      {/* RN-16: sin precio, los cobros en línea de la zona se rechazan y los de sin señal quedan observados. */}
+      {tarifas.quedaSinPrecio && (
+        <p className="zonas-sin-precio" id="precio-sin-sucesor" role="status">
+          Ningún otro precio sigue a este: desde el día siguiente la zona queda sin precio y sus cobros en línea se rechazarán. Si el precio cambia, use «Cambiar precio»: cierra este solo.
+        </p>
+      )}
       <div className="zonas-acciones">
         <button className="primary-button" type="submit" disabled={saving}>{saving ? 'Guardando…' : 'Guardar precio'}</button>
         <button className="secondary-button" type="button" onClick={onCancel} disabled={saving}>Cancelar</button>
@@ -167,9 +174,12 @@ export function ZonasPage() {
     if (historial !== null) historialTitle.current?.focus();
   }, [historial]);
 
+  // Al abrir un formulario se borran los avisos anteriores: se ve solo el del último guardado.
   const openZoneForm = (zona, trigger) => {
     editorTrigger.current = trigger;
     tarifas.cerrarFormulario();
+    tarifas.limpiarAviso();
+    zonas.limpiarAviso();
     if (zona) zonas.editZone(zona);
     else zonas.cancelZone();
     setShowZoneForm(true);
@@ -178,6 +188,8 @@ export function ZonasPage() {
   const openPriceForm = (opener, item, trigger) => {
     editorTrigger.current = trigger;
     setShowZoneForm(false);
+    zonas.cancelZone();
+    zonas.limpiarAviso();
     opener(item);
   };
 
@@ -221,6 +233,18 @@ export function ZonasPage() {
           {tarifas.puedeEditar && <button className="primary-button" type="button" ref={newZoneButton} disabled={busy} onClick={(event) => openZoneForm(null, event.currentTarget)}>Nueva zona</button>}
         </div>
       </div>
+
+      {/* Ayuda de la antigua pantalla Zonas (14/11/2026), recuperada al unirla con Tarifas. */}
+      <details className="panel zonas-ayuda">
+        <summary><strong>Cómo armar las zonas y sus precios</strong></summary>
+        <ul>
+          <li>Si una feria tiene una parte asfaltada y otra sin asfaltar, regístrela como <b>dos zonas</b>: por ejemplo «Feria sábado – asfaltada» y «Feria sábado – sin asfaltar».</li>
+          <li>Si un comerciante se cambia de sitio dentro de la misma zona, no hay que registrar nada: paga lo mismo.</li>
+          <li>Si un día vende en otra zona, el cobrador elige esa zona al cobrar («Zona de hoy») y ese día paga el precio de esa zona.</li>
+          <li>Al crear la zona se le puede poner su precio: el tipo de vía sugiere S/ 3 (asfaltada) o S/ 2 (sin asfaltar). Cambiar después el tipo de vía <b>no cambia el precio</b>.</li>
+          <li>Para otro monto use <b>Cambiar precio</b>: el nuevo empieza el día que elija y el anterior termina el día previo. Los días ya cobrados conservan su precio.</li>
+        </ul>
+      </details>
 
       <Aviso message={zonas.message} success={zonas.success} />
       <Aviso message={tarifas.message} success={tarifas.success} />

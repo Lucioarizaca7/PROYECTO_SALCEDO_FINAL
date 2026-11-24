@@ -33,6 +33,22 @@ export function observacionQueSeConserva(marca, asistio) {
   return { motivo: marca.motivo ?? null, observacion: marca.observacion ?? null };
 }
 
+/**
+ * Elegir la zona de hoy marca «Asistió» (vende hoy en esa zona). Con la marca en «Faltó» no se ofrece:
+ * antes cambiarla pasaba al comerciante a «Asistió» y se le cobraba el día sin que nadie lo pidiera
+ * (auditoría del 18/11/2026). Para elegirla, primero se toca «Asistió».
+ */
+export const zonaDelDiaEditable = (marca) => marca?.asistio !== false;
+
+/**
+ * Cuántos de la lista ya tienen marca hoy. Solo cuenta los puestos de la lista: una marca de alguien que
+ * salió del padrón (dado de baja después de marcarlo) se conserva para subirla, pero no infla el
+ * contador ("45 de 41 marcados", auditoría del 18/11/2026).
+ */
+export function marcadosDeLaLista(feriales = [], marcas = {}) {
+  return feriales.filter((ferial) => marcas[String(ferial.puestoFerialId)]).length;
+}
+
 /** Comerciantes del padrón con el puesto donde se marca su asistencia, ordenados por puesto y nombre. */
 export function ferialesDelPadron(padron = []) {
   // El servidor solo entrega puesto_ferial_id a quien cobra por día cobrado.

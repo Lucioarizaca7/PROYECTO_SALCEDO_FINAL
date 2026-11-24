@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 
-import { aplicarCobroLocal, buscarEnPadron, jornadaVigente, normalizarComerciante } from '../../services/jornadaOffline';
+import { aplicarCobroLocal, buscarEnPadron, jornadaVigente, normalizarComerciante, padronPorRenovar } from '../../services/jornadaOffline';
 import { CLAVE_TICKETS, desdeServidor } from '../../services/ticketsOffline';
 import { storeFor } from '../../services/offlineStore';
 import { apiBase, authFetch } from '../../services/session';
@@ -8,10 +8,15 @@ import { apiBase, authFetch } from '../../services/session';
 const CAN_COLLECT = ['super_admin', 'cobrador'];
 const padronStore = storeFor('padron');
 const jornadaStore = storeFor('jornada');
+const colaStore = storeFor('cobros_cola');
+
+// Cobros del celular que el servidor todavía no tiene (por subir o con error).
+const cobrosSinSubir = async () => (await colaStore.getAll().catch(() => []))
+  .filter((item) => item.estado !== 'sincronizado').length;
 
 /**
- * Padrón y tarifas de la jornada en el celular. Se descargan solos al iniciar sesión si el que hay
- * no es de hoy, y a pedido con el botón "Descargar padrón". Así se busca y se cobra sin señal.
+ * Padrón y tarifas de la jornada en el celular. Se descargan solos al abrir la app con señal (ver
+ * padronPorRenovar) y a pedido con el botón "Descargar padrón". Así se busca y se cobra sin señal.
  */
 export function useJornada({ user }) {
   const [meta, setMeta] = useState(null);
@@ -65,7 +70,7 @@ export function useJornada({ user }) {
     (async () => {
       const current = await jornadaStore.get('meta').catch(() => null);
       setMeta(current || null);
-      if (!jornadaVigente(current) && navigator.onLine) await download();
+      if (padronPorRenovar({ meta: current, enLinea: navigator.onLine, cobrosSinSubir: await cobrosSinSubir() })) await download();
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.id, canCollect]);

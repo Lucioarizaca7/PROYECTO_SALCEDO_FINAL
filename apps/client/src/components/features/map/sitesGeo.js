@@ -61,6 +61,27 @@ const NO_DEVENGO_TEXT = {
   dado_de_baja: 'Dado de baja: no paga este mes'
 };
 
+/**
+ * Totales de la lista de Sitios. `deuda` es la de los días cobrados del mes, la misma regla del Panel
+ * (getPendingDebt): el saldo de un eventual (cobro_diario) es lo que pagaría hoy si se le encuentra, no deuda,
+ * y va en `deHoy` con cuántos son.
+ */
+export function totalesDeSitios(sites = []) {
+  let deuda = 0;
+  let deHoy = 0;
+  let eventuales = 0;
+  for (const site of sites) {
+    const saldo = Number(site.saldo_pendiente || 0);
+    if (site.cobro_diario) {
+      deHoy += saldo;
+      if (saldo > 0) eventuales += 1;
+    } else {
+      deuda += saldo;
+    }
+  }
+  return { deuda: Number(deuda.toFixed(2)), deHoy: Number(deHoy.toFixed(2)), eventuales };
+}
+
 /** Una línea legible del estado de cuenta del puesto en el mes. */
 export function paymentStatusText(site) {
   const saldo = money(site.saldo_pendiente);
@@ -73,7 +94,7 @@ export function paymentStatusText(site) {
     case 'ausente': return 'Ferial ausente: no devenga';
     case 'libre': return 'Puesto libre, sin titular';
     case 'reservado': return 'Puesto reservado';
-    case 'sin_tarifa': return 'Su zona no tiene precio por día: póngalo en Tarifas';
+    case 'sin_tarifa': return 'Su zona no tiene precio por día: póngalo en Zonas y tarifas';
     case 'inactivo': return 'Dado de baja';
     default:
       if (site.estadoPago === 'deuda') return `Saldo pendiente: ${saldo}`;
@@ -122,8 +143,22 @@ export function accountStatusText(props) {
   return props.estadoTexto || paymentStatusText(props);
 }
 
-/** FeatureCollection de polígonos extruibles; descarta puestos sin coordenadas válidas. */
-export function buildSiteFeatures(sites, { widthM = 4, depthM = 5, bearing = 0, height = 4 } = {}) {
+// Diámetro del punto de un puesto según el zoom (23/11/2026). Los puestos de la feria quedan a unos 4 m uno de otro,
+// que son ~7 px a zoom 18, ~14 a 19, ~28 a 20 y ~56 a 21: el punto siempre es menor que esa distancia, así no se
+// montan al alejarse y se ven grandes al acercarse. Antes medía 14 px fijos y a zoom 18 se tapaban.
+const TAMANO_PUESTO_POR_ZOOM = [[16, 4], [18, 6], [19, 10], [20, 18], [21, 26]];
+export function tamanoPuesto(zoom) {
+  const z = Math.floor(Number(zoom) || 0);
+  let tamano = TAMANO_PUESTO_POR_ZOOM[0][1];
+  for (const [desde, px] of TAMANO_PUESTO_POR_ZOOM) if (z >= desde) tamano = px;
+  return tamano;
+}
+
+/**
+ * FeatureCollection de polígonos extruibles; descarta puestos sin coordenadas válidas. El bloque mide 2.5 × 2.5 m y
+ * 2.5 m de alto: con 4 × 5 m se tocaban, porque los puestos de la feria están a unos 4 m (23/11/2026).
+ */
+export function buildSiteFeatures(sites, { widthM = 2.5, depthM = 2.5, bearing = 0, height = 2.5 } = {}) {
   const features = [];
   for (const site of sites) {
     if (site.latitud === null || site.latitud === undefined || site.latitud === '') continue;

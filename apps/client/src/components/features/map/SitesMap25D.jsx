@@ -23,8 +23,24 @@ const FALLBACK_STYLE = {
   layers: [{ id: 'osm', type: 'raster', source: 'osm' }]
 };
 
+// "Vista híbrida" sin token: el mismo satélite con calles que usa la vista 2D (Leaflet). Antes caía al mapa de
+// calles y no se veía el terreno, que es lo que sirve para confirmar el cobro en la calle (23/11/2026).
+const FALLBACK_HYBRID_STYLE = {
+  version: 8,
+  sources: {
+    satelite: {
+      type: 'raster',
+      tiles: ['mt0', 'mt1', 'mt2', 'mt3'].map((s) => `https://${s}.google.com/vt/lyrs=y&x={x}&y={y}&z={z}`),
+      tileSize: 256,
+      maxzoom: 20,
+      attribution: '&copy; Google Maps'
+    }
+  },
+  layers: [{ id: 'satelite', type: 'raster', source: 'satelite' }]
+};
+
 const styleFor = (baseLayer) => {
-  if (!MAPBOX_TOKEN) return FALLBACK_STYLE;
+  if (!MAPBOX_TOKEN) return baseLayer === 'hybrid' ? FALLBACK_HYBRID_STYLE : FALLBACK_STYLE;
   return baseLayer === 'hybrid' ? 'mapbox://styles/mapbox/satellite-streets-v12' : 'mapbox://styles/mapbox/light-v11';
 };
 
@@ -40,7 +56,7 @@ function buildPopup(props, { onCollect, onInspect }) {
   const root = el('div', 'site-popup');
   root.append(el('span', 'eyebrow', `${props.codigo} · ${props.zona}`));
   root.append(el('strong', '', props.titular));
-  root.append(el('span', '', `${props.direccion} · ${props.categoria}`));
+  root.append(el('span', '', props.direccion));
   root.append(el('span', props.estadoPago === 'deuda' ? 'popup-debt' : 'popup-ok', accountStatusText(props)));
   if (onCollect) {
     const button = el('button', 'primary-button compact', 'Cobrar aquí');
@@ -68,8 +84,13 @@ export default function SitesMap25D({ sites, selectedSite, baseLayer, drawing, d
   const dataRef = useRef({ type: 'FeatureCollection', features: [] });
   const readyRef = useRef(false);
   const centeredRef = useRef(false);
+  const restoredView = useRef(lastView);
+
+  // El plano se vuelve a instalar en cada cambio de estilo (style.load): lee la capa elegida en ese momento.
+  const hibridaRef = useRef(baseLayer === 'hybrid');
 
   sitesRef.current = sites;
+  hibridaRef.current = baseLayer === 'hybrid';
   handlersRef.current = { onSelect, onCollect, onInspect, onPickLocation, drawing };
 
   // El padre entrega un array nuevo en cada render; solo se vuelve a dibujar si cambia el contenido.
@@ -88,7 +109,8 @@ export default function SitesMap25D({ sites, selectedSite, baseLayer, drawing, d
         const isLote = ['==', ['get', 'capa'], 'Lote_Comercial'];
         map.addLayer({ id: 'base-manzanas', type: 'fill', source: BASE_SOURCE_ID,
           filter: ['all', ['==', ['geometry-type'], 'Polygon'], ['!=', ['get', 'capa'], 'Lote_Comercial']],
-          paint: { 'fill-color': '#e7ecf3', 'fill-opacity': 0.85, 'fill-outline-color': '#8c9bb0' } }, before);
+          // En la vista híbrida el relleno casi no se ve: con 0.85 tapaba el satélite y no se veía el terreno.
+          paint: { 'fill-color': '#e7ecf3', 'fill-opacity': hibridaRef.current ? 0.08 : 0.85, 'fill-outline-color': '#8c9bb0' } }, before);
         map.addLayer({ id: 'base-lotes', type: 'line', source: BASE_SOURCE_ID, minzoom: 16.5,
           filter: isLote, paint: { 'line-color': '#9aa8bb', 'line-width': 0.6 } }, before);
         map.addLayer({ id: 'base-vias', type: 'line', source: BASE_SOURCE_ID,
@@ -109,9 +131,10 @@ export default function SitesMap25D({ sites, selectedSite, baseLayer, drawing, d
         source: SOURCE_ID,
         paint: {
           'circle-color': ['coalesce', ['get', 'color'], '#64748b'],
-          'circle-radius': ['interpolate', ['linear'], ['zoom'], 12, 5, 18, 9],
+          // Mitad del diámetro de tamanoPuesto (sitesGeo.js) en cada zoom: los puestos están a unos 4 m.
+          'circle-radius': ['interpolate', ['linear'], ['zoom'], 16, 2, 18, 3, 19, 5, 20, 9, 21, 13],
           'circle-stroke-color': '#ffffff',
-          'circle-stroke-width': 2
+          'circle-stroke-width': ['interpolate', ['linear'], ['zoom'], 16, 1, 20, 2]
         }
       });
     }
@@ -130,26 +153,29 @@ export default function SitesMap25D({ sites, selectedSite, baseLayer, drawing, d
     }
   };
 
-  // Los puestos suelen llegar después de montar el mapa: se centra en ellos la primera vez.
+  // Los puestos pueden llegar después del montaje. Encuadra el conjunto una sola vez.
   const recenterOnce = (map) => {
-    const first = dataRef.current.features[0]?.properties;
-    if (centeredRef.current || !first) return;
+    const features = dataRef.current.features;
+    if (centeredRef.current || !features.length) return;
     centeredRef.current = true;
-    if (!lastView) map.jumpTo({ center: [first.longitud, first.latitud], pitch: DEFAULT_PITCH, bearing: DEFAULT_BEARING });
-    else map.setPitch(DEFAULT_PITCH);
+    if (restoredView.current) return;
+    const bounds = new mapboxgl.LngLatBounds();
+    for (const { properties } of features) bounds.extend([properties.longitud, properties.latitud]);
+    map.fitBounds(bounds, { padding: 42, maxZoom: 18.5, duration: 0, bearing: DEFAULT_BEARING });
   };
 
   // Inicialización única.
   useEffect(() => {
     if (MAPBOX_TOKEN) mapboxgl.accessToken = MAPBOX_TOKEN;
+    centeredRef.current = false;
     const first = dataRef.current.features[0]?.properties;
     const map = new mapboxgl.Map({
       container: containerRef.current,
       style: styleFor(baseLayer),
-      center: lastView?.center ?? (first ? [first.longitud, first.latitud] : [-69.9966, -15.8740]),
-      zoom: lastView?.zoom ?? 17.5,
+      center: restoredView.current?.center ?? (first ? [first.longitud, first.latitud] : [-69.9966, -15.8740]),
+      zoom: restoredView.current?.zoom ?? 17.5,
       pitch: DEFAULT_PITCH,
-      bearing: lastView?.bearing ?? DEFAULT_BEARING,
+      bearing: restoredView.current?.bearing ?? DEFAULT_BEARING,
       maxPitch: 60,
       antialias: false
     });

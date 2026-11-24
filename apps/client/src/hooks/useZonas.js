@@ -56,9 +56,10 @@ export function useZonas() {
     setEditingZoneId(null);
     setZoneForm(EMPTY_ZONE);
   };
+  const limpiarAviso = () => { setMessage(''); setSuccess(false); };
 
   return {
     zoneRecords: catalogos.zonas, zoneForm, setZoneForm, editingZoneId,
-    message, success, saving, submitZone, deleteZone, editZone, cancelZone
+    message, success, saving, submitZone, deleteZone, editZone, cancelZone, limpiarAviso
   };
 }

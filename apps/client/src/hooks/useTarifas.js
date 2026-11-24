@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useSisrec } from '../app/SisrecContext';
+import { primerDiaDePrecioNuevo, zonaQuedaSinPrecio } from '../lib/tarifasPorZona';
 import { hoyEnLima } from '../services/jornadaOffline';
 import { apiBase, authFetch, leerJson } from '../services/session';
 
@@ -13,13 +14,15 @@ export const tarifaYaRige = (tarifa, hoy = hoyEnLima()) => Boolean(tarifa?.vigen
 export const precioSugerido = (zona) => (zona?.precio_dia != null ? String(Number(zona.precio_dia))
   : zona?.tipo_via === 'asfaltada' ? '3' : zona?.tipo_via === 'sin_asfaltar' ? '2' : '');
 
-// Un precio nuevo empieza hoy por omisión: con una fecha pasada cambiaría la deuda de días ya cobrados.
-const nuevoPrecio = (zona = null) => ({ zona_id: zona ? String(zona.id) : '', monto_fijo: precioSugerido(zona), vigencia_inicio: hoyEnLima(), vigencia_fin: '', norma: '' });
+// Un precio nuevo empieza hoy o después (primerDiaDePrecioNuevo): con una fecha pasada cambiaría la deuda de días
+// ya cobrados.
+const nuevoPrecio = (zona = null, desde = hoyEnLima()) => ({ zona_id: zona ? String(zona.id) : '', monto_fijo: precioSugerido(zona), vigencia_inicio: desde, vigencia_fin: '', norma: '' });
 
-// Página Tarifas: el precio por día de cada zona (cobro solo por día cobrado, 13/11/2026). Crear un precio
-// cierra el anterior de esa zona el día previo; el servidor rechaza la edición si otro usuario la cambió antes.
+// Precios de la pantalla Zonas y tarifas (unidas el 18/11/2026): el precio por día de cada zona (cobro solo por día
+// cobrado, 13/11/2026). Crear un precio cierra el anterior de esa zona el día previo; el servidor rechaza la edición
+// si otro usuario la cambió antes.
 export function useTarifas() {
-  const { refresh, user } = useSisrec();
+  const { refresh, user, tariffRecords = [] } = useSisrec();
   const [showForm, setShowForm] = useState(false);
   // Primer mes desde el que se suma la deuda acumulada (lo cambia solo el administrador).
   const [inicioCobro, setInicioCobro] = useState('');
@@ -36,6 +39,11 @@ export function useTarifas() {
   const yaRige = tarifaYaRige(editingTariff, hoy);
   const yaFinalizo = Boolean(editingTariff?.vigencia_fin && editingTariff.vigencia_fin < hoy);
   const normaRequerida = !editingTariff || Boolean(editingTariff.norma?.trim());
+  // Un precio nuevo no puede empezar antes del día que propone el formulario; uno programado se mueve desde hoy.
+  const inicioMinimo = editingTariff ? hoy : primerDiaDePrecioNuevo(tariffRecords, form.zona_id, hoy);
+  // Solo avisa si la fecha final la cambia ahora quien edita.
+  const quedaSinPrecio = Boolean(editingTariff) && form.vigencia_fin !== (editingTariff.vigencia_fin || '')
+    && zonaQuedaSinPrecio(tariffRecords, editingTariff, form.vigencia_fin);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -81,10 +89,10 @@ export function useTarifas() {
     }
   };
 
-  /** "Poner precio" / "Cambiar precio" de una zona: un precio nuevo desde hoy (o la fecha que se elija). */
+  /** "Poner precio" / "Cambiar precio" de una zona: un precio nuevo desde el primer día posible (o el que se elija). */
   const cambiarPrecio = (zona = null) => {
     setEditingTariff(null);
-    setForm(nuevoPrecio(zona));
+    setForm(nuevoPrecio(zona, primerDiaDePrecioNuevo(tariffRecords, zona?.id, hoyEnLima())));
     setMessage('');
     setSuccess(false);
     setShowForm(true);
@@ -100,6 +108,7 @@ export function useTarifas() {
   };
 
   const cerrarFormulario = () => { setShowForm(false); setEditingTariff(null); };
+  const limpiarAviso = () => { setMessage(''); setSuccess(false); };
 
   const submit = async (event) => {
     event.preventDefault();
@@ -135,8 +144,8 @@ export function useTarifas() {
   };
 
   return {
-    showForm, editingId, yaRige, yaFinalizo, normaRequerida, message, success, saving,
-    form, setForm, cambiarPrecio, edit, cerrarFormulario, submit,
+    showForm, editingId, yaRige, yaFinalizo, normaRequerida, inicioMinimo, quedaSinPrecio, message, success, saving,
+    form, setForm, cambiarPrecio, edit, cerrarFormulario, limpiarAviso, submit,
     inicioCobro, setInicioCobro, guardarInicioCobro, inicioFeedback, cargandoInicio, savingInicio,
     puedeEditar: user?.rol === 'super_admin'
   };

@@ -2,14 +2,25 @@ import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import { Circle, CircleMarker, MapContainer, Marker, Popup, TileLayer, useMap, useMapEvents } from 'react-leaflet';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
-import { filterSites, geolocationErrorMessage, mapPaymentStatus, paymentStatusText, PAYMENT_COLORS, PAYMENT_LABELS } from './sitesGeo';
+import { filterSites, geolocationErrorMessage, mapPaymentStatus, paymentStatusText, PAYMENT_COLORS, PAYMENT_LABELS, tamanoPuesto } from './sitesGeo';
 
 const SitesMap25D = lazy(() => import('./SitesMap25D'));
 
 const salcedoCenter = [-15.8740, -69.9966]; // centro del plano municipal (DWG)
 
-function MapViewport({ selectedSite, userLocation }) {
+function MapViewport({ sites, selectedSite, userLocation }) {
   const map = useMap();
+  const framed = useRef(false);
+
+  useEffect(() => {
+    if (framed.current || !sites.length) return;
+    framed.current = true;
+    if (selectedSite || userLocation) return;
+    const points = sites.filter((site) => Number.isFinite(site.latitud) && Math.abs(site.latitud) <= 90
+      && Number.isFinite(site.longitud) && Math.abs(site.longitud) <= 180)
+      .map((site) => [site.latitud, site.longitud]);
+    if (points.length) map.fitBounds(points, { padding: [24, 32], maxZoom: 19, animate: false });
+  }, [map, sites, selectedSite, userLocation]);
 
   useEffect(() => {
     const refreshMapSize = () => map.invalidateSize({ animate: false });
@@ -31,23 +42,34 @@ function MapViewport({ selectedSite, userLocation }) {
 }
 
 function MapInteractions({ drawing, onLocation }) {
-  useMapEvents({
+  const map = useMapEvents({
     click: (event) => {
       if (drawing) onLocation(event.latlng);
-    }
+    },
+    // El tamaño del punto sigue al zoom (tamanoPuesto): se lee en el CSS como --tam-puesto, así no se
+    // vuelven a crear los 400 íconos en cada zoom.
+    zoomend: () => fijarTamanoPuesto(map)
   });
+  useEffect(() => { fijarTamanoPuesto(map); }, [map]);
 
   return null;
 }
 
+const fijarTamanoPuesto = (map) => map.getContainer().style.setProperty('--tam-puesto', `${tamanoPuesto(map.getZoom())}px`);
+
+// Ícono sin tamaño propio: el punto se centra con CSS y mide --tam-puesto.
 function markerIcon(site) {
   const color = PAYMENT_COLORS[site.estadoPago] || PAYMENT_COLORS['al-dia'];
+  const dot = document.createElement('span');
+  dot.className = 'site-marker';
+  dot.style.setProperty('--marker-color', color);
+  dot.setAttribute('aria-label', `Puesto ${site.codigo}`);
   return L.divIcon({
     className: 'site-marker-wrapper',
-    html: `<span class="site-marker" style="--marker-color:${color}">${site.codigo.replace('S-', '')}</span>`,
-    iconSize: [42, 42],
-    iconAnchor: [21, 38],
-    popupAnchor: [0, -34]
+    html: dot,
+    iconSize: [0, 0],
+    iconAnchor: [0, 0],
+    popupAnchor: [0, -8]
   });
 }
 
@@ -104,7 +126,8 @@ const emptyTitular = { text: '', merchant: null };
 // cobrador solo registra puestos y corrige su ubicación. soloZonaDelTitular: el puesto nuevo de un comerciante
 // va en la zona de ese comerciante (el servidor lo vuelve a comprobar).
 export function SitesMap({ sites = [], zonas = [], searchMerchants, onCollect, onCreate, onUpdate, onDelete, onAssign, onRelease, soloZonaDelTitular = false }) {
-  const [category, setCategory] = useState('todos');
+  // Sin filtro por categoría: hay un solo tipo de comerciante desde el 23/11/2026.
+  const category = 'todos';
   const [paymentStatus, setPaymentStatus] = useState('todos');
   const [selectedSite, setSelectedSite] = useState(null);
   const [drawing, setDrawing] = useState(false);
@@ -262,12 +285,6 @@ export function SitesMap({ sites = [], zonas = [], searchMerchants, onCollect, o
             <option value="streets">Mapa de calles</option>
             <option value="hybrid">Vista híbrida</option>
           </select>
-          <select value={category} onChange={(event) => setCategory(event.target.value)} aria-label="Filtrar por categoría">
-            <option value="todos">Todas las categorías</option>
-            <option value="permanente">Permanentes</option>
-            <option value="ferial">Feriales</option>
-            <option value="eventual">Eventuales</option>
-          </select>
           <select value={paymentStatus} onChange={(event) => setPaymentStatus(event.target.value)} aria-label="Filtrar por estado de pago">
             <option value="todos">Todos los estados</option>
             {Object.entries(PAYMENT_LABELS).map(([key, label]) => <option key={key} value={key}>{label}</option>)}
@@ -309,15 +326,17 @@ export function SitesMap({ sites = [], zonas = [], searchMerchants, onCollect, o
             />
           </Suspense>
         ) : (
-        <MapContainer center={salcedoCenter} zoom={18} scrollWheelZoom className="leaflet-map">
+        <MapContainer center={salcedoCenter} zoom={18} maxZoom={22} scrollWheelZoom className="leaflet-map">
+          {/* Se puede acercar hasta 22 para separar los puestos: pasado el zoom de las teselas, se amplía la última. */}
           <TileLayer
             attribution={baseLayer === 'hybrid' ? '&copy; Google Maps' : '&copy; OpenStreetMap contributors'}
             url={baseLayer === 'hybrid' ? 'https://{s}.google.com/vt/lyrs=y&x={x}&y={y}&z={z}' : 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png'}
             subdomains={baseLayer === 'hybrid' ? ['mt0', 'mt1', 'mt2', 'mt3'] : ['a', 'b', 'c']}
-            maxZoom={baseLayer === 'hybrid' ? 20 : 19}
+            maxZoom={22}
+            maxNativeZoom={baseLayer === 'hybrid' ? 20 : 19}
           />
           <MapInteractions drawing={drawing || correctingLocation} onLocation={pickLocation} />
-          <MapViewport selectedSite={selectedSite} userLocation={userLocation} />
+          <MapViewport sites={normalizedSites} selectedSite={selectedSite} userLocation={userLocation} />
           {userLocation && (
             <>
               <Circle center={[userLocation.lat, userLocation.lng]} radius={userLocation.accuracy} pathOptions={{ color: '#1a73e8', weight: 1, fillOpacity: 0.12 }} interactive={false} />
@@ -328,12 +347,12 @@ export function SitesMap({ sites = [], zonas = [], searchMerchants, onCollect, o
           )}
           {draftLocation && <Marker position={[draftLocation.lat, draftLocation.lng]} icon={L.divIcon({ className: 'draft-marker', html: '<span>+</span>' })} />}
           {filteredSites.map((site) => (
-            <Marker key={site.id} position={[site.latitud, site.longitud]} icon={markerIcon(site)} draggable={Boolean(onUpdate)} eventHandlers={{ click: () => setSelectedSite(site), dragend: (event) => onUpdate?.(site.id, { latitud: event.target.getLatLng().lat, longitud: event.target.getLatLng().lng }) }}>
+            <Marker key={site.id} position={[site.latitud, site.longitud]} icon={markerIcon(site)} title={`Puesto ${site.codigo}`} draggable={Boolean(onUpdate)} eventHandlers={{ click: () => setSelectedSite(site), dragend: (event) => onUpdate?.(site.id, { latitud: event.target.getLatLng().lat, longitud: event.target.getLatLng().lng }) }}>
               <Popup>
                 <div className="site-popup">
                   <span className="eyebrow">{site.codigo} · {site.zona}</span>
                   <strong>{site.comerciante || 'Sin titular'}</strong>
-                  <span>{site.direccion || 'Ubicación registrada'} · {site.categoriaMapa}</span>
+                  <span>{site.direccion || 'Ubicación registrada'}</span>
                   <span className={site.estadoPago === 'deuda' ? 'popup-debt' : 'popup-ok'}>{paymentStatusText(site)}</span>
                   {site.estadoPago === 'deuda' && <button type="button" className="primary-button compact" onClick={() => onCollect(site)}>Cobrar aquí</button>}
                   <button type="button" className="secondary-button compact" onClick={() => inspectSite(site)}>Gestionar puesto</button>
@@ -366,7 +385,7 @@ export function SitesMap({ sites = [], zonas = [], searchMerchants, onCollect, o
           </div>
           <p className="map-form-hint">
             {draftTitular.merchant
-              ? `Categoría: ${draftTitular.merchant.tipo_comerciante || draftTitular.merchant.categoria || 'permanente'} (la define el comerciante).${zonaDelTitular !== null ? ' El puesto va en la zona del comerciante.' : ''}`
+              ? (zonaDelTitular !== null ? 'El puesto va en la zona del comerciante.' : 'El puesto queda a nombre de este comerciante.')
               : 'Sin titular el puesto queda libre; luego se le puede asignar un comerciante.'}
           </p>
           {draftError && <p className="form-error" role="alert">{draftError}</p>}
@@ -378,7 +397,7 @@ export function SitesMap({ sites = [], zonas = [], searchMerchants, onCollect, o
             <div>
               <div className="panel-title">Puesto {currentSite.codigo} · {currentSite.zona}</div>
               <div className="panel-subtitle">
-                {currentSite.comerciante ? `${currentSite.comerciante} · ${currentSite.categoriaMapa}` : 'Libre, sin titular'} · {currentSite.direccion || 'Sin dirección'}
+                {currentSite.comerciante || 'Libre, sin titular'} · {currentSite.direccion || 'Sin dirección'}
               </div>
             </div>
             <button type="button" className="table-action" onClick={() => setSelectedSite(null)}>Cerrar</button>

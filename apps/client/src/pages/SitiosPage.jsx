@@ -1,6 +1,6 @@
 import { useSisrec } from '../app/SisrecContext';
 import { CambiosRechazadosMapa } from '../components/features/map/CambiosRechazadosMapa';
-import { paymentStatusText, SERVER_PAYMENT_STATUS } from '../components/features/map/sitesGeo';
+import { paymentStatusText, SERVER_PAYMENT_STATUS, totalesDeSitios } from '../components/features/map/sitesGeo';
 import { useSitios } from '../hooks/useSitios';
 import { formatPEN } from '../lib/formato';
 
@@ -21,7 +21,9 @@ export function SitiosPage() {
     && (!filters.porRegularizar || zonaPorRegularizar(site))
   ));
   const pendientesDeZona = source.filter(zonaPorRegularizar).length;
-  const totalSaldo = rows.reduce((sum, site) => sum + Number(site.saldo_pendiente || 0), 0);
+  // La misma deuda que el Panel (getPendingDebt). Desde el 23/11/2026 no hay eventuales: ya no hay un saldo «de hoy»
+  // aparte que mostrar; totalesDeSitios lo sigue separando por si llega uno de un dato antiguo.
+  const { deuda: totalSaldo } = totalesDeSitios(rows);
 
   return (
     <section className="page">

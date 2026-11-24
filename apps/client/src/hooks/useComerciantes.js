@@ -2,7 +2,8 @@ import { useState } from 'react';
 import { useSisrec } from '../app/SisrecContext';
 import { apiBase, authFetch, leerJson } from '../services/session';
 
-const EMPTY_MERCHANT = { dni_ruc: '', nombre: '', rubro_id: '1', zona_id: '1', categoria: 'permanente', tipo_comerciante: 'permanente', estado: 'activo' };
+// Sin tipo de comerciante: hay uno solo desde el 23/11/2026 y lo pone el servidor.
+const EMPTY_MERCHANT = { dni_ruc: '', nombre: '', rubro_id: '1', zona_id: '1', estado: 'activo' };
 
 // Página Comerciantes: alta, edición y baja, e importación del padrón en Excel/CSV.
 export function useComerciantes() {
@@ -44,9 +45,8 @@ export function useComerciantes() {
     const rubro = catalogos.rubros.find((item) => item.nombre.toLowerCase() === String(category).toLowerCase());
     const zona = catalogos.zonas.find((item) => item.nombre.toLowerCase() === String(zone).toLowerCase());
     const merchant = comerciantes.find((item) => Number(item[0]) === Number(id));
-    const tipoComerciante = merchant?.[7] || 'permanente';
     setEditingId(id);
-    setForm({ dni_ruc: document, nombre: name, rubro_id: String(rubro?.id || 1), zona_id: String(zona?.id || 1), categoria: tipoComerciante, tipo_comerciante: tipoComerciante, estado: String(merchant?.[5] || 'activo').toLowerCase() });
+    setForm({ dni_ruc: document, nombre: name, rubro_id: String(rubro?.id || 1), zona_id: String(zona?.id || 1), estado: String(merchant?.[5] || 'activo').toLowerCase() });
     setShowForm(true);
     setMessage('');
   };

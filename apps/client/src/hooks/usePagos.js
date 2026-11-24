@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useSisrec } from '../app/SisrecContext';
-import { faltaZonaDelDia, montoDePuestos, puestosParaElegir, requeridosConPuestos } from '../lib/cobroDelDia';
+import { faltaZonaDelDia, montoDePuestos, pagadoTrasCobro, puestosParaElegir, requeridosConPuestos } from '../lib/cobroDelDia';
 import { formatPEN } from '../lib/formato';
 import { createReceiptHash } from '../features/payments/recibo';
 import { enviarReciboOficial } from '../features/payments/reciboOficial';
@@ -200,6 +200,19 @@ export function usePagos() {
     setSuggestion(next);
     // La nota es de cada cobro: no se hereda del comerciante anterior.
     setForm((current) => ({ ...current, comercianteId: String(found.id), periodo, monto: String(Math.min(next.suggestedAmount || balanceData.data.saldo, balanceData.data.saldo) || ''), observaciones: '' }));
+  };
+
+  // Liquidación del mes otra vez desde el servidor, sin tocar el formulario (el monto queda vacío tras cobrar).
+  // Si en el camino se atiende a otro comerciante o falla la red, se queda el saldo ya corregido.
+  const recargarSaldo = async (comercianteId, periodo) => {
+    const turno = atencionActual.current;
+    try {
+      const response = await authFetch(`${apiBase}/comerciantes/${comercianteId}/saldo?periodo=${periodo}`);
+      const body = await response.json().catch(() => null);
+      if (response.ok && body?.data && turno === atencionActual.current) setBalance(body.data);
+    } catch {
+      // Sin red: sigue el saldo corregido con la respuesta del cobro.
+    }
   };
 
   // El cobrador elige a qué mes impago aplicar el cobro.
@@ -487,10 +500,12 @@ export function usePagos() {
         cobrador: user?.nombre || 'Cobrador',
         hash_idempotencia: hashIdempotencia
       });
-      setBalance((current) => current ? { ...current, saldo: data.data.saldo_restante } : current);
+      // «Pagado» y el saldo, al instante; luego la liquidación completa del servidor (deuda atrasada, tickets de
+      // hoy). Antes solo se corregía el saldo y «Pagado» seguía en S/ 0.00 hasta volver a buscar (18/11/2026).
+      setBalance((current) => current ? pagadoTrasCobro(current, data.data) : current);
       setForm((current) => ({ ...current, monto: '', observaciones: '' }));
       empezarAtencion();
-      await refresh();
+      await Promise.all([refresh(), recargarSaldo(form.comercianteId, payload.periodo)]);
     } catch (paymentError) {
       setMessage(paymentError.message);
     }

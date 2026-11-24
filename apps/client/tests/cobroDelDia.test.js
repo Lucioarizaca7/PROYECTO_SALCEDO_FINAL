@@ -4,7 +4,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { faltaZonaDelDia, montoDePuestos, puestosParaElegir, requeridosConPuestos } from '../src/lib/cobroDelDia.js';
+import { faltaZonaDelDia, montoDePuestos, puestosParaElegir, pagadoTrasCobro, requeridosConPuestos } from '../src/lib/cobroDelDia.js';
 
 const puestos = [
   { id: 1, codigo: 'A-01', zona_id: 10, zona_por_confirmar: false },
@@ -56,4 +56,14 @@ test('un puesto sin zona confirmada pide la zona de hoy, salvo que ya esté marc
   assert.equal(faltaZonaDelDia({ puestos: [puestos[2]], marcado_hoy: false }), true);
   assert.equal(faltaZonaDelDia({ puestos: [puestos[0]], marcado_hoy: false }), false);
   assert.equal(faltaZonaDelDia(delDia, { elegidos: [3], cobraHoy: false }), false);
+});
+
+test('después de un cobro en línea «Pagado» suma lo cobrado y el saldo es el que dio el servidor', () => {
+  const antes = { periodo: '2026-11', monto_total: 3, monto_pagado: 0, saldo: 3, estado: 'pendiente' };
+  assert.deepEqual(pagadoTrasCobro(antes, { monto: '3.00', saldo_restante: 0 }), { ...antes, monto_pagado: 3, saldo: 0, estado: 'pagado' });
+  const parcial = pagadoTrasCobro({ ...antes, monto_total: 5, saldo: 5 }, { monto: 2, saldo_restante: '3.00' });
+  assert.equal(parcial.monto_pagado, 2);
+  assert.equal(parcial.saldo, 3);
+  assert.equal(parcial.estado, 'pendiente');
+  assert.equal(antes.monto_pagado, 0, 'no modifica la liquidación anterior');
 });
