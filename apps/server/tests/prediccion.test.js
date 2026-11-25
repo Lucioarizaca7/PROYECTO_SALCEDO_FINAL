@@ -55,7 +55,9 @@ test('la proyección usa los cobros reales por mes y, sin el microservicio, el r
   assert.equal(forecast.totalHistorico, SERIE_CRECIENTE.reduce((a, b) => a + b, 0));
   assert.equal(forecast.totalProyectado, 4741.83);
   assert.deepEqual(forecast.proyeccion_mensual, [1540.65, 1580.61, 1620.57]);
-  assert.equal(forecast.porRubro.find((item) => item.rubro_id === Number(rubroId)).proyectado, 4741.83);
+  assert.equal(forecast.porZona.find((item) => item.zona_id === Number(zona.id)).proyectado, 4741.83);
+  // Sin reparto por rubro desde el 24/11/2026: el precio lo pone la zona.
+  assert.equal(forecast.porRubro, undefined);
 
   const guardada = (await db.query(`SELECT version, metricas FROM modelos_ia_metricas WHERE periodo = '2027-09' ORDER BY id DESC LIMIT 1`)).rows[0];
   assert.equal(guardada.version, 'holt-v2');

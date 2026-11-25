@@ -1,8 +1,11 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useSisrec } from '../app/SisrecContext';
+import { FirmasHoja, ResumenHoja, TablaCobrosHoja, VistaImpresion } from '../components/ui/VistaImpresion';
 import { METODOS_CAJA, useCaja } from '../hooks/useCaja';
 import { mediosDeCaja, textoConstancia } from '../lib/caja';
 import { formatPEN } from '../lib/formato';
+import { textoDelPeriodo } from '../lib/reportes';
+import { apiBase, authFetch, leerJson } from '../services/session';
 
 const textoDiferencia = (valor) => (valor === 0 ? 'Cuadra' : valor > 0 ? `Sobran ${formatPEN(valor)}` : `Faltan ${formatPEN(Math.abs(valor))}`);
 const claseDiferencia = (valor) => (valor === 0 ? 'paid' : valor > 0 ? 'pending' : 'danger');
@@ -195,10 +198,116 @@ function CierreHecho({ cierre, posteriores }) {
   );
 }
 
+// Resumen impreso del día elegido (24/11/2026): los cobros del día (GET /reportes con el día: el cobrador ve solo
+// los suyos), el subtotal de cada cobrador, los cierres de caja de ese día y los tickets, con líneas de firma.
+function HojaCajaDelDia({ caja, onCerrar }) {
+  const [cobros, setCobros] = useState(null);
+  const [error, setError] = useState('');
+  useEffect(() => {
+    const controller = new AbortController();
+    authFetch(`${apiBase}/reportes?periodo=${caja.fecha}`, { signal: controller.signal })
+      .then(async (response) => {
+        const body = await leerJson(response);
+        if (!response.ok) throw new Error(body.message || 'No se pudieron cargar los cobros del día');
+        setCobros(body.data || []);
+      })
+      .catch((err) => { if (!controller.signal.aborted) setError(err instanceof TypeError ? 'Sin conexión: el resumen impreso necesita señal.' : err.message); });
+    return () => controller.abort();
+  }, [caja.fecha]);
+
+  const filas = cobros || [];
+  const confirmados = filas.filter((item) => item.estado === 'confirmado');
+  const total = confirmados.reduce((suma, item) => suma + Number(item.monto || 0), 0);
+  const porCobrador = [...confirmados.reduce((mapa, item) => {
+    const actual = mapa.get(item.cobrador) || { cobros: 0, monto: 0 };
+    mapa.set(item.cobrador, { cobros: actual.cobros + 1, monto: actual.monto + Number(item.monto || 0) });
+    return mapa;
+  }, new Map())];
+  const cierresDelDia = caja.cierres.filter((cierre) => cierre.fecha === caja.fecha);
+  const propio = caja.resumen;
+
+  return (
+    <VistaImpresion titulo={`Resumen de caja ${textoDelPeriodo(caja.fecha)}`} subtitulo={caja.veTodos ? 'Todos los cobradores' : 'Mi caja'} onCerrar={onCerrar}>
+      {error && <p className="hoja-vacio">{error}</p>}
+      {!cobros && !error && <p className="hoja-vacio">Cargando los cobros del día…</p>}
+      {cobros && (
+        <>
+          <ResumenHoja cifras={[
+            { etiqueta: 'Total cobrado', valor: formatPEN(total) },
+            { etiqueta: 'Cobros confirmados', valor: confirmados.length },
+            { etiqueta: 'Cobradores', valor: porCobrador.length },
+            ...(caja.veTodos ? [{ etiqueta: 'Cajas cerradas', valor: cierresDelDia.length }] : [])
+          ]} />
+
+          {porCobrador.length > 1 && (
+            <>
+              <h2 className="hoja-seccion">Por cobrador</h2>
+              <table className="hoja-tabla">
+                <thead><tr><th>Cobrador</th><th className="num">Cobros</th><th className="num">Monto</th></tr></thead>
+                <tbody>{porCobrador.map(([nombre, datos]) => <tr key={nombre}><td>{nombre}</td><td className="num">{datos.cobros}</td><td className="num">{formatPEN(datos.monto)}</td></tr>)}</tbody>
+              </table>
+            </>
+          )}
+
+          <h2 className="hoja-seccion">Cobros del día</h2>
+          <TablaCobrosHoja filas={filas} conFecha={false} />
+
+          {caja.veTodos ? (
+            <>
+              <h2 className="hoja-seccion">Cierres de caja</h2>
+              {cierresDelDia.length ? (
+                <table className="hoja-tabla">
+                  <thead><tr><th>Cobrador</th><th className="num">Cobros</th><th className="num">Esperado</th><th className="num">Declarado</th><th>Diferencia</th><th>Entrega</th></tr></thead>
+                  <tbody>
+                    {cierresDelDia.map((cierre) => {
+                      const esperado = METODOS_CAJA.reduce((suma, { key }) => suma + cierre[`esperado_${key}`], 0);
+                      const declarado = METODOS_CAJA.reduce((suma, { key }) => suma + cierre.vigente[`declarado_${key}`], 0);
+                      return (
+                        <tr key={cierre.id}>
+                          <td>{cierre.cobrador}</td><td className="num">{cierre.cobros}</td><td className="num">{formatPEN(esperado)}</td>
+                          <td className="num">{formatPEN(declarado)}</td><td>{textoDiferencia(cierre.vigente.diferencia)}</td>
+                          <td>{cierre.entregado ? 'Recibido' : 'Pendiente'}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              ) : <p className="hoja-vacio">Ningún cobrador cerró su caja este día.</p>}
+            </>
+          ) : propio && (
+            <>
+              <h2 className="hoja-seccion">Mi caja</h2>
+              <ResumenHoja cifras={[
+                { etiqueta: 'Esperado según el servidor', valor: formatPEN(propio.esperado_total), detalle: `${propio.cobros} cobro(s)` },
+                { etiqueta: 'Estado', valor: propio.cierre ? 'Cerrada' : 'Sin cerrar', detalle: propio.cierre?.cerrado_en }
+              ]} />
+            </>
+          )}
+
+          {propio?.tickets?.series?.length > 0 && (
+            <>
+              <h2 className="hoja-seccion">Tickets del día</h2>
+              <table className="hoja-tabla">
+                <thead><tr><th>Serie</th><th className="num">Usados</th><th className="num">Anulados</th><th className="num">Disponibles</th><th className="num">Valor usado</th></tr></thead>
+                <tbody>{propio.tickets.series.map((serie) => (
+                  <tr key={serie.serie}><td>{serie.serie} (S/ {serie.valor.toFixed(2)})</td><td className="num">{serie.usados}</td><td className="num">{serie.anulados}</td><td className="num">{serie.disponibles}</td><td className="num">{formatPEN(serie.monto_tickets)}</td></tr>
+                ))}</tbody>
+              </table>
+            </>
+          )}
+
+          <FirmasHoja firmas={caja.veTodos ? ['Cobrador', 'Responsable de Rentas'] : ['Cobrador', 'Recibido por']} />
+        </>
+      )}
+    </VistaImpresion>
+  );
+}
+
 export function CajaPage() {
   const caja = useCaja();
   const { resumen, declarado, setDeclarado } = caja;
   const [cierreAbierto, setCierreAbierto] = useState(null);
+  const [vistaPrevia, setVistaPrevia] = useState(false);
   const enGestion = caja.cierres.find((cierre) => cierre.id === cierreAbierto);
 
   return (
@@ -209,8 +318,12 @@ export function CajaPage() {
           <h1>Cierre de caja</h1>
           <p>Compara lo que el sistema registró con lo que el cobrador entrega, por método de pago.</p>
         </div>
-        <input type="date" aria-label="Día de la caja" value={caja.fecha} max={caja.hoy} onChange={(event) => caja.setFecha(event.target.value)} />
+        <div className="report-actions">
+          <input type="date" aria-label="Día de la caja" value={caja.fecha} max={caja.hoy} onChange={(event) => caja.setFecha(event.target.value)} />
+          <button className="secondary-button" type="button" onClick={() => setVistaPrevia(true)}>Imprimir resumen del día</button>
+        </div>
       </div>
+      {vistaPrevia && <HojaCajaDelDia caja={caja} onCerrar={() => setVistaPrevia(false)} />}
       {caja.message && <div className="form-message">{caja.message}</div>}
       {caja.esCobrador && <AvisoPorSubir onSynced={caja.recargar} />}
       {caja.esCobrador && resumen && !resumen.cierre && <SinMarcarHoy zonas={caja.sinMarcar} />}

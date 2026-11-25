@@ -13,12 +13,13 @@ const ESTADOS_FILA = ['Presente', 'Ausente'];
 const COLUMNAS = [
   { header: 'DNI/RUC', width: 14, nota: 'DNI de 8 dígitos o RUC de 11. Se guarda como texto para no perder ceros. Si falta, el titular entra como pendiente de regularización y paga igual; al registrar su DNI se regulariza.' },
   { header: 'Titular', width: 34, nota: 'Obligatorio. Nombre completo o razón social. Varias filas con el mismo DNI y el mismo nombre son un titular con varios puestos.' },
-  { header: 'Código Puesto', width: 16, nota: 'Único en todo el padrón. Si lo dejas vacío se genera uno con el nombre de la hoja.' },
-  { header: 'Sector', width: 22, nota: 'Bloque, tramo o ubicación. Si lo dejas vacío se usa el nombre de la hoja.' },
-  { header: 'Zona', width: 22, nota: 'Elige una zona de la lista. Su tipo de vía define el cobro por día: S/ 3 asfaltada, S/ 2 sin asfaltar.' },
-  { header: 'Rubro', width: 16, nota: 'Elige un rubro de la lista.' },
-  { header: 'Metraje m2', width: 12, nota: 'Opcional si la zona tiene tipo de vía (el cobro por día no usa metros); obligatorio si no lo tiene.' },
-  { header: 'Estado', width: 12, nota: 'Presente o Ausente. Un comerciante ausente conserva su puesto y no devenga.' }
+  // Notas al día con las reglas del 23/11/2026: el precio lo pone la zona, el metraje no cuenta y hay un solo tipo.
+  { header: 'Código Puesto', width: 16, nota: 'El código del puesto en el mapa (S-001 a S-400). Si ya existe, se actualiza ese puesto y conserva su ubicación; si es nuevo, el puesto se crea sin ubicación y luego se ubica en el Mapa. Vacío: se genera uno con el nombre de la hoja.' },
+  { header: 'Sector', width: 22, nota: 'Calle, tramo o lado (por ejemplo: Av. Sideral, carril norte). Si lo dejas vacío se usa el nombre de la hoja.' },
+  { header: 'Zona', width: 22, nota: 'Elige una zona de la lista. El precio por día lo pone la zona (Zonas y tarifas), igual para todos los rubros. La zona del comerciante es la de su primer puesto.' },
+  { header: 'Rubro', width: 16, nota: 'Elige un rubro de la lista. Solo describe lo que vende: no cambia lo que paga.' },
+  { header: 'Metraje m2', width: 12, nota: 'Opcional: el cobro es por día y no usa metros. Si lo dejas vacío en un puesto que ya existe, se conserva el que tiene.' },
+  { header: 'Estado', width: 12, nota: 'Presente o Ausente. Un comerciante ausente conserva su puesto y no paga mientras no se le marque presente.' }
 ];
 
 const columna = (indice) => String.fromCharCode(65 + indice);

@@ -3,6 +3,8 @@ import '../components/landing/pagina-publica.css';
 import inspeccionImage from '../assets/images/municipal-tablet-inspection.jpg';
 import comercianteImage from '../assets/images/merchant-artisan-puno.jpg';
 import vestimentaImage from '../assets/images/puno-traditional-clothing.jpg';
+// Foto generada para no repetir la de la portada (23/11/2026): cobrador leyendo el QR del carnet en la feria.
+import cobroQrImage from '../assets/images/municipal-qr-scan-market.jpg';
 
 // Página pública según el Penpot (Público y portal · P1), con la paleta del escudo. Solo explica cómo
 // funciona y qué beneficios trae; las cifras son las agregadas de /publico/resumen, sin datos personales.
@@ -25,8 +27,10 @@ const BENEFICIOS = [
   },
   {
     titulo: 'Para la municipalidad',
-    imagen: inspeccionImage,
-    alt: 'Personal municipal registrando un cobro en una tableta',
+    imagen: cobroQrImage,
+    // La tarjeta muestra una franja de 190 px: el encuadre sube para que se vean las caras de ambos.
+    encuadre: 'center 30%',
+    alt: 'Cobrador municipal leyendo con su celular el QR del carnet de una comerciante en la feria',
     puntos: [
       'El cobrador trabaja sin señal: los cobros se guardan en el celular y se suben al volver la conexión.',
       'Ningún cobro se borra: se anula con motivo y responsable, y queda en la auditoría.',
@@ -114,7 +118,7 @@ export function InicioPage({ stats }) {
             <div className="pp-beneficios">
               {BENEFICIOS.map((grupo) => (
                 <article key={grupo.titulo} className="pp-tarjeta pp-beneficio">
-                  <img src={grupo.imagen} alt={grupo.alt} loading="lazy" />
+                  <img src={grupo.imagen} alt={grupo.alt} loading="lazy" style={grupo.encuadre ? { objectPosition: grupo.encuadre } : undefined} />
                   <div className="pp-beneficio-cuerpo">
                     <h3>{grupo.titulo}</h3>
                     <ul>{grupo.puntos.map((punto) => <li key={punto}>{punto}</li>)}</ul>

@@ -56,7 +56,8 @@ test('getOperationalDashboard produce KPIs reales y buildReportCsv exporta CSV a
   assert.equal(typeof metrics.recaudacion, 'number');
   assert.equal(typeof metrics.deudaPendiente, 'number');
   assert.ok(Array.isArray(metrics.porZona));
-  assert.ok(Array.isArray(metrics.porRubro));
+  assert.ok(Array.isArray(metrics.porDia));
+  assert.equal(metrics.porRubro, undefined, 'el panel ya no reparte por rubro (24/11/2026)');
 
   const csv = await buildReportCsv(db, { periodo: '2026-09' });
   assert.match(csv, /fecha,comerciante/);

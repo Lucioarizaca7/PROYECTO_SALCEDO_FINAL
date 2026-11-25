@@ -4,6 +4,7 @@ import { currentPeriod, getDbStats, getRubros, getZonas, getPuestos, getOperatio
 import { staffOnly, roles } from '../http/comunes.js';
 import { pool as db } from '../pg.js';
 import { config } from '../config.js';
+import { buildReportXlsx } from '../reporteExcel.js';
 
 export const router = express.Router();
 
@@ -46,7 +47,7 @@ router.get('/api/v1/dashboard', ...staffOnly, async (req, res) => {
     },
     operational: {
       porZona: metrics.porZona || [],
-      porRubro: metrics.porRubro || [],
+      porDia: metrics.porDia || [],
       porCobrador: metrics.porCobrador || []
     }
   });
@@ -74,8 +75,8 @@ router.get('/api/v1/publico/resumen', async (_req, res) => {
       sitios: puestos.length
     },
     operational: {
+      // Sin reparto por rubro desde el 24/11/2026: el precio lo pone la zona.
       porZona: (metrics.porZona || []).map(({ zona, comerciantes, recaudado }) => ({ zona, comerciantes, recaudado })),
-      porRubro: (metrics.porRubro || []).map(({ rubro, recaudado, pagos }) => ({ rubro, recaudado, pagos })),
       porCobrador: []
     }
   };
@@ -122,11 +123,20 @@ router.get('/api/v1/reportes', ...staffOnly, async (req, res) => {
   const data = await getReportRows(db, options);
   const formato = String(req.query.formato || 'json').toLowerCase();
 
+  // Excel (24/11/2026): la exportación de la pantalla. Sale como tabla; el CSV se abría en una sola columna.
+  if (formato === 'xlsx') {
+    const archivo = await buildReportXlsx(db, options, { usuarioId: req.user?.id });
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename="reporte-cobros-${options.periodo || 'todo'}.xlsx"`);
+    return res.send(archivo);
+  }
+
   if (formato === 'csv') {
     const csv = await buildReportCsv(db, options);
     res.setHeader('Content-Type', 'text/csv; charset=utf-8');
     res.setHeader('Content-Disposition', 'attachment; filename="reporte-cobros.csv"');
-    return res.send(csv);
+    // Con la marca BOM, Excel lee el UTF-8 y las tildes salen bien.
+    return res.send(String.fromCharCode(0xfeff) + csv);
   }
 
   return res.json({ data, total: data.length, periodo: options.periodo || null });
