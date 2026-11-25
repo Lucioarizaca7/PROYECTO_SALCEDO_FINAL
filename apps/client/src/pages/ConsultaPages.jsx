@@ -3,26 +3,40 @@ import { useSisrec } from '../app/SisrecContext';
 import { textoMotivo } from '../services/asistenciaOffline';
 import { useReportes } from '../hooks/useReportes';
 import { useAuditoria } from '../hooks/useAuditoria';
-import { textoMetodo, textoPuntajeRiesgo, textoVerificacion } from '../lib/formato';
-import { hoyEnLima } from '../services/jornadaOffline';
+import { formatPEN, textoMetodo, textoPuntajeRiesgo, textoVerificacion } from '../lib/formato';
+import { textoDelPeriodo } from '../lib/reportes';
+import { FirmasHoja, ResumenHoja, TablaCobrosHoja, VistaImpresion } from '../components/ui/VistaImpresion';
+import { hoyEnLima, periodoEnLima } from '../services/jornadaOffline';
 import { textoTicket } from '../services/ticketsOffline';
 import { VeredictoRecaudacion } from '../features/analitica/VeredictoRecaudacion';
+import { BarraApilada, BarrasHorizontales, ColumnasMensuales } from '../components/ui/Graficos';
+import { NIVELES_RIESGO, mesesDeProyeccion, riesgoPorNivel } from '../lib/graficos';
 import { apiBase, authFetch } from '../services/session';
 
 // Páginas de solo lectura: muestran datos que ya cargó useDatosSisrec (y, en Analítica, el tiempo por cobro).
 
 export function ReportesPage() {
   const { catalogos, user } = useSisrec();
-  const { filtro, setFiltro, filas, cargando, mensaje, exportarCsv, anular, puedeAnular, total, confirmadas } = useReportes();
+  const { filtro, setFiltro, periodoPedido, filas, cargando, mensaje, exportarExcel, anular, puedeAnular, total, confirmadas } = useReportes();
+  const [vistaPrevia, setVistaPrevia] = useState(false);
   const cambiar = (campo) => (event) => setFiltro((actual) => ({ ...actual, [campo]: event.target.value }));
+  const nombreZona = (catalogos.zonas || []).find((zona) => String(zona.id) === String(filtro.zona_id))?.nombre;
+  const nombreRubro = (catalogos.rubros || []).find((rubro) => String(rubro.id) === String(filtro.rubro_id))?.nombre;
+  const fueraDelTotal = filas.length - confirmadas.length;
   return (
     <section className="page">
       <div className="page-heading">
-        <div><div className="eyebrow">ANÁLISIS / EXPORTACIÓN</div><h1>Reportes personalizados</h1><p>Consulta cobros por periodo, zona o rubro.</p></div>
-        <div className="report-actions"><button className="secondary-button" type="button" onClick={() => window.print()}>Imprimir / PDF</button><button className="primary-button" type="button" onClick={exportarCsv}>Exportar CSV</button></div>
+        <div><div className="eyebrow">ANÁLISIS / EXPORTACIÓN</div><h1>Reportes personalizados</h1><p>Consulta cobros de un mes, de un día o todos los registrados, por zona o rubro.</p></div>
+        <div className="report-actions"><button className="secondary-button" type="button" onClick={() => setVistaPrevia(true)}>Vista previa e imprimir</button><button className="primary-button" type="button" onClick={exportarExcel}>Exportar Excel</button></div>
       </div>
       <div className="map-toolbar">
-        <label><span>Periodo</span><input type="month" aria-label="Periodo" value={filtro.periodo} onChange={cambiar('periodo')} /></label>
+        <div className="filtro-alcance" role="radiogroup" aria-label="Reporte de un mes, de un día o de todo el registro">
+          {[['mes', 'Mes'], ['dia', 'Día'], ['todo', 'Todo']].map(([valor, texto]) => (
+            <button key={valor} type="button" role="radio" aria-checked={filtro.alcance === valor} className={`secondary-button compact${filtro.alcance === valor ? ' activo' : ''}`} onClick={() => setFiltro((actual) => ({ ...actual, alcance: valor }))}>{texto}</button>
+          ))}
+        </div>
+        {filtro.alcance === 'dia' && <label><span>Día</span><input type="date" aria-label="Día del reporte" max={hoyEnLima()} value={filtro.dia} onChange={cambiar('dia')} /></label>}
+        {filtro.alcance === 'mes' && <label><span>Mes</span><input type="month" aria-label="Mes del reporte" value={filtro.periodo} onChange={cambiar('periodo')} /></label>}
         <select aria-label="Filtrar por zona" value={filtro.zona_id} onChange={cambiar('zona_id')}>
           <option value="">Todas las zonas</option>
           {(catalogos.zonas || []).map((zona) => <option key={zona.id} value={zona.id}>{zona.nombre}</option>)}
@@ -61,6 +75,22 @@ export function ReportesPage() {
           </tbody>
         </table>
       </div>
+      {vistaPrevia && (
+        <VistaImpresion
+          titulo={`Reporte de cobros ${textoDelPeriodo(periodoPedido)}`}
+          subtitulo={[nombreZona ? `Zona: ${nombreZona}` : 'Todas las zonas', nombreRubro ? `Rubro: ${nombreRubro}` : 'Todos los rubros'].join(' · ')}
+          onCerrar={() => setVistaPrevia(false)}
+        >
+          <ResumenHoja cifras={[
+            { etiqueta: 'Total cobrado', valor: formatPEN(total) },
+            { etiqueta: 'Cobros confirmados', valor: confirmadas.length },
+            { etiqueta: 'Anulados u observados', valor: fueraDelTotal, detalle: fueraDelTotal ? 'Tachados, fuera del total' : undefined },
+            { etiqueta: 'Zonas cubiertas', valor: new Set(confirmadas.map((item) => item.zona)).size }
+          ]} />
+          <TablaCobrosHoja filas={filas} conFecha={filtro.alcance !== 'dia'} />
+          <FirmasHoja firmas={['Responsable de Rentas', 'Revisado por']} />
+        </VistaImpresion>
+      )}
       <ObservacionesCobro />
       {['super_admin', 'auditor'].includes(user?.rol) && <CobrosEnOtraZona />}
       {['super_admin', 'auditor'].includes(user?.rol) && <MarcasFueraDeAsignacion />}
@@ -274,9 +304,17 @@ function useTiemposCobro(rol) {
 }
 
 export function AnaliticaPage() {
-  const { predictiveData, riskData, user } = useSisrec();
+  const { predictiveData, riskData, operational, user } = useSisrec();
   const tiempos = useTiemposCobro(user?.rol);
   const modelo = predictiveData.modelo;
+  const periodo = predictiveData.periodo || periodoEnLima();
+  // El primer mes proyectado es el mes en curso: se muestra junto a lo cobrado hasta hoy (porDia del panel).
+  const cobradoEnCurso = (operational.porDia || []).reduce((total, dia) => total + Number(dia.recaudado || 0), 0);
+  const meses = mesesDeProyeccion({
+    serie: predictiveData.serie || [], proyeccion: predictiveData.proyeccion_mensual || [], periodo,
+    mape: modelo?.mape ?? null, cobradoEnCurso
+  });
+  const nombreNivel = Object.fromEntries(NIVELES_RIESGO.map((nivel) => [nivel.clave, nivel]));
   const reduccion = tiempos?.general?.mediana_segundos
     ? Math.round((1 - tiempos.general.mediana_segundos / tiempos.linea_base.segundos_por_cobro) * 100)
     : null;
@@ -323,27 +361,73 @@ export function AnaliticaPage() {
         </div>
       </div>
 
-      <div className="page-grid two-grid">
-        <div className="panel detail-card">
-          <h3>Predicción de recaudación</h3>
-          {(predictiveData.porZona || []).slice(0, 4).map((item) => (
-            <div className="metric-line" key={item.zona || item.zona_id}>
-              <span>{item.zona}</span>
-              <strong>S/ {Number(item.proyectado || 0).toFixed(2)}</strong>
+      {/* Gráficos de la analítica (24/11/2026): sin reparto por rubro, el precio lo pone la zona. */}
+      <div className="dashboard-grid">
+        <div className="panel panel-ancho">
+          <div className="panel-heading">
+            <div>
+              <div className="panel-title">Recaudación mensual y proyección</div>
+              <div className="panel-subtitle">
+                Cobros confirmados de cada mes y lo que se espera en los próximos {(predictiveData.proyeccion_mensual || []).length || 3} meses
+              </div>
             </div>
-          ))}
-          {!(predictiveData.porZona || []).length && <div className="empty-state">No hay datos predictivos aún.</div>}
+            <span className="date-chip">{formatPEN(predictiveData.totalProyectado || 0)} en {predictiveData.horizonte_dias || 90} días</span>
+          </div>
+          <ColumnasMensuales meses={meses} formato={formatPEN} titulo="Recaudación mensual cobrada y proyectada" />
         </div>
-        <div className="panel detail-card">
-          <h3>Scoring de morosidad</h3>
-          {textoPuntajeRiesgo(riskData) && <p className="panel-subtitle">{textoPuntajeRiesgo(riskData)}</p>}
-          {(riskData.records || []).slice(0, 4).map((item) => (
-            <div className="metric-line" key={item.comerciante_id}>
-              <span>{item.nombre}</span>
-              <strong>{item.nivel || item.nivel_riesgo}</strong>
+
+        <div className="panel">
+          <div className="panel-heading">
+            <div>
+              <div className="panel-title">Proyección por zona</div>
+              <div className="panel-subtitle">Lo que se espera cobrar en cada zona en {predictiveData.horizonte_dias || 90} días</div>
             </div>
-          ))}
-          {!(riskData.records || []).length && <div className="empty-state">Sin alertas de morosidad para esta ventana.</div>}
+          </div>
+          <BarrasHorizontales
+            filas={(predictiveData.porZona || []).map((zona) => ({
+              clave: String(zona.zona_id),
+              etiqueta: zona.zona,
+              valor: Number(zona.proyectado || 0),
+              detalle: [
+                `Cobrado en ${modelo?.meses_historia || 0} meses: ${formatPEN(zona.recaudado || 0)}`,
+                zona.mape === null || zona.mape === undefined ? 'Error sin medir (poca historia)' : `Error del modelo: ${zona.mape} %`
+              ]
+            }))}
+            formato={formatPEN} columnas={['Zona', 'Proyectado', 'Cobrado', 'Error']} vacio="No hay datos predictivos aún."
+          />
+        </div>
+
+        <div className="panel">
+          <div className="panel-heading">
+            <div>
+              <div className="panel-title">Riesgo de morosidad</div>
+              <div className="panel-subtitle">{textoPuntajeRiesgo(riskData) || `${riskData.summary?.total || 0} comerciantes puntuados`}</div>
+            </div>
+          </div>
+          <BarraApilada segmentos={riesgoPorNivel(riskData.summary)} unidad="comerciantes" vacio="Aún no hay comerciantes puntuados." />
+        </div>
+
+        <div className="panel panel-ancho">
+          <div className="panel-heading">
+            <div>
+              <div className="panel-title">Comerciantes con mayor riesgo</div>
+              <div className="panel-subtitle">Puntaje de 0 a 100: deuda acumulada, pagos y días sin pagar</div>
+            </div>
+          </div>
+          <BarrasHorizontales
+            filas={(riskData.records || []).filter((item) => Number(item.score_riesgo) > 0).map((item) => {
+              const nivel = nombreNivel[item.nivel_riesgo] || nombreNivel.bajo;
+              return {
+                clave: String(item.comerciante_id),
+                etiqueta: item.nombre,
+                valor: Math.round(Number(item.score_riesgo || 0) * 100),
+                color: nivel.color,
+                detalle: [`Riesgo ${nivel.etiqueta.toLowerCase()}`, item.motivo_principal || 'Sin motivo registrado']
+              };
+            })}
+            maximo={100} formato={(valor) => `${valor} / 100`} columnas={['Comerciante', 'Puntaje', 'Nivel', 'Motivo']}
+            vacio="Ningún comerciante tiene días cobrados sin pagar: no hay riesgo de morosidad."
+          />
         </div>
       </div>
     </section>

@@ -4,8 +4,8 @@ import { periodoEnLima } from '../services/jornadaOffline';
 import { readMapSnapshot, saveMapSnapshot, syncPendingMapMutations } from '../services/mapaOffline';
 import { apiBase, authFetch, leerJson } from '../services/session';
 
-const EMPTY_OPERATIONAL = { porZona: [], porRubro: [], porCobrador: [] };
-const EMPTY_FORECAST = { totalProyectado: 0, promedioDiario: 0, porZona: [], porRubro: [] };
+const EMPTY_OPERATIONAL = { porZona: [], porDia: [], porCobrador: [] };
+const EMPTY_FORECAST = { totalProyectado: 0, promedioDiario: 0, serie: [], proyeccion_mensual: [], porZona: [] };
 const EMPTY_RISK = { calculado_el: null, actualizando: false, summary: { total: 0, bajo: 0, medio: 0, alto: 0, critico: 0 }, records: [] };
 
 const toDashboardStats = (stats = {}, sitios) => ({
@@ -73,7 +73,7 @@ export function useDatosSisrec({ user, onSessionExpired }) {
         request(`${apiBase}/puestos`),
         canReadAudit ? request(`${apiBase}/auditoria`) : Promise.resolve({ data: [] }),
         request(`${apiBase}/analitica/prediccion?periodo=${encodeURIComponent(period)}&horizonte_dias=90`),
-        request(`${apiBase}/analitica/riesgo?limit=5`)
+        request(`${apiBase}/analitica/riesgo?limit=8`)
       ]);
 
       setApiConnected(true);

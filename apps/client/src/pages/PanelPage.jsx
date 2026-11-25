@@ -3,11 +3,23 @@ import { canSee, navItems, pathOf } from '../app/navegacion';
 import { useSisrec } from '../app/SisrecContext';
 import { DashboardSkeleton } from '../components/ui/DashboardSkeleton';
 import { KpiCard } from '../components/ui/KpiCard';
+import { BarraApilada, BarrasHorizontales, ColumnasPorDia } from '../components/ui/Graficos';
+import { PAYMENT_COLORS, PAYMENT_LABELS } from '../components/features/map/sitesGeo';
+import { diasDelPeriodo, puestosPorEstado } from '../lib/graficos';
 import { fechaHoraEnLima, formatPEN, textoPuntajeRiesgo } from '../lib/formato';
+import { periodoEnLima } from '../services/jornadaOffline';
+
+const nombreDelMes = (periodo) => {
+  const [anio, mes] = periodo.split('-').map(Number);
+  return new Date(Date.UTC(anio, mes - 1, 15)).toLocaleDateString('es-PE', { month: 'long', year: 'numeric', timeZone: 'UTC' });
+};
 
 export function PanelPage() {
   const { user, loading, dashboardStats, operational, mapPuestos, auditRecords, riskData } = useSisrec();
   if (loading) return <DashboardSkeleton />;
+  const periodo = periodoEnLima();
+  const dias = diasDelPeriodo(periodo, operational.porDia || []);
+  const totalMes = dias.reduce((total, dia) => total + dia.valor, 0);
   const veAuditoria = canSee(navItems.find((item) => item.key === 'auditoria'), user?.rol);
   // El auditor no tiene el mapa: el enlace lo devolvía al panel.
   const veMapa = canSee(navItems.find((item) => item.key === 'mapa'), user?.rol);
@@ -32,57 +44,75 @@ export function PanelPage() {
         <KpiCard label="Deuda pendiente" value={formatPEN(dashboardStats.pendientes)} change={`Morosidad ${dashboardStats.morosidad}`} icon="!" accent="red" />
       </div>
 
+      {/* Sin gráficos por rubro (decisión del usuario, 24/11/2026): el precio lo pone la zona, no el rubro. */}
       <div className="dashboard-grid">
-        <div className="panel">
+        <div className="panel panel-ancho">
           <div className="panel-heading">
             <div>
-              <div className="panel-title">Recaudacion por rubro</div>
-              <div className="panel-subtitle">Importes acumulados en el periodo actual</div>
+              <div className="panel-title">Recaudación por día</div>
+              <div className="panel-subtitle">Cobros confirmados de cada día de {nombreDelMes(periodo)}</div>
             </div>
+            <span className="date-chip">{formatPEN(totalMes)} en el mes</span>
           </div>
-          <div className="activity-list">
-            {operational.porRubro.length ? operational.porRubro.map((row) => (
-              <div className="metric-line" key={row.rubro}><span>{row.rubro}</span><strong>{formatPEN(row.recaudado)}</strong></div>
-            )) : <div className="empty-state">Sin recaudacion registrada en este periodo.</div>}
-          </div>
+          <ColumnasPorDia dias={dias} formato={formatPEN} titulo={`Recaudación por día de ${nombreDelMes(periodo)}`} />
         </div>
 
         <div className="panel">
           <div className="panel-heading">
             <div>
-              <div className="panel-title">Mapa de sitios</div>
-              <div className="panel-subtitle">Distribución por estado de pago</div>
+              <div className="panel-title">Cobros por zona</div>
+              <div className="panel-subtitle">Lo recaudado en el mes en cada zona, con su precio de hoy</div>
+            </div>
+            {canSee(navItems.find((item) => item.key === 'zonas'), user?.rol) && <Link className="view-all" to={pathOf('zonas')}>Zonas y tarifas →</Link>}
+          </div>
+          <BarrasHorizontales
+            filas={operational.porZona.map((zona) => ({
+              clave: zona.zona,
+              etiqueta: zona.zona,
+              valor: Number(zona.recaudado || 0),
+              detalle: [
+                zona.precio_dia == null ? 'Sin precio vigente' : `Precio por día: ${formatPEN(zona.precio_dia)}`,
+                `${Number(zona.pagos || 0)} pagos`,
+                `${Number(zona.ocupados || 0)} de ${Number(zona.puestos || 0)} puestos ocupados`
+              ]
+            }))}
+            formato={formatPEN} columnas={['Zona', 'Recaudado', 'Precio', 'Pagos', 'Puestos']} vacio="Aún no hay zonas registradas."
+          />
+        </div>
+
+        <div className="panel">
+          <div className="panel-heading">
+            <div>
+              <div className="panel-title">Estado de los puestos</div>
+              <div className="panel-subtitle">{mapPuestos.filter((site) => site.estado !== 'inactivo').length} puestos, con los colores del mapa</div>
             </div>
             {veMapa && <Link className="view-all" to={pathOf('mapa')}>Ver mapa →</Link>}
           </div>
-          <div className="activity-list dashboard-site-stats">
-            <div className="metric-line"><span>Puestos registrados</span><strong>{mapPuestos.length}</strong></div>
-            <div className="metric-line"><span>Ocupados</span><strong>{mapPuestos.filter((site) => site.estado !== 'disponible').length}</strong></div>
-          </div>
+          <BarraApilada
+            segmentos={puestosPorEstado(mapPuestos).map((fila) => ({ ...fila, etiqueta: PAYMENT_LABELS[fila.clave], color: PAYMENT_COLORS[fila.clave] }))}
+            unidad="puestos" vacio="Todavía no hay puestos registrados."
+          />
         </div>
       </div>
 
       <div className="lower-grid">
-        {veAuditoria && (
-          <div className="panel">
-            <div className="panel-heading">
-              <div>
-                <div className="panel-title">Actividad reciente</div>
-                <div className="panel-subtitle">Últimos movimientos registrados</div>
-              </div>
-              <Link className="view-all" to={pathOf('auditoria')}>Ver todo →</Link>
-            </div>
-            <div className="activity-list">
-              {auditRecords.slice(0, 5).map((item) => (
-                <div className="activity-item" key={item.id}>
-                  <span className="activity-bullet"></span>
-                  <div><strong>{item.accion} · {item.entidad}</strong><small>{item.usuario || `Usuario ${item.usuario_id}`} · {fechaHoraEnLima(item.fecha)}</small></div>
-                </div>
-              ))}
-              {!auditRecords.length && <div className="empty-state">Todavia no hay actividad de auditoria para mostrar.</div>}
+        <div className="panel">
+          <div className="panel-heading">
+            <div>
+              <div className="panel-title">Recaudación por cobrador</div>
+              <div className="panel-subtitle">Cobros confirmados en el mes</div>
             </div>
           </div>
-        )}
+          <BarrasHorizontales
+            filas={(operational.porCobrador || []).map((fila) => ({
+              clave: fila.cobrador,
+              etiqueta: fila.cobrador,
+              valor: Number(fila.recaudado || 0),
+              detalle: [`${Number(fila.pagos || 0)} pagos`]
+            }))}
+            formato={formatPEN} columnas={['Cobrador', 'Recaudado', 'Pagos']} vacio="Aún no hay cobros en el mes."
+          />
+        </div>
 
         <div className="panel">
           <div className="panel-heading">
@@ -101,14 +131,28 @@ export function PanelPage() {
         </div>
       </div>
 
-      <div className="dashboard-grid">
-        {[['Deuda y cobros por zona', operational.porZona, 'zona'], ['Pagos por rubro', operational.porRubro, 'rubro']].map(([title, rows, label]) => (
-          <div className="panel" key={title}>
-            <div className="panel-heading"><div><div className="panel-title">{title}</div><div className="panel-subtitle">Periodo operativo actual</div></div></div>
-            <div className="activity-list">{rows.length ? rows.map((row) => <div className="metric-line" key={row[label]}><span>{row[label]}</span><strong>S/ {Number(row.recaudado || 0).toFixed(2)}</strong></div>) : <div className="empty-state">Aún no hay movimientos registrados.</div>}</div>
+      {veAuditoria && (
+        <div className="dashboard-grid">
+          <div className="panel panel-ancho">
+            <div className="panel-heading">
+              <div>
+                <div className="panel-title">Actividad reciente</div>
+                <div className="panel-subtitle">Últimos movimientos registrados</div>
+              </div>
+              <Link className="view-all" to={pathOf('auditoria')}>Ver todo →</Link>
+            </div>
+            <div className="activity-list">
+              {auditRecords.slice(0, 5).map((item) => (
+                <div className="activity-item" key={item.id}>
+                  <span className="activity-bullet"></span>
+                  <div><strong>{item.accion} · {item.entidad}</strong><small>{item.usuario || `Usuario ${item.usuario_id}`} · {fechaHoraEnLima(item.fecha)}</small></div>
+                </div>
+              ))}
+              {!auditRecords.length && <div className="empty-state">Todavia no hay actividad de auditoria para mostrar.</div>}
+            </div>
           </div>
-        ))}
-      </div>
+        </div>
+      )}
     </section>
   );
 }

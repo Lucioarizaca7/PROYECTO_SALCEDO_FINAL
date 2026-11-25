@@ -11,7 +11,7 @@ import assert from 'node:assert/strict';
 
 import {
   closeDatabase, esperarRecalculoRiesgo, getRiskDashboard, initializeDatabase, insertComerciante, insertPuesto, insertZona,
-  marcarAsistencias, recalcularRiesgoMorosidad, scoreMorosidadComerciante, todayInLima
+  marcarAsistencias, puntuarMorosidad, recalcularRiesgoMorosidad, scoreMorosidadComerciante, todayInLima
 } from '../src/db.js';
 import { pool } from '../src/pg.js';
 import { insertZonaConPrecio } from './_deuda.js';
@@ -110,4 +110,47 @@ test('dos recálculos a la vez dejan un solo puntaje por comerciante en el día'
       WHERE modelo = 'riesgo_morosidad' AND (generado_en AT TIME ZONE 'America/Lima')::date = $1::date
       GROUP BY entidad_id HAVING COUNT(*) > 1) d`, [todayInLima()]);
   assert.equal(duplicados, 0);
+});
+
+// Sin deuda no hay morosidad (24/11/2026): se cobra solo el día que el cobrador encuentra al comerciante.
+const HOY = Date.parse('2026-11-24T17:00:00Z');
+const haceDias = (dias) => new Date(HOY - dias * 86400000).toISOString();
+
+test('sin deuda el riesgo es bajo aunque nunca haya pagado o lleve semanas sin venir', () => {
+  const nunca = puntuarMorosidad({ estado: 'activo', deudaTotal: 0, totalPagos: 0, montoPagado: 0, ultimaFecha: null }, HOY);
+  assert.equal(nunca.score, 0, 'antes 0.3375: 45 % de cumplimiento y el máximo por días sin pagar');
+  assert.equal(nunca.nivel, 'bajo');
+  assert.equal(nunca.motivo, 'Sin días cobrados impagos: no tiene deuda');
+
+  const ausente = puntuarMorosidad({ estado: 'activo', deudaTotal: 0, totalPagos: 4, montoPagado: 12, ultimaFecha: haceDias(80) }, HOY);
+  assert.equal(ausente.score, 0, 'no venir no es deber');
+  assert.equal(ausente.motivo, 'Pago regular y cumplimiento estable');
+
+  const pendiente = puntuarMorosidad({ estado: 'pendiente', deudaTotal: 0, totalPagos: 0, montoPagado: 0, ultimaFecha: null }, HOY);
+  assert.equal(pendiente.nivel, 'bajo');
+  assert.equal(pendiente.score, 0.02, 'solo pesa el estado del padrón');
+});
+
+test('con días cobrados impagos el riesgo sigue subiendo como antes', () => {
+  const nuncaPago = puntuarMorosidad({ estado: 'activo', deudaTotal: 6, totalPagos: 0, montoPagado: 0, ultimaFecha: null }, HOY);
+  assert.equal(nuncaPago.score, 0.7875);
+  assert.equal(nuncaPago.nivel, 'alto');
+
+  const atrasado = puntuarMorosidad({ estado: 'activo', deudaTotal: 3, totalPagos: 5, montoPagado: 15, ultimaFecha: haceDias(60) }, HOY);
+  assert.ok(atrasado.score > 0, 'los días sin pagar pesan cuando hay deuda');
+  assert.equal(atrasado.motivo, 'Tiene días cobrados sin pagar y no registra pagos recientes');
+});
+
+test('un puntaje de hoy con la fórmula anterior no cuenta: se recalcula con la nueva', async () => {
+  await esperarRecalculoRiesgo();
+  await pool.query(`UPDATE modelos_ia_metricas SET version = 'heuristico-v1' WHERE modelo = 'riesgo_morosidad'`);
+  const respuesta = await getRiskDashboard(pool, { limit: 3 });
+  assert.equal(respuesta.actualizando, true, 'muestra el de la fórmula anterior y recalcula por detrás');
+  await esperarRecalculoRiesgo();
+  const luego = await getRiskDashboard(pool, { limit: 3 });
+  assert.equal(luego.actualizando, false);
+  const { rows: [{ nuevos }] } = await pool.query(`
+    SELECT COUNT(*)::int AS nuevos FROM modelos_ia_metricas
+    WHERE modelo = 'riesgo_morosidad' AND version = 'heuristico-v2' AND (generado_en AT TIME ZONE 'America/Lima')::date = $1::date`, [todayInLima()]);
+  assert.equal(nuevos, luego.summary.total);
 });

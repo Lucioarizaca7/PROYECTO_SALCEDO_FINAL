@@ -550,24 +550,27 @@ export async function getOperationalDashboard(db, options = {}) {
     FROM transacciones co WHERE co.estado = 'confirmado' AND ${PAYMENT_DAY} LIKE $1`, [like]);
   // Cada cobro cuenta en la zona y el rubro del día del cobro (0028). "comerciantes" sí es el padrón de hoy
   // (sin dados de baja, que antes se contaban): dónde está cada quien es un dato del presente.
+  // Por zona, con su precio de hoy y sus puestos: el precio lo pone la zona (13/11/2026). El panel ya no muestra
+  // pagos por rubro (decisión del usuario, 24/11/2026): el rubro no cambia lo que se cobra.
   const byZone = await rows(db, `
     SELECT z.nombre AS zona,
            (SELECT COUNT(*) FROM comerciantes c WHERE c.zona_id = z.id AND c.estado <> 'inactivo')::int AS comerciantes,
-           COALESCE(cobros.recaudado, 0) AS recaudado
+           (SELECT COUNT(*) FROM puestos p WHERE p.zona_id = z.id AND p.estado <> 'inactivo')::int AS puestos,
+           (SELECT COUNT(*) FROM puestos p WHERE p.zona_id = z.id AND p.estado = 'ocupado')::int AS ocupados,
+           (SELECT t.monto_fijo FROM tarifas t WHERE t.zona_id = z.id AND t.activo AND t.vigencia_inicio <= $2::date
+              AND (t.vigencia_fin IS NULL OR t.vigencia_fin >= $2::date) ORDER BY t.vigencia_inicio DESC LIMIT 1) AS precio_dia,
+           COALESCE(cobros.recaudado, 0) AS recaudado, COALESCE(cobros.pagos, 0)::int AS pagos
     FROM zonas z LEFT JOIN (
-      SELECT ${ZONA_DEL_COBRO} AS zona_id, SUM(co.monto) AS recaudado
+      SELECT ${ZONA_DEL_COBRO} AS zona_id, SUM(co.monto) AS recaudado, COUNT(*) AS pagos
       FROM transacciones co JOIN comerciantes c ON c.id = co.comerciante_id
       WHERE co.estado = 'confirmado' AND ${PAYMENT_DAY} LIKE $1 GROUP BY 1
     ) cobros ON cobros.zona_id = z.id
-    ORDER BY recaudado DESC`, [like]);
-  const byCategory = await rows(db, `
-    SELECT r.nombre AS rubro, COALESCE(cobros.recaudado, 0) AS recaudado, COALESCE(cobros.pagos, 0) AS pagos
-    FROM rubros r LEFT JOIN (
-      SELECT ${RUBRO_DEL_COBRO} AS rubro_id, SUM(co.monto) AS recaudado, COUNT(*)::int AS pagos
-      FROM transacciones co JOIN comerciantes c ON c.id = co.comerciante_id
-      WHERE co.estado = 'confirmado' AND ${PAYMENT_DAY} LIKE $1 GROUP BY 1
-    ) cobros ON cobros.rubro_id = r.id
-    ORDER BY recaudado DESC`, [like]);
+    ORDER BY recaudado DESC, z.nombre`, [like, todayInLima()]);
+  // Recaudación de cada día del periodo (día de Lima del cobro), para el gráfico de columnas del panel.
+  const byDay = await rows(db, `
+    SELECT left(${PAYMENT_DAY}, 10) AS dia, SUM(co.monto) AS recaudado, COUNT(*)::int AS pagos
+    FROM transacciones co WHERE co.estado = 'confirmado' AND ${PAYMENT_DAY} LIKE $1
+    GROUP BY 1 ORDER BY 1`, [like]);
   const byCollector = await rows(db, `
     SELECT COALESCE(u.nombre, 'Sin asignar') AS cobrador, COALESCE(SUM(co.monto), 0) AS recaudado, COUNT(co.id) AS pagos
     FROM transacciones co LEFT JOIN usuarios u ON u.id = co.cobrador_id
@@ -582,7 +585,7 @@ export async function getOperationalDashboard(db, options = {}) {
     deudaPendiente: await getPendingDebt(db, period),
     comerciantesActivos: Number(active.total),
     porZona: byZone,
-    porRubro: byCategory,
+    porDia: byDay,
     porCobrador: byCollector
   };
 }
@@ -707,16 +710,14 @@ export async function generateForecastProjection(db, options = {}) {
     meses.unshift(mes);
   }
   const filas = await rows(db, `
-    SELECT t.mes, t.zona_id, z.nombre AS zona, t.rubro_id, r.nombre AS rubro, SUM(t.monto) AS monto
+    SELECT t.mes, t.zona_id, z.nombre AS zona, SUM(t.monto) AS monto
     FROM (
-      SELECT to_char(${LOCAL('co.fecha_cobro_cliente')}, 'YYYY-MM') AS mes, ${ZONA_DEL_COBRO} AS zona_id,
-             ${RUBRO_DEL_COBRO} AS rubro_id, co.monto
+      SELECT to_char(${LOCAL('co.fecha_cobro_cliente')}, 'YYYY-MM') AS mes, ${ZONA_DEL_COBRO} AS zona_id, co.monto
       FROM transacciones co JOIN comerciantes c ON c.id = co.comerciante_id
       WHERE co.estado = 'confirmado' AND to_char(${LOCAL('co.fecha_cobro_cliente')}, 'YYYY-MM') BETWEEN $1 AND $2
     ) t
     LEFT JOIN zonas z ON z.id = t.zona_id
-    LEFT JOIN rubros r ON r.id = t.rubro_id
-    GROUP BY 1, 2, 3, 4, 5`, [meses[0], meses[meses.length - 1]]);
+    GROUP BY 1, 2, 3`, [meses[0], meses[meses.length - 1]]);
   const primerMes = filas.reduce((min, fila) => (fila.mes < min ? fila.mes : min), meses[meses.length - 1]);
   const usados = filas.length ? meses.filter((item) => item >= primerMes) : [];
 
@@ -727,11 +728,11 @@ export async function generateForecastProjection(db, options = {}) {
     if (indice < 0) continue;
     const monto = Number(fila.monto);
     series.total[indice] += monto;
-    for (const [clave, nombre] of [[`zona:${fila.zona_id}`, fila.zona], [`rubro:${fila.rubro_id}`, fila.rubro]]) {
-      series[clave] = series[clave] || usados.map(() => 0);
-      series[clave][indice] += monto;
-      nombres[clave] = nombre || 'Sin nombre';
-    }
+    // Solo por zona: sin serie por rubro desde el 24/11/2026 (el precio lo pone la zona, no el rubro).
+    const clave = `zona:${fila.zona_id}`;
+    series[clave] = series[clave] || usados.map(() => 0);
+    series[clave][indice] += monto;
+    nombres[clave] = fila.zona || 'Sin nombre';
   }
   for (const clave of Object.keys(series)) series[clave] = series[clave].map((valor) => Number(valor.toFixed(2)));
 
@@ -790,8 +791,7 @@ export async function generateForecastProjection(db, options = {}) {
       mape: total?.mape ?? null,
       zonas: [...zonasVeredicto.values()]
     }),
-    porZona: desglose('zona:', 'zona_id', 'zona'),
-    porRubro: desglose('rubro:', 'rubro_id', 'rubro')
+    porZona: desglose('zona:', 'zona_id', 'zona')
   };
 
   await db.query(
@@ -808,13 +808,23 @@ export async function generateForecastProjection(db, options = {}) {
 // Riesgo de morosidad (heurístico, una vez por día de Lima)
 // ---------------------------------------------------------------------------
 
+// Versión de la fórmula guardada con cada puntaje. Al cambiarla, el puntaje del día se recalcula aunque ya
+// hubiera uno de hoy con la versión anterior (puntuadoHoy solo cuenta los de esta versión).
+const VERSION_RIESGO = 'heuristico-v2';
+
 // Fórmula única del puntaje: la usan el cálculo de un comerciante y el del padrón completo.
+// Sin deuda no hay morosidad (decisión del usuario, 24/11/2026): se cobra solo el día que el cobrador lo encuentra,
+// así que quien no tiene días cobrados impagos no debe nada aunque no haya pagado nunca o lleve semanas sin venir.
+// Antes la v1 le daba 45 % de cumplimiento y el máximo por días sin pagar: 50 de 52 comerciantes salían «medio».
 export function puntuarMorosidad({ estado, deudaTotal, totalPagos, montoPagado, ultimaFecha }, ahora = Date.now()) {
+  const sinDeuda = !(deudaTotal > 0);
   const fechaPago = ultimaFecha ? new Date(ultimaFecha) : null;
   const diasSinPago = fechaPago ? Math.max(0, (ahora - fechaPago.getTime()) / 86400000) : 90;
-  const deudaRatio = deudaTotal > 0 ? clamp(deudaTotal / Math.max(1, montoPagado + deudaTotal), 0, 1) : 0;
-  const cumplimiento = totalPagos > 0 ? clamp(montoPagado / Math.max(1, deudaTotal + montoPagado), 0, 1) : 0.45;
-  const recencyPenalty = clamp(diasSinPago / 90, 0, 1);
+  const deudaRatio = sinDeuda ? 0 : clamp(deudaTotal / Math.max(1, montoPagado + deudaTotal), 0, 1);
+  // Con deuda y sin ningún pago no hay historial: se mantiene el 45 % neutro de la v1.
+  const cumplimiento = sinDeuda ? 1 : totalPagos > 0 ? clamp(montoPagado / Math.max(1, deudaTotal + montoPagado), 0, 1) : 0.45;
+  // Los días sin pagar solo pesan si hay algo que pagar.
+  const recencyPenalty = sinDeuda ? 0 : clamp(diasSinPago / 90, 0, 1);
   const estadoPenalty = estado === 'pendiente' ? 0.2 : estado === 'inactivo' ? 0.3 : 0;
 
   const score = clamp(0.45 * deudaRatio + 0.25 * (1 - cumplimiento) + 0.20 * recencyPenalty + 0.10 * estadoPenalty, 0, 1);
@@ -824,9 +834,10 @@ export function puntuarMorosidad({ estado, deudaTotal, totalPagos, montoPagado, 
   else if (score > 0.33) nivel = 'medio';
 
   let motivo = 'Pago regular y cumplimiento estable';
-  if (deudaTotal > 0 && score >= 0.5) motivo = 'Existe deuda pendiente acumulada con historial de pagos intermitentes';
-  else if (diasSinPago > 45) motivo = 'No registra pagos recientes en la última ventana de cobranza';
+  if (!sinDeuda && score >= 0.5) motivo = 'Existe deuda pendiente acumulada con historial de pagos intermitentes';
+  else if (!sinDeuda && diasSinPago > 45) motivo = 'Tiene días cobrados sin pagar y no registra pagos recientes';
   else if (estado === 'pendiente') motivo = 'El comerciante requiere seguimiento por estado de padrón';
+  else if (sinDeuda && !(totalPagos > 0)) motivo = 'Sin días cobrados impagos: no tiene deuda';
 
   return { score: Number(score.toFixed(4)), nivel, motivo };
 }
@@ -873,8 +884,8 @@ export async function scoreMorosidadComerciante(db, comercianteId) {
   const now = new Date().toISOString();
   await db.query(
     `INSERT INTO modelos_ia_metricas (modelo, version, entidad_tipo, entidad_id, periodo, score, nivel, metricas)
-     VALUES ('riesgo_morosidad', 'heuristico-v1', 'comerciante', $1, $2, $3, $4, $5::jsonb)`,
-    [merchant.id, currentPeriod(), fila.score, fila.nivel, metricasDeRiesgo(fila)]
+     VALUES ('riesgo_morosidad', $6, 'comerciante', $1, $2, $3, $4, $5::jsonb)`,
+    [merchant.id, currentPeriod(), fila.score, fila.nivel, metricasDeRiesgo(fila), VERSION_RIESGO]
   );
   return { ...fila, fecha_calculo: now };
 }
@@ -884,11 +895,15 @@ const FILAS_RIESGO_POR_INSERT = 1000;
 // Llave del candado de PostgreSQL que impide que dos instancias guarden el puntaje del mismo día.
 const CANDADO_RIESGO = 7002;
 
+// `fecha`: el último puntaje de cualquier versión (se muestra mientras se recalcula). `hoy`: ya hay puntaje de
+// hoy con la fórmula vigente. Al cambiar VERSION_RIESGO, la primera carga muestra el anterior y recalcula por detrás.
 const puntuadoHoy = async (db) => {
   const ultimo = await first(db, `
-    SELECT MAX(generado_en) AS fecha FROM modelos_ia_metricas
-    WHERE modelo = 'riesgo_morosidad' AND entidad_tipo = 'comerciante'`);
-  return { fecha: ultimo?.fecha || null, hoy: Boolean(ultimo?.fecha) && todayInLima(new Date(ultimo.fecha)) === todayInLima() };
+    SELECT MAX(generado_en) AS fecha, MAX(generado_en) FILTER (WHERE version = $1) AS fecha_vigente
+    FROM modelos_ia_metricas
+    WHERE modelo = 'riesgo_morosidad' AND entidad_tipo = 'comerciante'`, [VERSION_RIESGO]);
+  const vigente = ultimo?.fecha_vigente ? new Date(ultimo.fecha_vigente) : null;
+  return { fecha: ultimo?.fecha || null, hoy: Boolean(vigente) && todayInLima(vigente) === todayInLima() };
 };
 
 /**
@@ -911,9 +926,9 @@ export async function recalcularRiesgoMorosidad(db = pool) {
       const tanda = filas.slice(inicio, inicio + FILAS_RIESGO_POR_INSERT);
       await client.query(
         `INSERT INTO modelos_ia_metricas (modelo, version, entidad_tipo, entidad_id, periodo, score, nivel, metricas)
-         SELECT 'riesgo_morosidad', 'heuristico-v1', 'comerciante', t.id, $1, t.score, t.nivel, t.metricas
+         SELECT 'riesgo_morosidad', $6, 'comerciante', t.id, $1, t.score, t.nivel, t.metricas
          FROM unnest($2::bigint[], $3::numeric[], $4::text[], $5::jsonb[]) AS t (id, score, nivel, metricas)`,
-        [currentPeriod(), tanda.map((f) => f.comerciante_id), tanda.map((f) => f.score), tanda.map((f) => f.nivel), tanda.map(metricasDeRiesgo)]
+        [currentPeriod(), tanda.map((f) => f.comerciante_id), tanda.map((f) => f.score), tanda.map((f) => f.nivel), tanda.map(metricasDeRiesgo), VERSION_RIESGO]
       );
     }
     return { puntuados: filas.length, guardado: true };
@@ -1005,6 +1020,11 @@ export async function getReportRows(db, options = {}) {
   const conditions = [];
   const params = [];
   const period = String(options.periodo || '').trim();
+  // Un mes (AAAA-MM) o un día (AAAA-MM-DD, reporte del día y resumen impreso de caja, 24/11/2026). Antes cualquier
+  // texto valía como prefijo de la fecha: "2" traía todo el siglo y "%" todo el registro.
+  if (period && !/^\d{4}-(0[1-9]|1[0-2])(-(0[1-9]|[12]\d|3[01]))?$/.test(period)) {
+    throw new ValidationError('El periodo del reporte debe ser un mes (AAAA-MM) o un día (AAAA-MM-DD)');
+  }
   if (period) { params.push(`${period}%`); conditions.push(`${PAYMENT_DAY} LIKE $${params.length}`); }
   // El filtro y las columnas de zona y rubro son los del día del cobro (0028), así el reporte de un mes
   // cerrado no cambia al corregir el padrón.

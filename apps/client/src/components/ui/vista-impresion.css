@@ -1,0 +1,123 @@
+/* Vista previa de impresión: la hoja A4 sobre un fondo oscuro, y al imprimir solo la hoja. */
+body.con-vista-impresion { overflow: hidden; }
+
+.vista-impresion {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  overflow: auto;
+  padding: 0 16px 32px;
+  background: rgba(19, 38, 28, 0.72);
+}
+
+.vista-impresion-barra {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: min(210mm, 100%);
+  max-width: calc(100vw - 32px);
+  margin-bottom: 16px;
+  padding: 12px 16px;
+  border-radius: 0 0 12px 12px;
+  background: var(--tarjeta, #fff);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.18);
+}
+.vista-impresion-barra div:first-child { display: grid; gap: 2px; }
+.vista-impresion-barra span { color: var(--tinta-2, #52514e); font-size: 13px; }
+.vista-impresion-acciones { display: flex; gap: 8px; }
+
+.hoja-impresion {
+  box-sizing: border-box;
+  flex: none;
+  width: 210mm;
+  min-height: 297mm;
+  /* En pantalla angosta se reduce a escala en vez de encogerse (ver VistaImpresion). */
+  zoom: var(--escala-hoja, 1);
+  padding: 14mm 14mm 12mm;
+  background: #fff;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
+  color: #13261c;
+  font-family: var(--font-sans, system-ui, sans-serif);
+  font-size: 11.5px;
+  line-height: 1.4;
+}
+
+.hoja-encabezado {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  padding-bottom: 10px;
+  border-bottom: 2px solid #0b5d3b;
+}
+.hoja-marca { display: flex; align-items: center; gap: 10px; }
+.hoja-marca div { display: grid; }
+.hoja-marca strong { font-size: 13px; }
+.hoja-marca span, .hoja-emision span { color: #52514e; font-size: 10.5px; }
+.hoja-marca .hoja-logo {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  background: #0b5d3b;
+  color: #fff;
+  font-weight: 800;
+  font-size: 15px;
+  -webkit-print-color-adjust: exact;
+  print-color-adjust: exact;
+}
+.hoja-emision { display: grid; align-content: center; text-align: right; }
+
+.hoja-titulo { margin: 14px 0 2px; font-family: var(--font-display, inherit); font-size: 18px; }
+.hoja-subtitulo { margin: 0 0 12px; color: #52514e; }
+.hoja-seccion { margin: 16px 0 6px; font-size: 13px; }
+
+.hoja-resumen { display: grid; grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); gap: 8px; margin: 10px 0 14px; }
+.hoja-resumen div { padding: 8px 10px; border: 1px solid #d6d0c4; border-radius: 6px; }
+.hoja-resumen dt { color: #52514e; font-size: 10.5px; }
+.hoja-resumen dd { margin: 2px 0 0; font-size: 15px; font-weight: 700; }
+.hoja-resumen small { color: #52514e; font-size: 10px; }
+
+.hoja-tabla { width: 100%; border-collapse: collapse; table-layout: fixed; font-size: 10.5px; }
+/* El tamaño va en cada celda: los estilos generales de las tablas de la app ponen 15 px y ganaban al de la tabla. */
+.hoja-tabla th, .hoja-tabla td { padding: 4px 5px; border-bottom: 1px solid #e2ddd4; font-size: 10.5px; line-height: 1.35; text-align: left; vertical-align: top; overflow-wrap: break-word; }
+.hoja-hora { display: block; color: #52514e; font-size: 9.5px; }
+.hoja-tabla thead { display: table-header-group; }
+.hoja-tabla th { border-bottom: 1.5px solid #13261c; font-size: 9.5px; text-transform: uppercase; letter-spacing: 0.02em; }
+.hoja-tabla .num { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.hoja-tabla tfoot td { padding-top: 6px; border-top: 1.5px solid #13261c; border-bottom: 0; font-weight: 700; }
+.hoja-tabla tr { break-inside: avoid; }
+.hoja-fila-fuera td { color: #8a857c; text-decoration: line-through; }
+.hoja-fila-fuera td:nth-last-child(2) { text-decoration: none; }
+.hoja-vacio { padding: 12px 0; color: #52514e; }
+
+.hoja-firmas { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 32px; margin-top: 48px; }
+.hoja-firmas div { display: grid; gap: 6px; color: #52514e; text-align: center; }
+.hoja-firmas span { display: block; height: 1px; background: #13261c; }
+
+.hoja-pie { margin-top: 24px; padding-top: 8px; border-top: 1px solid #e2ddd4; color: #8a857c; font-size: 10px; text-align: center; }
+
+@media print {
+  @page { size: A4; margin: 12mm; }
+  body.imprimiendo-hoja > *:not(.vista-impresion) { display: none !important; }
+  body.imprimiendo-hoja .vista-impresion { position: static; display: block; padding: 0; overflow: visible; background: none; }
+  body.imprimiendo-hoja .vista-impresion-barra { display: none; }
+  body.imprimiendo-hoja { overflow: visible !important; }
+  body.imprimiendo-hoja .hoja-impresion { width: auto; min-height: 0; padding: 0; box-shadow: none; zoom: 1; }
+}
+
+/* Selector «Mes / Día» de Reportes. */
+.filtro-alcance { display: inline-flex; gap: 0; }
+.filtro-alcance .secondary-button { border-radius: 0; }
+.filtro-alcance .secondary-button:first-child { border-radius: 8px 0 0 8px; }
+.filtro-alcance .secondary-button:last-child { border-radius: 0 8px 8px 0; margin-left: -1px; }
+.filtro-alcance .secondary-button.activo { background: var(--institucional, #0b5d3b); border-color: var(--institucional, #0b5d3b); color: #fff; }
+.hoja-tabla .nowrap { white-space: nowrap; }

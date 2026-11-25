@@ -62,8 +62,9 @@ test('mover de zona y rubro no mueve la recaudación de los meses pasados', asyn
   const panel = await getOperationalDashboard(pool, { periodo: mesPasado });
   assert.equal(Number(porNombre(panel.porZona, 'zona', zonaA.nombre).recaudado), 30, 'antes pasaba a S/ 0');
   assert.equal(Number(porNombre(panel.porZona, 'zona', zonaB.nombre).recaudado), 0, 'antes se llevaba los S/ 30');
+  // El panel ya no reparte por rubro (24/11/2026); el rubro del día del cobro se comprueba en el reporte, abajo.
   const rubro1Nombre = (await pool.query('SELECT nombre FROM rubros WHERE id = $1', [rubro1])).rows[0].nombre;
-  assert.equal(Number(porNombre(panel.porRubro, 'rubro', rubro1Nombre).recaudado), 30);
+  assert.equal(panel.porRubro, undefined);
 
   // El cobro de hoy sí cuenta en la zona nueva.
   const panelHoy = await getOperationalDashboard(pool, { periodo: currentPeriod() });

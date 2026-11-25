@@ -1,11 +1,13 @@
 import { useEffect, useState } from 'react';
 import { useSisrec } from '../app/SisrecContext';
-import { periodoEnLima } from '../services/jornadaOffline';
+import { periodoDelFiltro } from '../lib/reportes';
+import { hoyEnLima, periodoEnLima } from '../services/jornadaOffline';
 import { apiBase, authFetch } from '../services/session';
 
-// Página Reportes: cobros filtrados por periodo, zona y rubro (los filtros que acepta GET /reportes).
+// Página Reportes: cobros filtrados por mes o por día, zona y rubro (los filtros que acepta GET /reportes).
 export function useReportes() {
-  const [filtro, setFiltro] = useState({ periodo: periodoEnLima(), zona_id: '', rubro_id: '' });
+  const [filtro, setFiltro] = useState({ alcance: 'mes', periodo: periodoEnLima(), dia: hoyEnLima(), zona_id: '', rubro_id: '' });
+  const periodoPedido = periodoDelFiltro(filtro);
   const [filas, setFilas] = useState([]);
   const [cargando, setCargando] = useState(true);
   const [mensaje, setMensaje] = useState('');
@@ -14,7 +16,9 @@ export function useReportes() {
 
   const parametros = (extra = {}) => {
     const params = new URLSearchParams(extra);
-    for (const [clave, valor] of Object.entries(filtro)) if (valor) params.set(clave, valor);
+    if (periodoPedido) params.set('periodo', periodoPedido);
+    if (filtro.zona_id) params.set('zona_id', filtro.zona_id);
+    if (filtro.rubro_id) params.set('rubro_id', filtro.rubro_id);
     return params;
   };
 
@@ -31,18 +35,18 @@ export function useReportes() {
       .catch((error) => { if (!controller.signal.aborted) setMensaje(error.message); })
       .finally(() => { if (!controller.signal.aborted) setCargando(false); });
     return () => controller.abort();
-  }, [filtro.periodo, filtro.zona_id, filtro.rubro_id, recarga]);
+  }, [periodoPedido, filtro.zona_id, filtro.rubro_id, recarga]);
 
   // El token de acceso vive en memoria: un <a href> a la API llegaba sin él (401). Se descarga con
-  // authFetch y los mismos filtros de la pantalla.
-  const exportarCsv = async () => {
+  // authFetch y los mismos filtros de la pantalla. En Excel (24/11/2026): el CSV se abría en una sola columna.
+  const exportarExcel = async () => {
     try {
-      const response = await authFetch(`${apiBase}/reportes?${parametros({ formato: 'csv' })}`);
+      const response = await authFetch(`${apiBase}/reportes?${parametros({ formato: 'xlsx' })}`);
       if (!response.ok) throw new Error((await response.json().catch(() => ({}))).message || 'No se pudo exportar el reporte');
       const url = URL.createObjectURL(await response.blob());
       const link = document.createElement('a');
       link.href = url;
-      link.download = `reporte-cobros-${filtro.periodo || 'todo'}.csv`;
+      link.download = `reporte-cobros-${periodoPedido || 'todo'}.xlsx`;
       link.click();
       URL.revokeObjectURL(url);
     } catch (error) {
@@ -72,5 +76,5 @@ export function useReportes() {
   const confirmadas = filas.filter((item) => item.estado === 'confirmado');
   const total = confirmadas.reduce((suma, item) => suma + Number(item.monto || 0), 0);
 
-  return { filtro, setFiltro, filas, cargando, mensaje, exportarCsv, anular, puedeAnular: user?.rol === 'super_admin', total, confirmadas };
+  return { filtro, setFiltro, periodoPedido, filas, cargando, mensaje, exportarExcel, anular, puedeAnular: user?.rol === 'super_admin', total, confirmadas };
 }

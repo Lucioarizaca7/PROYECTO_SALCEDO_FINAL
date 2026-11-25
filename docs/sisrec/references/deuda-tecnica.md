@@ -15,7 +15,7 @@ Ordenada de más a menos grave. Antes de tomar uno de estos puntos, comprobar qu
 7. **Detalles menores:**
    - No hay páginas de Usuarios ni de Cobradores (las de relleno se quitaron en "Refactor 5"): se administran en la base.
    - Hay dos endpoints para crear puestos.
-   - (Resuelto: el botón "Exportar CSV" de Reportes descarga con `authFetch` y un Blob, `useReportes.js`. Antes era un enlace sin token y la API respondía 401.)
+   - (Resuelto: el botón de exportar de Reportes (hoy «Exportar Excel») descarga con `authFetch` y un Blob, `useReportes.js`. Antes era un enlace sin token y la API respondía 401.)
    - (Resuelto en "Refactor 2": cada error responde con el código HTTP de su causa.)
 
 ## Errores de lógica (revisión del 2026-10-16)
@@ -133,6 +133,15 @@ Corregidos, con prueba en `tests/codigo-operacion.test.js`, `tests/tipo-via-de-c
 - **`POST /notificaciones`** sin auditoría ni largo máximo; **`GET /catalogos` y `GET /roles`** sin rol.
 
 Queda: el paquete de jornada calcula dos veces el mes en curso (`calcularLiquidacion` y otra vez dentro de `calcularDeudaAcumulada`). Con un padrón mucho mayor convendrá la liquidación en lote (paso 6).
+
+## Panel, reportes del día e impresión del 24/11/2026
+
+- **Panel sin rubros** (decisión del usuario): el precio lo pone la zona, así que «Recaudación por rubro» y «Pagos por rubro» salieron. `getOperationalDashboard` ya no devuelve `porRubro`; ahora trae `porDia` (lo recaudado cada día del mes) y, en `porZona`, el precio de hoy, los puestos y los ocupados. Hay cuatro gráficos sin librerías (`components/ui/Graficos.jsx`, `lib/graficos.js`): columnas por día, barras por zona, barras por cobrador y la barra apilada de estados de los puestos, con los colores del mapa en un orden validado para daltonismo. Cada marca muestra su detalle con el mouse o el teclado, y cada gráfico tiene su tabla en «Ver datos». La analítica tampoco reparte por rubro: `generateForecastProjection` arma solo la serie total y una por zona, y `/analitica/prediccion` ya no devuelve `porRubro`. Su pantalla tiene tres gráficos: columnas de los meses cobrados seguidas de los proyectados (claras, con borde punteado, el margen ±MAPE como bigote y, en el mes en curso, lo cobrado hasta hoy), barras de la proyección por zona, la barra apilada de niveles de riesgo (rampa de un solo tono, validada como ordinal) y el ranking de comerciantes con mayor puntaje (0 a 100).
+- **Reportes de un día:** Reportes elige «Mes» o «Día». `GET /reportes` ya filtraba por el inicio de la fecha del cobro, y ahora valida que el periodo sea `AAAA-MM` o `AAAA-MM-DD`; antes «2» o «%» traían todo el registro. «Todo» (pedido del usuario, 24/11/2026) no manda periodo y trae todos los cobros registrados, con la zona y el rubro elegidos; la vista previa lo titula «de todo el registro» y el Excel se llama `reporte-cobros-todo.xlsx`. Queda sin paginar: con años de cobros, la tabla y la hoja crecen sin tope.
+- **Exportar Excel en vez de CSV** (pedido del usuario, 24/11/2026): el CSV se abría en Excel en una sola columna (Excel en español separa con «;») y con las tildes rotas. El botón de Reportes ahora pide `GET /reportes?formato=xlsx` (`src/reporteExcel.js`, con `exceljs`, que ya se usaba para la plantilla del padrón): título, filtros, quién lo emitió, el resumen (el total cobrado suma solo los confirmados, como la pantalla) y una tabla de Excel `TablaCobros` con filtros, la fecha como fecha, el monto en soles y anchos fijos. `formato=csv` sigue para quien lo use, ahora con BOM para que las tildes salgan bien. Prueba: `tests/reporte-excel.test.js`.
+- **Hoja impresa sin descuadre** (24/11/2026): los estilos generales de las tablas de la app ponían las celdas a 15 px y le ganaban a los 10,5 px de la hoja; el navegador repartía las columnas según el contenido y partía la fecha («2026-10- / 20»). Ahora la tabla tiene `table-layout: fixed` con anchos medidos (`ANCHOS` en `VistaImpresion.jsx`), el tamaño va en cada celda, la fecha sale dd/mm/aaaa con la hora debajo y cada ticket en una línea. En pantalla la hoja mide siempre 210 mm y en una ventana angosta se reduce a escala (`zoom`), así la vista previa se arma igual que el papel. Comprobado imprimiendo a PDF con Chrome sin interfaz.
+- **Vista previa de impresión** (`components/ui/VistaImpresion.jsx`): Reportes y Cierre de caja muestran la hoja A4 antes de imprimir, con encabezado de la municipalidad, resumen, tabla y líneas de firma. Al imprimir solo sale la hoja. Cierre de caja imprime el resumen del día elegido: los cobros del día con subtotal por cobrador, los cierres de ese día (o la caja propia del cobrador) y los tickets.
+- **Plantilla del padrón:** las notas de cada columna están al día. El código de puesto es el del mapa (si ya existe, se actualiza ese puesto y conserva su ubicación); el precio lo pone la zona; el rubro no cambia lo que se paga, y el metraje es opcional.
 
 ## Un solo tipo de comerciante del 23/11/2026 (migración 0039)
 

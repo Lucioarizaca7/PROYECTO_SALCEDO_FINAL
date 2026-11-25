@@ -331,6 +331,13 @@ test('un cobro de las 19:30 del 31 de octubre en Salcedo cuenta para octubre', a
   assert.ok(octubre.some((row) => row.id === cobro.id), 'debe aparecer en el reporte de octubre');
   assert.ok(!noviembre.some((row) => row.id === cobro.id), 'no debe aparecer en el reporte de noviembre');
   assert.equal(octubre.find((row) => row.id === cobro.id).fecha, '2026-10-31 19:30:00');
+
+  // Reporte de un día (24/11/2026): el mismo filtro con el día completo, en hora de Lima.
+  assert.ok((await getReportRows(pool, { periodo: '2026-10-31' })).some((row) => row.id === cobro.id), 'debe aparecer el 31 de octubre');
+  assert.ok(!(await getReportRows(pool, { periodo: '2026-11-01' })).some((row) => row.id === cobro.id), 'no el 1 de noviembre (UTC)');
+  for (const malo of ['2', '%', '2026-13', '2026-10-32', '2026-10-31x']) {
+    await assert.rejects(() => getReportRows(pool, { periodo: malo }), /mes \(AAAA-MM\) o un día/, malo);
+  }
 });
 
 test('un token firmado con otro algoritmo se rechaza aunque use el mismo secreto', async () => {
